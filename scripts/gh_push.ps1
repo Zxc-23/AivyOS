@@ -1,19 +1,20 @@
-# 沙箱环境推送辅助：绕过 schannel/GCM 限制（gh 令牌 + openssl 后端）。
-# 说明：本沙箱禁用了 Windows schannel TLS 且无法通过 sh 运行凭据 helper，
-#       因此采用"gh auth token + URL 注入 + openssl + 校验关闭"一次性推送。
-#       令牌只存在于进程内存，不落盘、不打印。
-# 用法：powershell -File scripts\gh_push.ps1 [ref]   （默认 main）
-param([string]$Ref = "main")
+# Sandbox push helper: bypass schannel/GCM limits (gh token + openssl backend).
+# NOTE: This sandbox blocks Windows schannel TLS and cannot run git credential
+#       helpers via sh, so we push with a gh token injected in the URL,
+#       openssl TLS backend and verification disabled. The token lives only in
+#       process memory; it is never written to disk or printed.
+# Usage: powershell -File scripts\gh_push.ps1 [ref]   (default: main)
+$Ref = if ($args.Count -gt 0) { $args[0] } else { "main" }
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
     $token = gh auth token 2>$null
-    if (-not $token) { Write-Error "无法获取 gh 令牌（gh auth login 后重试）"; exit 1 }
+    if (-not $token) { Write-Error "gh auth token failed (run gh auth login first)"; exit 1 }
     $env:GIT_TERMINAL_PROMPT = "0"
     git -c http.sslBackend=openssl -c http.sslVerify=false push "https://x-access-token:${token}@github.com/Zxc-23/AivyOS.git" $Ref
     $code = $LASTEXITCODE
     if ($code -eq 0) {
-        # 推送成功后本地同步跟踪引用（推送目标为 URL 时 git 不会自动更新 origin/<ref>）
+        # After a URL-targeted push git does not update origin/<ref>; sync locally.
         git update-ref "refs/remotes/origin/$Ref" "refs/heads/$Ref"
     }
     exit $code
