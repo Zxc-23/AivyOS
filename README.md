@@ -56,6 +56,7 @@ python -m unittest discover -s tests -v
 # 方式 A：本地 Ollama（推荐，8GB 显存跑 qwen2.5:3b/7b INT4）
 winget install Ollama.Ollama
 ollama pull qwen2.5:3b
+$env:AIVYOS_LLM_LOCAL_MODEL = "qwen2.5:3b"   # 必须与 `ollama list` 已拉取的模型名一致（默认配置为 qwen2.5:7b）
 python -m aivyos_core.cli --mode local
 
 # 方式 B：云端（BYOK）
