@@ -128,6 +128,24 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "users_dir": "users",        # 用户注册目录（声纹模板 + 人格配置，T6.7）
         "min_enroll_seconds": 3.0,   # 注册样本时长下限（§9.2：3-10 秒）
     },
+    # ---- Phase 1 收尾：视觉 / 多模态 / 输出（§3.3 / §3.4 / §6.3）----
+    "vision": {
+        "ocr_backend": "auto",       # auto | mock | paddleocr
+        "understand_backend": "auto",  # auto | mock | qwen2-vl
+        "screenshot_backend": "auto",  # auto | mss | none
+    },
+    "multimodal": {
+        "fusion_strategy": "late",   # §3.4 晚期融合
+        "max_vision_tokens": 2048,
+    },
+    "output": {
+        "default_channel": "text",   # text | voice | notification（§6.3 路由默认）
+        "notify_levels": ["urgent", "important", "normal"],
+        "notify_backend": "auto",    # auto | console | win_toast
+    },
+    "emotion": {
+        "tags_enabled": True,        # §6.1 14 种细粒度情感标签 [laughter][breath]...
+    },
     "logging": {"level": "INFO"},
 }
 

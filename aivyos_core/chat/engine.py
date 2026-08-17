@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from aivyos_core.config import ensure_home
 from aivyos_core.context import ContextManager
+from aivyos_core.emotion import EmotionTagger
 from aivyos_core.llm.router import ModelRouter
 from aivyos_core.memfs import MemFS
 from aivyos_core.memory.manager import MemoryManager
@@ -23,8 +24,12 @@ from aivyos_core.models import (
     RouteDecision,
     SessionState,
 )
+from aivyos_core.multimodal import MultimodalFusion
+from aivyos_core.notification import Notifier, create_notifier
+from aivyos_core.output import OutputRouter
 from aivyos_core.persona import Persona
 from aivyos_core.recovery import BootRecovery, RecoverySummary
+from aivyos_core.vision.service import VisionService
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +60,18 @@ class ChatEngine:
             output_reserve_tokens=chat_cfg.get("output_reserve_tokens", 8192),
         )
         self.recovery = BootRecovery(self)
+
+        # ---- Phase 1 收尾：视觉 / 多模态 / 输出（§3.3 / §3.4 / §6.3）----
+        self.vision = VisionService(config.get("vision", {}))
+        mm_cfg = config.get("multimodal", {})
+        self.fusion = MultimodalFusion(
+            self.vision,
+            strategy=mm_cfg.get("fusion_strategy", "late"),
+            max_vision_tokens=int(mm_cfg.get("max_vision_tokens", 2048)),
+        )
+        self.emotion = EmotionTagger(enabled=bool(config.get("emotion", {}).get("tags_enabled", True)))
+        self.notifier: Notifier = create_notifier(config.get("output", {}))
+        self.output = OutputRouter(config.get("output", {}), tts=None, notifier=self.notifier)
 
     # ---- 启动恢复（§8.2）----
 
@@ -106,6 +123,28 @@ class ChatEngine:
     # ---- 核心对话 ----
 
     async def send(self, text: str, session_id: Optional[str] = None) -> AssistantReply:
+        return await self._send(text, session_id=session_id, extra_blocks=None)
+
+    async def send_multimodal(
+        self,
+        text: str = "",
+        image: Optional[bytes] = None,
+        audio_text: str = "",
+        session_id: Optional[str] = None,
+    ) -> AssistantReply:
+        """多模态输入（§3.4 晚期融合，T1.8）：文本/图像/语音文本 → 统一上下文 → LLM。"""
+        fused = await self.fusion.fuse(text=text, audio_text=audio_text, image=image)
+        main_text = fused.text or (audio_text or text)
+        blocks = fused.system_blocks()
+        reply = await self._send(main_text, session_id=session_id, extra_blocks=blocks)
+        return reply
+
+    async def _send(
+        self,
+        text: str,
+        session_id: Optional[str] = None,
+        extra_blocks: Optional[List[str]] = None,
+    ) -> AssistantReply:
         start = time.perf_counter()
 
         # 1) 自动记忆抽取（朴素规则，§4.2）+ MemFS 事实归档（§8.1）
@@ -132,13 +171,14 @@ class ChatEngine:
                 fallback=decision.fallback,
             )
 
-        # 5) 上下文组装（§4.4）
+        # 5) 上下文组装（§4.4 + §3.4 多模态块）
         messages, ctx_stats = self.context.build_messages(
             persona_prompt=self.persona.render_system_prompt(),
             memory_hits=hit_dicts,
             history=history,
             current_input=text,
             archive_callback=lambda old: self._archive_turns(old, state.session_id),
+            extra_blocks=extra_blocks,
         )
 
         # 6) 推理（真实后端失败自动降级 mock）
@@ -190,4 +230,7 @@ class ChatEngine:
             "home": str(self.home),
             "sessions": len(self.list_sessions()),
             "memfs": self.memfs.summary(),
+            "vision": self.vision.status(),
+            "output_channel": self.output.default_channel.value,
+            "emotion_tags": self.emotion.enabled,
         }

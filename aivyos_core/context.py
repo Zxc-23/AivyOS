@@ -71,17 +71,19 @@ class ContextManager:
         history: List[ChatMessage],
         current_input: str,
         archive_callback=None,
+        extra_blocks: Optional[List[str]] = None,
     ) -> tuple[List[Dict[str, str]], Dict[str, Any]]:
         """组装最终 messages，返回 (messages, stats)。
 
         - 记忆命中注入为 system 上下文块（§4.4.1 检索记忆 8K）
         - 近期保留原样（§4.4.2），超出预算的旧轮次调用 archive_callback 归档
         - 中期摘要：朴素截断占位（Week 3 替换为 LLM 摘要）
+        - extra_blocks：多模态融合上下文块（§3.4，T1.8）
         """
         budget = self.allocate_budget()
         stats: Dict[str, Any] = {"budget": budget, "archived": 0, "summarized": 0}
 
-        # 1) system：人格 + 记忆命中
+        # 1) system：人格 + 记忆命中 + 多模态块
         system_parts = [persona_prompt]
         if memory_hits:
             mem_block = "\n".join(
@@ -89,6 +91,8 @@ class ContextManager:
                 for h in memory_hits
             )
             system_parts.append(f"## 检索到的长期记忆\n{mem_block}")
+        if extra_blocks:
+            system_parts.extend(extra_blocks)
         system_text = "\n\n".join(system_parts)
         if estimate_tokens(system_text) > budget["system"]:
             system_text = system_text[: budget["system"] * 2] + "\n…(截断)"

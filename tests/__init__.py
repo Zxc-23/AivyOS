@@ -27,5 +27,23 @@ def make_config(**overrides) -> dict:
     return cfg
 
 
+class FakeVoiceSource:
+    """模拟音源：按给定 PCM 逐帧流式输出（测试/端到端联调用）。"""
+
+    def __init__(self, pcm: bytes, sample_rate: int = 16000, frame_ms: int = 30) -> None:
+        self.pcm = pcm
+        self.sample_rate = sample_rate
+        self.frame_ms = frame_ms
+        self.frame_bytes = max(1, sample_rate * 2 * frame_ms // 1000)
+
+    async def stream(self):
+        import asyncio
+
+        step = self.frame_bytes
+        for i in range(0, len(self.pcm), step):
+            yield self.pcm[i : i + step]
+            await asyncio.sleep(0)
+
+
 class AivyTestCase(unittest.TestCase):
     pass
