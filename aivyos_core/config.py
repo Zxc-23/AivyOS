@@ -75,6 +75,38 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "port": 31701,
         "pipe_name": r"\\.\pipe\aivyos_core",
     },
+    # ---- Week 2：语音链路（§3.1 感知输入 / §6.1 输出响应）----
+    "audio": {
+        "sample_rate": 16000,        # 16 kHz 单声道 PCM（文档 §3.1.1）
+        "channels": 1,
+        "frame_ms": 30,              # VAD 帧长 30ms（Silero v5 规格）
+        "device": None,              # 麦克风设备名/索引；None=系统默认
+        "input_backend": "auto",     # auto | mic | wav | synthetic
+        "vad_backend": "auto",       # auto | silero | energy
+        "wav_path": None,            # input_backend=wav 时指定输入文件
+    },
+    "asr": {
+        "backend": "auto",           # auto | mock | funasr
+        "model": "sensevoice-small", # SenseVoice/FunASR（§3.1.1）
+        "language": "zh",
+        "sample_rate": 16000,
+    },
+    "tts": {
+        "backend": "auto",           # auto | mock | cosyvoice
+        "model": "CosyVoice3-0.5B",  # §6.1 主引擎
+        "sample_rate": 24000,        # CosyVoice 3 输出 24kHz
+        "clone_seconds": 3,          # 3 秒音色克隆（§6.1）
+    },
+    "voice": {
+        "wake_words": ["Aivy", "艾维", "贾维斯"],
+        "wake_required": False,      # True 时需唤醒词后才进入对话
+        "silence_timeout_s": 3.0,    # 无语音超时退出
+        "max_turn_s": 20.0,          # 单轮最长录音
+    },
+    "ws": {
+        "port": 31702,               # WebSocket 实时通道（§16.3.2 风格）
+        "host": "127.0.0.1",
+    },
     "logging": {"level": "INFO"},
 }
 
@@ -124,6 +156,14 @@ def _apply_env_overrides(cfg: Dict[str, Any]) -> None:
         cfg["ipc"]["port"] = int(env["AIVYOS_IPC_PORT"])
     if env.get("AIVYOS_PERSONA_TONE") in ("professional", "casual", "witty", "serious"):
         cfg["persona"]["tone"] = env["AIVYOS_PERSONA_TONE"]
+    if env.get("AIVYOS_ASR_BACKEND") in ("auto", "mock", "funasr"):
+        cfg["asr"]["backend"] = env["AIVYOS_ASR_BACKEND"]
+    if env.get("AIVYOS_TTS_BACKEND") in ("auto", "mock", "cosyvoice"):
+        cfg["tts"]["backend"] = env["AIVYOS_TTS_BACKEND"]
+    if env.get("AIVYOS_AUDIO_INPUT") in ("auto", "mic", "wav", "synthetic"):
+        cfg["audio"]["input_backend"] = env["AIVYOS_AUDIO_INPUT"]
+    if env.get("AIVYOS_WS_PORT"):
+        cfg["ws"]["port"] = int(env["AIVYOS_WS_PORT"])
 
 
 def load_config(user_path: str | Path | None = None) -> Dict[str, Any]:

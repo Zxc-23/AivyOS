@@ -15,9 +15,10 @@ chromadb>=0.5
 langgraph>=0.2
 
 # ---- 语音（Week 2 启用）----
-# silero-vad>=5.0          # VAD 语音活动检测（小，可先装）
-# funasr                   # SenseVoice/Paraformer 流式 ASR
-# cosyvoice                # CosyVoice 3 TTS（Apache-2.0）
+sounddevice            # 麦克风采集 + 实时播放（缺失时自动降级合成音源/静默）
+# silero-vad>=5.0      # VAD 语音活动检测（缺失时降级能量 VAD）
+# funasr               # SenseVoice/Paraformer 流式 ASR（缺失时降级 mock ASR）
+# cosyvoice            # CosyVoice 3 TTS（Apache-2.0，缺失时降级 mock TTS）
 
 # ---- 认证（Week 4 启用）----
 # speechbrain              # ECAPA-TDNN 声纹（192 维）

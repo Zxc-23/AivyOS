@@ -65,6 +65,14 @@ python -m aivyos_core.cli --mode auto   # 复杂/编程请求自动路由云端
 # 方式 C：启动 IPC 服务（供 Tauri 壳层/外部客户端调用）
 python -m aivyos_core.server_entry
 python scripts\ipc_demo_client.py "你好"
+
+# 方式 D：WebSocket 实时通道（T1.5，§16.3.2 风格）
+python -m aivyos_core.ws_bridge
+python scripts\ws_demo_client.py "你好"
+
+# 方式 E：语音会话（采集→VAD→ASR→LLM→TTS→播放，全部可降级）
+python -m aivyos_core.voice --once "你好" --wav out.wav   # 单轮 + 保存音频
+python -m aivyos_core.voice                                 # 交互式语音对话
 ```
 
 ## 里程碑对应
@@ -77,15 +85,17 @@ python scripts\ipc_demo_client.py "你好"
 | 记忆（Mem0 适配 + JSON 回退） | §4.2 | ✅ 已实现（simple 后端完整，mem0 适配就绪） |
 | 会话持久化与快照 | §14.3 | ✅ 已实现（JSON 原子写） |
 | IPC（JSON-RPC + TCP/NamedPipe） | §16.2 | ✅ 已实现（TCP 全通，NamedPipe 需 pywin32） |
+| 语音链路（采集→VAD→ASR→LLM→TTS→播放） | §3.1 / §6.1 | ✅ Week 2 已实现（silero/funasr/cosyvoice 适配 + 优雅降级） |
+| 唤醒词检测（Aivy/贾维斯 可配置） | §3.1 | ✅ Week 2 已实现 |
+| WebSocket 实时通道 | §16.3.2 | ✅ Week 2 已实现（RFC6455 零依赖，T1.5） |
 | CLI 文本输入 | §3.2 | ✅ 已实现 |
 | Tauri 2.0 壳层 | §12 | 🚧 骨架就绪（Rust 未安装，待 `cargo check`） |
-| ASR / VAD / TTS | §3.1 / §6.1 | ⏳ Week 2 |
 | 声纹/面部认证 | §9 | ⏳ Week 4 |
 | 托盘 / 热键 / 更新 / 热交换 | §12-15 | ⏳ Phase 3 |
 
 ## 设计要点
 
-- **零依赖可运行**：核心链路仅用 Python 标准库；PyYAML/pywin32/mem0 均为可选增强
-- **三级降级**：真实后端失败 → mock（链路不断）；mem0 缺失 → JSON 记忆；NamedPipe 缺失 → TCP 回环
+- **零依赖可运行**：核心链路仅用 Python 标准库；PyYAML/pywin32/sounddevice/silero-vad/funasr/cosyvoice/mem0 均为可选增强
+- **四级降级**：真实后端失败 → mock（链路不断）；mem0 缺失 → JSON 记忆；NamedPipe 缺失 → TCP 回环；语音模型缺失 → 能量 VAD + 规则 ASR + 占位 TTS
 - **路由诚实报告**：`route.fallback=true` 明确标注降级，不伪装真实推理
-- **测试即文档**：38 个 unittest 覆盖配置/人格/上下文/路由/引擎/记忆/IPC 全链路
+- **测试即文档**：65 个 unittest 覆盖配置/人格/上下文/路由/引擎/记忆/IPC/唤醒/VAD/ASR/TTS/语音会话/WebSocket 全链路
