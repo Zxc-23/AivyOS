@@ -13,8 +13,8 @@ try {
     git -c http.sslBackend=openssl -c http.sslVerify=false push "https://x-access-token:${token}@github.com/Zxc-23/AivyOS.git" $Ref
     $code = $LASTEXITCODE
     if ($code -eq 0) {
-        # 同步本地跟踪引用（URL 直推不会自动更新 origin/<ref>）
-        git -c http.sslBackend=openssl -c http.sslVerify=false fetch "https://x-access-token:${token}@github.com/Zxc-23/AivyOS.git" "$Ref`:refs/remotes/origin/$Ref" 2>$null
+        # 推送成功后本地同步跟踪引用（推送目标为 URL 时 git 不会自动更新 origin/<ref>）
+        git update-ref "refs/remotes/origin/$Ref" "refs/heads/$Ref"
     }
     exit $code
 } finally {
