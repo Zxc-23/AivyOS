@@ -29,11 +29,43 @@ _EXTRACT_PATTERNS = (
     ("记得", 0.7),
 )
 
-_EXTRACT_PROMPT = """从以下用户话语中提取一条值得长期记住的事实或偏好。
-若没有值得长期记住的信息，只输出空行。若提取到，直接输出该事实（第一人称，简洁）。
+_EXTRACT_PROMPT = """从下面用户话语中提取一条值得长期记住的事实或偏好。
 
-话语：{text}
+要求：
+- 只输出提取到的事实本身，用 <fact> 标签包裹
+- 第一人称、简洁（不超过 50 字）
+- 不要复述原话、不要解释、不要添加原文没有的信息
+- 若没有值得长期记住的信息（如寒暄、天气闲聊、一次性请求），输出 <fact>无</fact>
+
+示例：
+话语：我叫小明，喜欢喝咖啡 → <fact>我叫小明，喜欢喝咖啡</fact>
+话语：今天天气不错 → <fact>无</fact>
+
+用户话语：{text}
 """
+
+_EXTRACT_EMPTY = {"无", "没有", "空", "none", "n/a", "null", "空行"}
+
+
+def _clean_extract(out: str) -> Optional[str]:
+    """清洗 LLM 抽取结果：解析 <fact> 标签，拒绝模板回显/解释。"""
+    import re
+
+    out = (out or "").strip()
+    m = re.search(r"<fact>(.*?)</fact>", out, re.S)
+    if m:
+        fact = m.group(1).strip()
+    else:
+        # 无标签：拒绝疑似回显/解释的内容，只接受简短陈述
+        if any(k in out for k in ("话语", "用户话语", "要求", "提取", "输出", "不要", "若", "第一人称")):
+            return None
+        fact = out
+    fact = fact.strip().strip('"').strip("“”").strip("。.")
+    if not fact or fact.lower() in _EXTRACT_EMPTY:
+        return None
+    if len(fact) > 100:
+        return None
+    return fact
 
 
 class MemoryManager:
@@ -117,10 +149,9 @@ class MemoryManager:
             temperature=0.2,
         )
         resp = await self.router.complete(request, decision)
-        out = resp.text.strip()
-        if not out or "mock" in resp.model.lower():
+        if "mock" in resp.model.lower():
             return None  # 降级到 mock → 视为无真实 LLM，走规则
-        return out
+        return _clean_extract(resp.text)
 
     async def _rules_extract(self, text: str, metadata: Optional[Dict[str, Any]]) -> Optional[str]:
         for pattern, _ in _EXTRACT_PATTERNS:

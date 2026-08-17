@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 
 _SUMMARY_PROMPT = """请将以下对话压缩为一段简洁摘要（中文，不超过 120 字），
 保留：关键事实、用户偏好、待办事项、当前上下文。不要添加原文没有的信息。
+直接输出摘要正文，不要加"摘要："等前缀。
 
 对话：
 {transcript}
@@ -73,4 +74,10 @@ class LLMSummarizer:
             temperature=0.3,
         )
         resp = await self.router.complete(request, decision)
-        return resp.text.strip()
+        text = resp.text.strip()
+        # 去掉模型可能加的前缀（摘要：/总结：/对话摘要：）
+        for prefix in ("摘要：", "摘要:", "总结：", "总结:", "对话摘要：", "对话摘要:"):
+            if text.startswith(prefix):
+                text = text[len(prefix):].strip()
+                break
+        return text
