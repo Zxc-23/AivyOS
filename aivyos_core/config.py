@@ -26,7 +26,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "mode": "auto",
         "local": {
             "base_url": "http://127.0.0.1:11434/v1",  # Ollama OpenAI 兼容端点；vLLM 同构
-            "model": "qwen2.5:7b",
+            "model": "qwen2.5:3b",   # 8GB 显存推荐；文档规格 qwen2.5:7b 需 12GB+（INT4）
             "api_key": None,
             "timeout_s": 60,
             "probe": True,             # 真实可用性探测（GET /models）

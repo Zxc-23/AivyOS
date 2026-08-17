@@ -53,11 +53,10 @@ python -m unittest discover -s tests -v
 代码优先 + 优雅降级：未配置任何模型时链路照常运行（mock），配置后自动切换。
 
 ```powershell
-# 方式 A：本地 Ollama（推荐，8GB 显存跑 qwen2.5:3b/7b INT4）
+# 方式 A：本地 Ollama（8GB 显存推荐 qwen2.5:3b；文档规格 7B 需 12GB+）
 winget install Ollama.Ollama
 ollama pull qwen2.5:3b
-$env:AIVYOS_LLM_LOCAL_MODEL = "qwen2.5:3b"   # 必须与 `ollama list` 已拉取的模型名一致（默认配置为 qwen2.5:7b）
-python -m aivyos_core.cli --mode local
+python -m aivyos_core.cli --mode local     # 默认本地模型即 qwen2.5:3b（与 ollama list 一致）
 
 # 方式 B：云端（BYOK）
 $env:AIVYOS_CLOUD_API_KEY = "sk-..."
