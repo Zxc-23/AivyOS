@@ -116,6 +116,18 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "checkpoint_db": "checkpoints.sqlite",  # LangGraph 风格检查点（§4.5.2/§18.3）
         "thread_prefix": "wf_",
     },
+    # ---- Week 4：专属认证（§9）----
+    "auth": {
+        "enabled": False,            # 开启后语音会话需通过认证
+        "voice_threshold": 0.75,     # §9.2 声纹余弦阈值（EER<3% 中文场景）
+        "face_threshold": 0.6,       # §9.2 面部余弦阈值
+        "voice_backend": "auto",     # auto | simple | speechbrain（ECAPA-TDNN 192 维）
+        "face_backend": "auto",      # auto | mock | insightface
+        "liveness_enabled": True,    # §9.1 活体检测
+        "silent_reject": True,       # §9.1 失败处理：静默忽略，不暴露系统存在
+        "users_dir": "users",        # 用户注册目录（声纹模板 + 人格配置，T6.7）
+        "min_enroll_seconds": 3.0,   # 注册样本时长下限（§9.2：3-10 秒）
+    },
     "logging": {"level": "INFO"},
 }
 
@@ -173,6 +185,10 @@ def _apply_env_overrides(cfg: Dict[str, Any]) -> None:
         cfg["audio"]["input_backend"] = env["AIVYOS_AUDIO_INPUT"]
     if env.get("AIVYOS_WS_PORT"):
         cfg["ws"]["port"] = int(env["AIVYOS_WS_PORT"])
+    if env.get("AIVYOS_AUTH_ENABLED") in ("1", "true", "True"):
+        cfg["auth"]["enabled"] = True
+    if env.get("AIVYOS_AUTH_VOICE_THRESHOLD"):
+        cfg["auth"]["voice_threshold"] = float(env["AIVYOS_AUTH_VOICE_THRESHOLD"])
 
 
 def load_config(user_path: str | Path | None = None) -> Dict[str, Any]:

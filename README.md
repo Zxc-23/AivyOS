@@ -78,6 +78,11 @@ python -m aivyos_core.voice                                 # 交互式语音对
 python -m aivyos_core.workflow --demo "做一个天气网页"      # 首次执行
 python -m aivyos_core.workflow --resume                     # 从检查点续传
 python -m aivyos_core.workflow --demo "天气网页失败"        # 观察构建失败→自动修复回环
+
+# 方式 G：专属认证（§9，合成音色演示，零依赖可跑）
+python -m aivyos_core.auth demo                              # 注册张三/李四 → 本人通过/陌生人静默拒绝
+python -m aivyos_core.auth register 张三 --wav voice.wav     # 真实音频注册（3-10s）
+python -m aivyos_core.auth verify --wav test.wav             # 真实音频认证
 ```
 
 ## 里程碑对应
@@ -92,6 +97,11 @@ python -m aivyos_core.workflow --demo "天气网页失败"        # 观察构建
 | 工作流引擎（StateGraph/条件边/检查点/续传） | §4.5 | ✅ Week 3 已实现（mini_graph 零依赖 + langgraph 可选适配） |
 | VibeCoding 预置工作流（构建失败回环） | §4.5.2 / §7.4 | ✅ Week 3 已实现（演示模式） |
 | 启动上下文重建（记忆+MemFS+检查点） | §8.2 | ✅ Week 3 已实现（restore_on_boot 三重恢复） |
+| 声纹认证（注册 3-10s 多模板 / 余弦阈值 0.75） | §9 | ✅ Week 4 已实现（ECAPA-TDNN 可选 + 零依赖频谱嵌入回退） |
+| 面部认证（阈值 0.6）+ 活体检测 | §9.2 | ✅ Week 4 已实现（InsightFace 可选 + mock 回退；频谱反重放） |
+| 认证状态机（dormant→listening→verifying→auth/reject） | §9.1 / T6.6 | ✅ Week 4 已实现（静默拒绝 + 自动重置） |
+| 多用户认证（每人人格） | T6.7 | ✅ Week 4 已实现 |
+| 语音会话认证门控 | §9 | ✅ Week 4 已实现（未认证 → 静默忽略） |
 | 会话持久化与快照 | §14.3 | ✅ 已实现（JSON 原子写） |
 | IPC（JSON-RPC + TCP/NamedPipe） | §16.2 | ✅ 已实现（TCP 全通，NamedPipe 需 pywin32） |
 | 语音链路（采集→VAD→ASR→LLM→TTS→播放） | §3.1 / §6.1 | ✅ Week 2 已实现（silero/funasr/cosyvoice 适配 + 优雅降级） |
@@ -99,7 +109,7 @@ python -m aivyos_core.workflow --demo "天气网页失败"        # 观察构建
 | WebSocket 实时通道 | §16.3.2 | ✅ Week 2 已实现（RFC6455 零依赖，T1.5） |
 | CLI 文本输入 | §3.2 | ✅ 已实现 |
 | Tauri 2.0 壳层 | §12 | 🚧 骨架就绪（Rust 未安装，待 `cargo check`） |
-| 声纹/面部认证 | §9 | ⏳ Week 4 |
+| 声纹/面部认证 | §9 | ✅ Week 4 已实现（见上表，Phase 1 完成） |
 | 托盘 / 热键 / 更新 / 热交换 | §12-15 | ⏳ Phase 3 |
 
 ## 设计要点
@@ -107,4 +117,4 @@ python -m aivyos_core.workflow --demo "天气网页失败"        # 观察构建
 - **零依赖可运行**：核心链路仅用 Python 标准库；PyYAML/pywin32/sounddevice/silero-vad/funasr/cosyvoice/mem0 均为可选增强
 - **四级降级**：真实后端失败 → mock（链路不断）；mem0 缺失 → JSON 记忆；NamedPipe 缺失 → TCP 回环；语音模型缺失 → 能量 VAD + 规则 ASR + 占位 TTS
 - **路由诚实报告**：`route.fallback=true` 明确标注降级，不伪装真实推理
-- **测试即文档**：89 个 unittest 覆盖配置/人格/上下文/路由/引擎/记忆/MemFS/工作流/恢复/IPC/唤醒/VAD/ASR/TTS/语音会话/WebSocket 全链路
+- **测试即文档**：117 个 unittest 覆盖配置/人格/上下文/路由/引擎/记忆/MemFS/工作流/恢复/IPC/唤醒/VAD/ASR/TTS/语音会话/认证（声纹/面部/活体/状态机/门控）/WebSocket 全链路
