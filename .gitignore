@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# 测试与工具
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node / Tauri 前端
+node_modules/
+shell/dist/
+shell/src-tauri/target/
+
+# 运行时数据（默认存 ~/.aivyos，此处兜底）
+.aivyos_data/
+.aivyos_test/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,73 @@
+:root {
+  --bg: #0f1420;
+  --panel: #171d2e;
+  --text: #e8ecf4;
+  --dim: #8b93a7;
+  --accent: #3b82f6;
+  --user: #1e293b;
+  --assistant: #1c2538;
+  --error: #f87171;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+.app { display: flex; flex-direction: column; height: 100%; }
+
+.bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid #243049;
+  font-size: 14px;
+}
+.dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #3b82f6; /* idle 蓝色，对应 §15.1 托盘状态 */
+  animation: pulse 2s infinite;
+}
+@keyframes pulse { 50% { opacity: 0.4; } }
+.spacer { flex: 1; }
+.status { font-size: 12px; color: var(--dim); }
+.status.dim { color: #5b6377; }
+
+.chat {
+  flex: 1; overflow-y: auto; padding: 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.msg { max-width: 78%; }
+.msg.user { align-self: flex-end; }
+.msg.assistant { align-self: flex-start; }
+.bubble {
+  padding: 10px 14px; border-radius: 12px;
+  white-space: pre-wrap; word-break: break-word; line-height: 1.5;
+  font-size: 14px;
+}
+.msg.user .bubble { background: var(--user); border: 1px solid #2c3a55; }
+.msg.assistant .bubble { background: var(--assistant); border: 1px solid #26324d; }
+.typing { color: var(--dim); font-style: italic; }
+.meta { font-size: 11px; color: var(--dim); margin-top: 4px; }
+.error { color: var(--error); font-size: 12px; text-align: center; }
+
+.inputbar {
+  display: flex; gap: 8px; padding: 12px 16px;
+  background: var(--panel); border-top: 1px solid #243049;
+}
+.inputbar input {
+  flex: 1; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid #2c3a55; background: #12182a; color: var(--text);
+  font-size: 14px; outline: none;
+}
+.inputbar input:focus { border-color: var(--accent); }
+.inputbar button {
+  padding: 10px 20px; border-radius: 8px; border: none;
+  background: var(--accent); color: #fff; cursor: pointer; font-size: 14px;
+}
+.inputbar button:disabled { opacity: 0.5; cursor: not-allowed; }

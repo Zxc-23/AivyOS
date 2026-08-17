@@ -1,0 +1,24 @@
+# ============================================================
+# AivyOS — 重量级 ML 依赖（按需启用，代码已做优雅降级）
+# 核心对话链路（mock 模式）不需要安装本文件中的任何包。
+# ============================================================
+
+# ---- LLM 推理（二选一，本地）----
+# ollama            # 推荐先装：模型管理 + OpenAI 兼容 API（RTX 4060 Ti 8GB → qwen2.5:3b/7b INT4）
+# vllm              # 高并发推理（需 CUDA 12.1+；8GB 显存建议 7B INT4 或更小模型）
+
+# ---- 记忆层（Week 3 启用）----
+mem0>=0.1
+chromadb>=0.5
+
+# ---- Agent 编排（Week 3 启用）----
+langgraph>=0.2
+
+# ---- 语音（Week 2 启用）----
+# silero-vad>=5.0          # VAD 语音活动检测（小，可先装）
+# funasr                   # SenseVoice/Paraformer 流式 ASR
+# cosyvoice                # CosyVoice 3 TTS（Apache-2.0）
+
+# ---- 认证（Week 4 启用）----
+# speechbrain              # ECAPA-TDNN 声纹（192 维）
+# insightface              # 面部识别（Buffalo_L）

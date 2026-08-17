@@ -1,0 +1,17 @@
+[package]
+name = "aivyos-shell"
+version = "0.1.0"
+description = "AivyOS 桌面壳层（Tauri 2.0）— Phase 1 Week 1 骨架"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lib]
+name = "aivyos_shell_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aivyos-core"
+version = "0.1.0"
+description = "AivyOS 个人专属AI伴侣系统 — Python AI 核心（Phase 1 · Week 1 核心对话闭环）"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# 重量级 ML 依赖按需安装（详见 requirements-ml.txt），核心链路零依赖可运行
+memory = ["mem0>=0.1", "chromadb>=0.5"]
+langgraph = ["langgraph>=0.2"]
+winpipe = ["pywin32>=306; platform_system=='Windows'"]
+
+[tool.setuptools.packages.find]
+include = ["aivyos_core*"]
+
+[tool.setuptools.package-data]
+aivyos_core = ["py.typed"]
