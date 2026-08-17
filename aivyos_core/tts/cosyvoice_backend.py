@@ -15,7 +15,7 @@ class CosyVoiceBackend(TTSBackend):
     name = "cosyvoice3"
     sample_rate = 24000
 
-    def __init__(self, model: str = "CosyVoice3-0.5B", clone_seconds: int = 3) -> None:
+    def __init__(self, model: str = "CosyVoice3-0.5B", clone_seconds: int = 3, clone_ref_path: str | None = None) -> None:
         try:
             from cosyvoice.cli.cosyvoice import CosyVoice3  # type: ignore
         except ImportError as e:
@@ -25,6 +25,11 @@ class CosyVoiceBackend(TTSBackend):
             ) from e
         self.model = CosyVoice3(model, load_jit=False, load_trt=False, fp16=False)
         self.clone_seconds = clone_seconds
+        self._ref_pcm: Optional[bytes] = None
+        if clone_ref_path:
+            from aivyos_core.audio.wav import read_wav
+
+            _, self._ref_pcm = read_wav(clone_ref_path)
 
     def synthesize(self, text: str) -> TTSResult:
         import time
@@ -50,13 +55,16 @@ class CosyVoiceBackend(TTSBackend):
             meta={"clone": False},
         )
 
-    def clone_voice(self, ref_pcm: bytes, text: str) -> TTSResult:
-        """zero-shot 克隆：ref_pcm 为 3 秒参考音频（§6.1）。"""
+    def clone_voice(self, ref_pcm: Optional[bytes] = None, text: str = "") -> TTSResult:
+        """zero-shot 克隆（§6.1）：ref_pcm 为 3 秒参考音频；缺省用配置 clone_ref_path。"""
+        if text == "":
+            return self.synthesize(text="")
+        ref = ref_pcm if ref_pcm is not None else self._ref_pcm
         import time
 
         start = time.perf_counter()
         chunks = []
-        for chunk in self.model.inference_zero_shot(text, self._default_ref_text(), self._ref_bytes(ref_pcm)):
+        for chunk in self.model.inference_zero_shot(text, self._default_ref_text(), self._ref_bytes(ref)):
             chunks.append(chunk["tts_speech"])
         import torch
 
@@ -68,10 +76,10 @@ class CosyVoiceBackend(TTSBackend):
             text=text,
             backend=self.name,
             latency_ms=(time.perf_counter() - start) * 1000,
-            meta={"clone": True},
+            meta={"clone": True, "ref_source": "configured" if self._ref_pcm else "provided/zero"},
         )
 
-    # ---- 内部（占位，接入时替换为真实参考音频）----
+    # ---- 内部 ----
 
     @staticmethod
     def _default_ref_text() -> str:
@@ -84,7 +92,9 @@ class CosyVoiceBackend(TTSBackend):
         return np.zeros(16000 * 3, dtype="int16")
 
     @staticmethod
-    def _ref_bytes(pcm: bytes):
+    def _ref_bytes(pcm: Optional[bytes]):
         import numpy as np
 
+        if pcm is None:
+            return np.zeros(16000 * 3, dtype="int16")  # 未配置参考样本 → 零向量（占位音色）
         return np.frombuffer(pcm, dtype="int16")

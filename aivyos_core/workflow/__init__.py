@@ -5,6 +5,7 @@ from aivyos_core.workflow.mini_graph import END, CompiledGraph, StateGraph, Work
 from aivyos_core.workflow.workflows import (
     build_chat_flow_graph,
     build_vibe_coding_graph,
+    stop_preview_server,
 )
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "WorkflowError",
     "build_vibe_coding_graph",
     "build_chat_flow_graph",
+    "stop_preview_server",
 ]

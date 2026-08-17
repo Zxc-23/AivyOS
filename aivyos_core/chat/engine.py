@@ -29,6 +29,7 @@ from aivyos_core.notification import Notifier, create_notifier
 from aivyos_core.output import OutputRouter
 from aivyos_core.persona import Persona
 from aivyos_core.recovery import BootRecovery, RecoverySummary
+from aivyos_core.summary import LLMSummarizer
 from aivyos_core.vision.service import VisionService
 
 log = logging.getLogger(__name__)
@@ -46,6 +47,9 @@ class ChatEngine:
         self.persona = Persona.from_config(config.get("persona", {}))
         self.memory = MemoryManager(config.get("memory", {}), self.home)
         self.router = ModelRouter(config.get("llm", {}))
+        self.memory.router = self.router  # 事实抽取 LLM 通道（A2）
+        # §4.4.2 中期摘要：真实 LLM 可用则 LLM，否则朴素回退（A1 清理）
+        self.summarizer = LLMSummarizer(self.router, backend=config.get("chat", {}).get("summarize_backend", "auto"))
         # Week 3：Agent 记忆文件系统（§8.1 MemFS，跨重启存活）
         memfs_cfg = config.get("memfs", {})
         self.memfs = MemFS(self.home / memfs_cfg.get("root", "memfs"))
@@ -207,15 +211,18 @@ class ChatEngine:
         )
 
     def _archive_turns(self, old_turns, session_id: str) -> None:
-        """远期归档：旧轮次写入记忆（§4.4.2 远期归档）。"""
-        summary = "；".join(f"{m.role}: {m.content[:60]}" for m in old_turns[-4:])
+        """远期归档（§4.4.2）：旧轮次 LLM 摘要 → 写入记忆（真实后端不可用则朴素摘要）。"""
         import asyncio
+
+        async def _do():
+            summary = await self.summarizer.summarize(list(old_turns))
+            await self.memory.add(f"[会话归档 {session_id}] {summary}", {"kind": "archive"})
 
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        loop.create_task(self.memory.add(f"[会话归档 {session_id}] {summary}", {"kind": "archive"}))
+        loop.create_task(_do())
 
     # ---- 人格调整（CLI/托盘入口）----
 

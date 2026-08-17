@@ -45,9 +45,15 @@ class TestLiveness(AivyTestCase):
         ok, _ = self.lc.check_audio(flat_audio(duration_s=0.2))
         self.assertFalse(ok)
 
-    def test_image_placeholder(self):
-        ok, _ = self.lc.check_image(b"image")
+    def test_image_visual_liveness_passive(self):
+        # 无 cv2 → auto 回退 passive（诚实标注，非占位通过）
+        from aivyos_core.auth.liveness import VisualLiveness
+
+        v = VisualLiveness(backend="auto")
+        self.assertEqual(v.backend, "passive")
+        ok, detail = self.lc.check_image(b"image")
         self.assertTrue(ok)
+        self.assertIn("passive", detail)
         ok2, _ = self.lc.check_image(None)
         self.assertFalse(ok2)
 

@@ -29,6 +29,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "model": "qwen2.5:7b",
             "api_key": None,
             "timeout_s": 60,
+            "probe": True,             # 真实可用性探测（GET /models）
+            "probe_timeout_s": 1.5,
+            "probe_ttl_s": 20,         # 探测结果缓存时长
         },
         "cloud": {
             "base_url": "https://api.anthropic.com/v1",
@@ -41,7 +44,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "chat": {
         "context_window": 32768,   # §4.4.1 按 32K 模型分配；128K 模型可调大
         "history_turns": 12,       # 近期原始保留轮数（§4.4.2 近期保留）
-        "summarize_from_turn": 12, # 超过该轮数启用中期摘要（Week 1 为朴素截断占位）
+        "summarize_from_turn": 12, # 超过该轮数启用中期摘要
+        "summarize_backend": "auto",  # auto | naive | llm（§4.4.2 中期摘要）
         "system_prompt_tokens": 2048,
         "memory_tokens": 8192,
         "max_input_tokens": 4096,
@@ -63,6 +67,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "memory": {
         "backend": "auto",           # auto | simple | mem0
+        "extract_backend": "auto",   # auto | rules | llm（事实抽取：真实 LLM 可用则 LLM，否则规则）
         "simple_path": "memory.jsonl",
         "mem0_collection": "aivyos_memory",
         "mem0_embedder_model": "BAAI/bge-m3",
@@ -96,6 +101,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "model": "CosyVoice3-0.5B",  # §6.1 主引擎
         "sample_rate": 24000,        # CosyVoice 3 输出 24kHz
         "clone_seconds": 3,          # 3 秒音色克隆（§6.1）
+        "clone_ref_path": None,      # 克隆参考音频 WAV 路径（§6.1 3 秒样本）
     },
     "voice": {
         "wake_words": ["Aivy", "艾维", "贾维斯"],
@@ -115,6 +121,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "workflow": {
         "checkpoint_db": "checkpoints.sqlite",  # LangGraph 风格检查点（§4.5.2/§18.3）
         "thread_prefix": "wf_",
+        "executor": "demo",          # demo | local（local：真实写文件/构建命令/HTTP 预览）
+        "workspace": ".aivyos_workspace",  # local 执行器的工作区
+        "build_command": None,       # local 构建命令（如 "python -m build"）；None=跳过构建
+        "preview": True,             # local 预览：启动本地 HTTP 服务器
     },
     # ---- Week 4：专属认证（§9）----
     "auth": {
@@ -124,6 +134,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "voice_backend": "auto",     # auto | simple | speechbrain（ECAPA-TDNN 192 维）
         "face_backend": "auto",      # auto | mock | insightface
         "liveness_enabled": True,    # §9.1 活体检测
+        "visual_backend": "auto",    # auto | passive | cv2（视觉活体：cv2 拉普拉斯方差+人脸）
         "silent_reject": True,       # §9.1 失败处理：静默忽略，不暴露系统存在
         "users_dir": "users",        # 用户注册目录（声纹模板 + 人格配置，T6.7）
         "min_enroll_seconds": 3.0,   # 注册样本时长下限（§9.2：3-10 秒）

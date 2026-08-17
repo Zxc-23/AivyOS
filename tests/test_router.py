@@ -1,5 +1,6 @@
 """LLM 路由测试（文档 §4.1.3）。"""
 
+import copy
 import os
 import unittest
 
@@ -11,8 +12,9 @@ from tests import AivyTestCase
 
 
 def _router(mode: str = "auto", cloud_key: str | None = None) -> ModelRouter:
-    cfg = dict(DEFAULT_CONFIG["llm"])
+    cfg = copy.deepcopy(DEFAULT_CONFIG["llm"])
     cfg["mode"] = mode
+    cfg["local"]["probe"] = False  # 路由测试确定性：关闭真实探测（乐观可用）
     if cloud_key:
         os.environ["AIVYOS_CLOUD_API_KEY"] = cloud_key
     else:
@@ -40,7 +42,7 @@ class TestRouter(AivyTestCase):
         r = _router()
         d = r.route("你好")
         self.assertEqual(d.mode, RouteMode.LOCAL)
-        self.assertFalse(d.fallback)
+        self.assertFalse(d.fallback)  # 探测关闭 → 乐观本地可用
 
     def test_auto_complex_no_key_falls_back_local(self):
         r = _router()
@@ -73,6 +75,62 @@ class TestRouter(AivyTestCase):
         d = r.route("你好")
         resp = asyncio.run(r.complete(LLMRequest(messages=[{"role": "user", "content": "你好"}], model="x"), d))
         self.assertIn("mock", resp.model)
+
+
+class TestLocalProbe(AivyTestCase):
+    """A4：本地可用性真实探测（GET /models + TTL 缓存，确定性测试）。"""
+
+    def _cfg(self, base_url: str, timeout: float = 1.0) -> ModelRouter:
+        cfg = copy.deepcopy(DEFAULT_CONFIG["llm"])
+        cfg["local"]["base_url"] = base_url
+        cfg["local"]["probe_timeout_s"] = timeout
+        return ModelRouter(cfg)
+
+    def test_probe_unreachable_false(self):
+        r = self._cfg("http://127.0.0.1:1/v1")  # 必然拒绝/超时
+        self.assertFalse(r._local_available())
+
+    def test_probe_live_server_true(self):
+        import json as _json
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class ModelsHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = _json.dumps({"object": "list", "data": []}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        srv = HTTPServer(("127.0.0.1", 0), ModelsHandler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            r = self._cfg(f"http://127.0.0.1:{srv.server_address[1]}/v1")
+            self.assertTrue(r._local_available())
+            # TTL 缓存：服务停止后短时间内仍缓存 True
+            srv.shutdown()
+            self.assertTrue(r._local_available())
+        finally:
+            srv.server_close()
+
+    def test_probe_disabled_optimistic(self):
+        cfg = copy.deepcopy(DEFAULT_CONFIG["llm"])
+        cfg["local"]["probe"] = False
+        r = ModelRouter(cfg)
+        self.assertTrue(r._local_available())
+
+    def test_env_disable_local(self):
+        os.environ["AIVYOS_DISABLE_LOCAL"] = "1"
+        try:
+            r = self._cfg("http://127.0.0.1:11434/v1")
+            self.assertFalse(r._local_available())
+        finally:
+            del os.environ["AIVYOS_DISABLE_LOCAL"]
 
 
 if __name__ == "__main__":

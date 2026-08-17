@@ -98,7 +98,9 @@ class CompiledGraph:
             state = await self._run_node(current, state, ctx)
             self.last_trace.append(current)
             if self.checkpointer is not None:
-                self.checkpointer.save(thread_id, current, state)
+                # 剥离内部瞬态键（如 _preview_server），避免不可序列化对象入库
+                saveable = {k: v for k, v in state.items() if not k.startswith("_")}
+                self.checkpointer.save(thread_id, current, saveable)
             current = self._next(current, state)
         return state
 

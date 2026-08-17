@@ -108,7 +108,13 @@ python -m aivyos_core.auth verify --wav test.wav             # 真实音频认�
 | 原生通知适配（win10toast 可选 + console 回退） | §12.6 | ✅ 已实现（T4.4） |
 | 情感标签控制（14 标签 [laughter][breath]…） | §6.1 | ✅ 已实现（T4.5） |
 | 悬浮输入框（tkinter 可选） | §3.2 | ✅ 已实现（T1.5） |
-| **端到端联调测试**（语音认证→ASR→LLM→TTS / 视觉融合 / 输出路由 / 记忆持久化） | §23 | ✅ 已实现（148 测试全通，Phase 1 收官） |
+| **LLM 摘要**（真实后端可用 → LLM；否则朴素回退） | §4.4.2 | ✅ 已实现（A1 清理，杜绝 mock 冒充） |
+| **LLM 事实抽取**（extract_backend=auto/rules/llm） | §4.2 | ✅ 已实现（A2 清理） |
+| **视觉活体**（cv2 拉普拉斯方差+人脸 / honest passive） | §9.1 | ✅ 已实现（A3 清理） |
+| **本地可用性真实探测**（GET /models + TTL 缓存） | §4.1 | ✅ 已实现（A4 清理） |
+| **TTS 克隆参考音频**（clone_ref_path 配置加载） | §6.1 | ✅ 已实现（A5 清理） |
+| **工作流 local 执行器**（真实写文件/构建/HTTP 预览 + give_up 终止） | §4.5.2 | ✅ 已实现（A6 清理） |
+| **端到端联调测试**（语音认证→ASR→LLM→TTS / 视觉融合 / 输出路由 / 记忆持久化） | §23 | ✅ 已实现（164 测试全通，Phase 1 收官） |
 | 会话持久化与快照 | §14.3 | ✅ 已实现（JSON 原子写） |
 | IPC（JSON-RPC + TCP/NamedPipe） | §16.2 | ✅ 已实现（TCP 全通，NamedPipe 需 pywin32） |
 | 语音链路（采集→VAD→ASR→LLM→TTS→播放） | §3.1 / §6.1 | ✅ Week 2 已实现（silero/funasr/cosyvoice 适配 + 优雅降级） |
@@ -124,7 +130,7 @@ python -m aivyos_core.auth verify --wav test.wav             # 真实音频认�
 - **零依赖可运行**：核心链路仅用 Python 标准库；PyYAML/pywin32/sounddevice/silero-vad/funasr/cosyvoice/mem0 均为可选增强
 - **四级降级**：真实后端失败 → mock（链路不断）；mem0 缺失 → JSON 记忆；NamedPipe 缺失 → TCP 回环；语音模型缺失 → 能量 VAD + 规则 ASR + 占位 TTS
 - **路由诚实报告**：`route.fallback=true` 明确标注降级，不伪装真实推理
-- **测试即文档**：148 个 unittest 覆盖配置/人格/上下文/路由/引擎/记忆/MemFS/工作流/恢复/IPC/唤醒/VAD/ASR/TTS/语音会话/认证（声纹/面部/活体/状态机/门控）/视觉/多模态融合/输出路由/通知/情感标签/悬浮输入/端到端联调 全链路
+- **测试即文档**：164 个 unittest 覆盖配置/人格/上下文/路由(含真实探测)/引擎/记忆(含LLM抽取)/MemFS/工作流(含local执行器)/恢复/摘要/IPC/唤醒/VAD/ASR/TTS/语音会话/认证（声纹/面部/活体/状态机/门控）/视觉/多模态融合/输出路由/通知/情感标签/悬浮输入/端到端联调 全链路
 
 ## Phase 1 里程碑状态 ✅ 完成（能听、能想、能说、能记、认主、能看）
 

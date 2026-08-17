@@ -91,14 +91,71 @@ class TestVibeCodingWorkflow(AivyTestCase):
         self.assertIn("save_memory", app.last_trace)
         self.assertEqual(app.last_trace[0], "understand")
 
-    def test_build_failure_retry_loop(self):
+    def test_build_failure_retry_then_give_up(self):
         ck = _ckpt("ck_vibe_fail.db")
         app = build_vibe_coding_graph(ck).compile(checkpointer=ck)
         state = asyncio.run(app.invoke({"user_request": "做一个天气网页失败"}, thread_id="wf_fail"))
-        # 构建失败回环（上限 2 次）后成功 → build_failed 最终为 False
-        self.assertFalse(state["build_failed"])
+        # 构建失败回环（上限 2 次）后 give_up 终止：不假成功、不无限循环
+        self.assertTrue(state["build_failed"])
         self.assertEqual(state["retry_count"], 2)
         self.assertGreater(app.last_trace.count("generate"), 1)  # 回环触发
+        self.assertNotIn("preview", app.last_trace)  # 未假成功进入预览
+
+    def test_local_executor_writes_files_and_builds(self):
+        import shutil
+
+        ws = os.path.join(_TMP, "ws_local")
+        shutil.rmtree(ws, ignore_errors=True)
+        state = None
+        try:
+            ck = _ckpt("ck_local.db")
+            app = build_vibe_coding_graph(ck).compile(checkpointer=ck)
+            ctx = {
+                "executor": "local",
+                "workspace": ws,
+                "build_command": "python -c \"import sys; sys.exit(0)\"",
+                "preview": True,
+            }
+            state = asyncio.run(app.invoke({"user_request": "做一个网页"}, thread_id="wf_local", ctx=ctx))
+            # 真实文件写入
+            for name in ("index.html", "style.css", "script.js"):
+                self.assertTrue(os.path.exists(os.path.join(ws, name)), name)
+            self.assertFalse(state["build_failed"])
+            self.assertTrue(state["preview_ok"])
+            self.assertIn("127.0.0.1", state["preview_url"])
+            # 预览服务器真实可访问
+            import urllib.request
+
+            body = urllib.request.urlopen(state["preview_url"], timeout=5).read().decode()
+            self.assertIn("<title>做一个网页</title>", body)
+        finally:
+            from aivyos_core.workflow.workflows import stop_preview_server
+
+            if state is not None:
+                stop_preview_server(state)
+            shutil.rmtree(ws, ignore_errors=True)
+
+    def test_local_executor_build_failure_gives_up(self):
+        import shutil
+
+        ws = os.path.join(_TMP, "ws_local_fail")
+        shutil.rmtree(ws, ignore_errors=True)
+        try:
+            ck = _ckpt("ck_local_fail.db")
+            app = build_vibe_coding_graph(ck).compile(checkpointer=ck)
+            ctx = {
+                "executor": "local",
+                "workspace": ws,
+                "build_command": "python -c \"import sys; sys.exit(1)\"",
+                "preview": True,
+            }
+            state = asyncio.run(app.invoke({"user_request": "项目X"}, thread_id="wf_local_fail", ctx=ctx))
+            self.assertTrue(state["build_failed"])
+            self.assertEqual(state["retry_count"], 2)
+            self.assertTrue(state["errors"])
+            self.assertNotIn("preview", app.last_trace)
+        finally:
+            shutil.rmtree(ws, ignore_errors=True)
 
     def test_resume_from_checkpoint(self):
         ck = _ckpt("ck_resume.db")

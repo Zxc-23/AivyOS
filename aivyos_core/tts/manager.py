@@ -23,7 +23,11 @@ def create_tts(cfg: Dict[str, Any]) -> TTSBackend:
 
     if backend in ("cosyvoice", "auto"):
         try:
-            return CosyVoiceBackend(model=model, clone_seconds=clone_seconds)
+            return CosyVoiceBackend(
+                model=model,
+                clone_seconds=clone_seconds,
+                clone_ref_path=cfg.get("clone_ref_path"),
+            )
         except TTSUnavailable as e:
             if backend == "cosyvoice":
                 log.warning("配置要求 cosyvoice 但不可用：%s", e)

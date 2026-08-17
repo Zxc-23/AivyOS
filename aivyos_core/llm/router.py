@@ -8,7 +8,11 @@
 
 from __future__ import annotations
 
+import json
 import os
+import time
+import urllib.error
+import urllib.request
 from typing import Dict, List, Optional
 
 from aivyos_core.llm.base import LLMBackend, LLMBackendError
@@ -34,6 +38,10 @@ class ModelRouter:
         self.cfg = llm_cfg
         self._backends: Dict[str, LLMBackend] = {}
         self._cloud_key: Optional[str] = None
+        # 本地探测缓存（A4）
+        self._probe_ok: bool = False
+        self._probe_at: Optional[float] = None
+        self._probe_ttl: float = float(llm_cfg.get("local", {}).get("probe_ttl_s", 20))
 
     # ---- 复杂度估计（§4.1.3 estimate_complexity）----
 
@@ -126,13 +134,32 @@ class ModelRouter:
             return self._backends["cloud"]
         raise LLMBackendError(f"未知路由模式: {mode}")
 
-    # ---- 可用性探测 ----
+    # ---- 可用性探测（A4：真实连接测试 + TTL 缓存）----
 
     def _local_available(self) -> bool:
-        """Week 1 探测：环境变量显式禁用则不可用；真实探测（连接测试）留待后续。"""
+        """真实探测本地端点（GET /models，TTL 缓存）；AIVYOS_DISABLE_LOCAL 强制禁用。"""
         if os.environ.get("AIVYOS_DISABLE_LOCAL") == "1":
             return False
-        return True  # 乐观可用；调用失败时由 complete() 降级 mock
+        probe_cfg = self.cfg.get("local", {}).get("probe", True)
+        if not probe_cfg:
+            return True  # 显式关闭探测 → 乐观可用
+        now = time.monotonic()
+        if self._probe_at is not None and now - self._probe_at < self._probe_ttl:
+            return self._probe_ok
+        self._probe_ok = self._do_probe()
+        self._probe_at = now
+        return self._probe_ok
+
+    def _do_probe(self) -> bool:
+        """GET {base_url}/models（Ollama/vLLM OpenAI 兼容端点均支持）。"""
+        base = self.cfg["local"]["base_url"].rstrip("/")
+        timeout = float(self.cfg.get("local", {}).get("probe_timeout_s", 1.5))
+        try:
+            req = urllib.request.Request(f"{base}/models", method="GET")
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status == 200
+        except Exception:
+            return False
 
     def _cloud_api_key(self) -> Optional[str]:
         if self._cloud_key is None:
