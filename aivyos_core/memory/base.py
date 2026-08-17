@@ -26,7 +26,7 @@ class MemoryHit:
 
 
 class MemoryBackend(ABC):
-    """统一记忆接口：add / search / get_all。"""
+    """统一记忆接口：add / search / get_all / update。"""
 
     name: str = "base"
 
@@ -41,3 +41,7 @@ class MemoryBackend(ABC):
     @abstractmethod
     async def get_all(self) -> List[MemoryHit]:
         raise NotImplementedError
+
+    async def update(self, memory_id: str, text: str) -> str:
+        """更新一条记忆（后端可选实现；默认追加新版本并标记 supersedes）。"""
+        raise NotImplementedError(f"{self.name} 不支持 update")

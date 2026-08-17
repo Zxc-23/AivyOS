@@ -80,3 +80,7 @@ class Mem0Backend(MemoryBackend):
 
     async def get_all(self) -> List[MemoryHit]:
         return await self.search("", top_k=100)
+
+    async def update(self, memory_id: str, text: str) -> str:
+        """Mem0 更新：memory_id 定位，写入新文本（保留历史版本，§4.2.1 永不覆写）。"""
+        return self.memory.update(memory_id=memory_id, data={"text": text})

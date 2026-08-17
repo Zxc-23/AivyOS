@@ -44,7 +44,7 @@ class MemoryManager:
         if mode == "mem0" or mode == "auto":
             try:
                 b = Mem0Backend(
-                    persist_path=str(self.home / "memory_db"),
+                    persist_path=str(Path(self.home) / "memory_db"),
                     collection_name=self.cfg.get("mem0_collection", "aivyos_memory"),
                     embedder_model=self.cfg.get("mem0_embedder_model", "BAAI/bge-m3"),
                     llm_model=self.cfg.get("mem0_llm_model", "qwen2.5:7b"),
@@ -56,7 +56,7 @@ class MemoryManager:
                     log.warning("配置要求 mem0 但不可用：%s", e)
                 else:
                     log.info("mem0 不可用，回退 simple：%s", e)
-        return SimpleFileMemory(self.home / self.cfg.get("simple_path", "memory.jsonl"))
+        return SimpleFileMemory(Path(self.home) / self.cfg.get("simple_path", "memory.jsonl"))
 
     @property
     def backend_name(self) -> str:

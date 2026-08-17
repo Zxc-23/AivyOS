@@ -107,6 +107,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "port": 31702,               # WebSocket 实时通道（§16.3.2 风格）
         "host": "127.0.0.1",
     },
+    # ---- Week 3：记忆持久化 + 工作流（§8 记忆连续性 / §4.5 Agent 编排）----
+    "memfs": {
+        "root": "memfs",             # Letta MemFS 根目录（§8.1，跨重启存活）
+        "enabled": True,
+    },
+    "workflow": {
+        "checkpoint_db": "checkpoints.sqlite",  # LangGraph 风格检查点（§4.5.2/§18.3）
+        "thread_prefix": "wf_",
+    },
     "logging": {"level": "INFO"},
 }
 

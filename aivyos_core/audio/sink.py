@@ -41,18 +41,21 @@ class PlaybackSink(AudioSink):
     def __init__(self, sample_rate: int = 24000) -> None:
         try:
             import sounddevice as sd  # type: ignore
+            import numpy as np  # type: ignore
 
             self.sd = sd
+            self.np = np
         except ImportError as e:
-            raise RuntimeError("实时播放需要 sounddevice：pip install sounddevice") from e
+            raise RuntimeError("实时播放需要 sounddevice + numpy（缺失时降级 NullSink）") from e
         self.sample_rate = sample_rate
 
     def play(self, pcm: bytes) -> None:
-        import numpy as np  # type: ignore
-
-        audio = np.frombuffer(pcm, dtype="int16")
-        self.sd.play(audio, self.sample_rate)
-        self.sd.wait()
+        try:
+            audio = self.np.frombuffer(pcm, dtype="int16")
+            self.sd.play(audio, self.sample_rate)
+            self.sd.wait()
+        except Exception:
+            pass  # 无音频设备等异常 → 静默降级（不阻断对话链路）
 
 
 def create_sink(cfg: dict) -> AudioSink:

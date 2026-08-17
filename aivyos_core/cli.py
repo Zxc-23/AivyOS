@@ -29,6 +29,8 @@ HELP_TEXT = """可用命令：
   /persona <字段> <值> 修改人格参数（如：/persona tone casual /persona openness 0.9）
   /mem <文本>          写入一条记忆
   /memls              列出记忆
+  /memfs              查看 MemFS 记忆文件（§8.1）
+  /recover            启动上下文重建（§8.2 三重恢复）
   /routes             查看 LLM 路由状态
   /sessions           列出会话
   /status             系统状态
@@ -97,6 +99,22 @@ async def handle_command(engine: ChatEngine, line: str, session_id: str | None) 
             print("（暂无记忆）")
         for h in hits[-20:]:
             print(f"  [{h.created_at}] {h.text[:80]}")
+    elif cmd == "/memfs":
+        files = engine.memfs.list()
+        print(f"MemFS 文件（{len(files)} 个）:")
+        for rel in files:
+            content = engine.memfs.read(rel)
+            lines = [l for l in content.splitlines() if l.startswith("- [")]
+            print(f"  {rel}  ({len(lines)} 条记忆 / {len(content)} 字符)")
+        if args:
+            rel = args[0]
+            print(f"\n--- {rel} ---")
+            print(engine.memfs.read(rel)[:800])
+    elif cmd == "/recover":
+        summary = await engine.restore_on_boot()
+        print(summary.summary_text)
+        if summary.workflow_checkpoint:
+            print(f"  可续传: {summary.workflow_checkpoint['node']} @ {summary.workflow_checkpoint['thread_id']}")
     elif cmd == "/routes":
         for r in engine.router.backends_status():
             print(f"  {r['mode']:6s} {r['model']:20s} 可用={r['available']}")

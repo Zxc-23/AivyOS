@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from aivyos_core.config import ensure_home
 from aivyos_core.context import ContextManager
 from aivyos_core.llm.router import ModelRouter
+from aivyos_core.memfs import MemFS
 from aivyos_core.memory.manager import MemoryManager
 from aivyos_core.models import (
     AssistantReply,
@@ -23,6 +24,7 @@ from aivyos_core.models import (
     SessionState,
 )
 from aivyos_core.persona import Persona
+from aivyos_core.recovery import BootRecovery, RecoverySummary
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +41,9 @@ class ChatEngine:
         self.persona = Persona.from_config(config.get("persona", {}))
         self.memory = MemoryManager(config.get("memory", {}), self.home)
         self.router = ModelRouter(config.get("llm", {}))
+        # Week 3：Agent 记忆文件系统（§8.1 MemFS，跨重启存活）
+        memfs_cfg = config.get("memfs", {})
+        self.memfs = MemFS(self.home / memfs_cfg.get("root", "memfs"))
         chat_cfg = config.get("chat", {})
         self.context = ContextManager(
             context_window=chat_cfg.get("context_window", 32768),
@@ -49,6 +54,13 @@ class ChatEngine:
             max_input_tokens=chat_cfg.get("max_input_tokens", 4096),
             output_reserve_tokens=chat_cfg.get("output_reserve_tokens", 8192),
         )
+        self.recovery = BootRecovery(self)
+
+    # ---- 启动恢复（§8.2）----
+
+    async def restore_on_boot(self) -> RecoverySummary:
+        """重启后三重恢复：记忆 + MemFS + 工作流检查点。"""
+        return await self.recovery.restore_on_boot()
 
     # ---- 会话生命周期 ----
 
@@ -96,10 +108,12 @@ class ChatEngine:
     async def send(self, text: str, session_id: Optional[str] = None) -> AssistantReply:
         start = time.perf_counter()
 
-        # 1) 自动记忆抽取（朴素规则，§4.2）
+        # 1) 自动记忆抽取（朴素规则，§4.2）+ MemFS 事实归档（§8.1）
         extracted = None
         if self.config.get("memory", {}).get("auto_extract", True):
             extracted = await self.memory.try_extract(text, {"session": session_id or ""})
+            if extracted:
+                self.memfs.remember(text, category="facts.md")
 
         # 2) 会话加载 + 历史
         state = self.load_session(session_id)
@@ -175,4 +189,5 @@ class ChatEngine:
             "persona": self.persona.to_dict(),
             "home": str(self.home),
             "sessions": len(self.list_sessions()),
+            "memfs": self.memfs.summary(),
         }

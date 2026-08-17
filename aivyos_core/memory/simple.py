@@ -103,3 +103,16 @@ class SimpleFileMemory(MemoryBackend):
             )
             for rec in self._records
         ]
+
+    async def update(self, memory_id: str, text: str) -> str:
+        """追加新版本并标记 supersedes（JSONL 追加式存储的更新语义）。"""
+        rid = "mem_" + uuid.uuid4().hex[:10]
+        self._append(
+            {
+                "id": rid,
+                "text": text,
+                "metadata": {"supersedes": memory_id},
+                "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+        return rid

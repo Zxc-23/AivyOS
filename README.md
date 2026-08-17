@@ -73,6 +73,11 @@ python scripts\ws_demo_client.py "你好"
 # 方式 E：语音会话（采集→VAD→ASR→LLM→TTS→播放，全部可降级）
 python -m aivyos_core.voice --once "你好" --wav out.wav   # 单轮 + 保存音频
 python -m aivyos_core.voice                                 # 交互式语音对话
+
+# 方式 F：VibeCoding 工作流演示（§4.5.2，检查点 + 断点续传）
+python -m aivyos_core.workflow --demo "做一个天气网页"      # 首次执行
+python -m aivyos_core.workflow --resume                     # 从检查点续传
+python -m aivyos_core.workflow --demo "天气网页失败"        # 观察构建失败→自动修复回环
 ```
 
 ## 里程碑对应
@@ -82,7 +87,11 @@ python -m aivyos_core.voice                                 # 交互式语音对
 | LLM 路由（本地/云端/mock 三级） | §4.1.3 | ✅ 已实现（含失败降级） |
 | 人格系统（Big Five 模板） | §4.3 | ✅ 已实现 |
 | 上下文管理（窗口分配/压缩/归档） | §4.4 | ✅ 已实现（摘要为朴素占位，Week 3 升级） |
-| 记忆（Mem0 适配 + JSON 回退） | §4.2 | ✅ 已实现（simple 后端完整，mem0 适配就绪） |
+| 记忆（Mem0 适配 + JSON 回退） | §4.2 | ✅ 已实现（simple 后端完整，mem0 适配就绪，update 契约对齐） |
+| MemFS 类文件系统记忆（跨重启） | §8.1 | ✅ Week 3 已实现（零依赖，路径安全，快照/恢复） |
+| 工作流引擎（StateGraph/条件边/检查点/续传） | §4.5 | ✅ Week 3 已实现（mini_graph 零依赖 + langgraph 可选适配） |
+| VibeCoding 预置工作流（构建失败回环） | §4.5.2 / §7.4 | ✅ Week 3 已实现（演示模式） |
+| 启动上下文重建（记忆+MemFS+检查点） | §8.2 | ✅ Week 3 已实现（restore_on_boot 三重恢复） |
 | 会话持久化与快照 | §14.3 | ✅ 已实现（JSON 原子写） |
 | IPC（JSON-RPC + TCP/NamedPipe） | §16.2 | ✅ 已实现（TCP 全通，NamedPipe 需 pywin32） |
 | 语音链路（采集→VAD→ASR→LLM→TTS→播放） | §3.1 / §6.1 | ✅ Week 2 已实现（silero/funasr/cosyvoice 适配 + 优雅降级） |
@@ -98,4 +107,4 @@ python -m aivyos_core.voice                                 # 交互式语音对
 - **零依赖可运行**：核心链路仅用 Python 标准库；PyYAML/pywin32/sounddevice/silero-vad/funasr/cosyvoice/mem0 均为可选增强
 - **四级降级**：真实后端失败 → mock（链路不断）；mem0 缺失 → JSON 记忆；NamedPipe 缺失 → TCP 回环；语音模型缺失 → 能量 VAD + 规则 ASR + 占位 TTS
 - **路由诚实报告**：`route.fallback=true` 明确标注降级，不伪装真实推理
-- **测试即文档**：65 个 unittest 覆盖配置/人格/上下文/路由/引擎/记忆/IPC/唤醒/VAD/ASR/TTS/语音会话/WebSocket 全链路
+- **测试即文档**：89 个 unittest 覆盖配置/人格/上下文/路由/引擎/记忆/MemFS/工作流/恢复/IPC/唤醒/VAD/ASR/TTS/语音会话/WebSocket 全链路
