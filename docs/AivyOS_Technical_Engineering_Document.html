@@ -1,0 +1,2012 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AivyOS — 个人专属AI伴侣系统 · 完整技术工程文档</title>
+<style>
+:root {
+  --bg: #FAFBFC; --bg2: #F0F2F5; --bg3: #E8EBF0;
+  --ink: #1A1A2E; --muted: #6B7280; --rule: #E0E3E9;
+  --accent: #2563EB; --accent-light: #DBEAFE;
+  --accent2: #059669; --accent2-light: #D1FAE5;
+  --warning: #D97706; --warning-light: #FEF3C7;
+  --danger: #DC2626; --danger-light: #FEE2E2;
+  --code-bg: #1E293B; --code-ink: #E2E8F0;
+  --radius: 8px; --radius-lg: 12px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 15px; line-height: 1.7; color: var(--ink); background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+.container { max-width: 1200px; margin: 0 auto; padding: 0 1.5rem; display: grid; grid-template-columns: 240px 1fr; gap: 2.5rem; }
+.toc { position: sticky; top: 1.5rem; align-self: start; max-height: calc(100vh - 3rem); overflow-y: auto; font-size: 13px; border-left: 2px solid var(--rule); padding-left: 1rem; }
+.toc h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 0.5rem; }
+.toc h4 { font-size: 11px; color: var(--accent); margin: 0.75rem 0 0.3rem; }
+.toc ul { list-style: none; }
+.toc li { margin-bottom: 0.2rem; }
+.toc a { text-decoration: none; color: var(--muted); display: block; padding: 0.12rem 0; }
+.toc a:hover { color: var(--accent); }
+.toc .sub { padding-left: 0.8rem; font-size: 12px; }
+.content { max-width: 900px; padding: 2rem 0 4rem; }
+.content h1 { font-size: 1.8rem; font-weight: 700; margin: 0.5rem 0; letter-spacing: -0.01em; }
+.content h2 { font-size: 1.35rem; font-weight: 700; margin: 3rem 0 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid var(--accent); color: var(--ink); }
+.content h3 { font-size: 1.1rem; font-weight: 600; margin: 2rem 0 0.75rem; color: var(--ink); }
+.content h4 { font-size: 0.95rem; font-weight: 600; margin: 1.5rem 0 0.5rem; color: var(--muted); }
+.content p { margin-bottom: 1rem; }
+.content ul, .content ol { margin-bottom: 1rem; padding-left: 1.5rem; }
+.content li { margin-bottom: 0.35rem; }
+.content strong { font-weight: 600; }
+.content code { font-family: "JetBrains Mono", "Fira Code", monospace; font-size: 0.85em; background: var(--bg2); padding: 0.1em 0.35em; border-radius: 4px; color: var(--accent); }
+.content pre { background: var(--code-bg); color: var(--code-ink); padding: 1rem 1.25rem; border-radius: var(--radius); overflow-x: auto; font-size: 13px; line-height: 1.6; margin: 1rem 0; }
+.content pre code { background: none; color: inherit; padding: 0; }
+.cover { background: linear-gradient(135deg, #0F172A 0%, #1E3A5F 100%); color: #fff; padding: 3.5rem 2.5rem; border-radius: var(--radius-lg); margin: 2rem 0; }
+.cover h1 { color: #fff; border: none; font-size: 2rem; margin: 0 0 0.5rem; }
+.cover .subtitle { font-size: 1.05rem; color: #93C5FD; margin-bottom: 1.5rem; }
+.cover .meta { display: flex; flex-wrap: wrap; gap: 1.5rem; font-size: 13px; color: #94A3B8; }
+.cover .meta div { display: flex; flex-direction: column; }
+.cover .meta .label { color: #64748B; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.cover .meta .value { color: #E2E8F0; font-weight: 500; margin-top: 0.15rem; }
+.table-wrap { overflow-x: auto; margin: 1rem 0; border-radius: var(--radius); border: 1px solid var(--rule); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { background: var(--bg2); text-align: left; padding: 0.6rem 0.9rem; font-weight: 600; color: var(--ink); border-bottom: 1px solid var(--rule); white-space: nowrap; }
+td { padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accent-light); padding: 0.75rem 1rem; border-radius: 0 var(--radius) var(--radius) 0; margin: 1rem 0; font-size: 14px; }
+.callout.warn { border-color: var(--warning); background: var(--warning-light); }
+.callout.danger { border-color: var(--danger); background: var(--danger-light); }
+.callout.success { border-color: var(--accent2); background: var(--accent2-light); }
+.callout strong { display: inline-block; margin-right: 0.35rem; }
+.figure { margin: 1.5rem 0; text-align: center; }
+.figure svg { max-width: 100%; height: auto; }
+.figure figcaption { font-size: 13px; color: var(--muted); margin-top: 0.5rem; font-style: italic; }
+.badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 0.1em 0.5em; border-radius: 999px; letter-spacing: 0.03em; }
+.badge.new { background: var(--accent2-light); color: var(--accent2); }
+.badge.exp { background: var(--accent-light); color: var(--accent); }
+.badge.warn { background: var(--warning-light); color: var(--warning); }
+.badge.danger { background: var(--danger-light); color: var(--danger); }
+.badge.core { background: var(--accent-light); color: var(--accent); }
+.badge.safe { background: var(--accent2-light); color: var(--accent2); }
+.badge.sec { background: #EDE9FE; color: #7C3AED; }
+.badge.reuse { background: #EDE9FE; color: #7C3AED; }
+.phase-card { border: 1px solid var(--rule); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1rem 0; background: var(--bg); }
+.phase-card h4 { margin-top: 0; color: var(--accent); }
+.phase-card .duration { font-size: 12px; color: var(--muted); }
+.priority-card { border: 1px solid var(--rule); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1rem 0; background: var(--bg); border-left: 4px solid var(--accent); }
+.priority-card.high { border-left-color: var(--danger); }
+.priority-card.med { border-left-color: var(--warning); }
+.priority-card .ptitle { font-weight: 700; font-size: 15px; }
+.priority-card .pmeta { font-size: 12px; color: var(--muted); margin-top: 0.15rem; }
+.priority-card ul { margin-top: 0.5rem; margin-bottom: 0; }
+.task-card { border: 1px solid var(--rule); border-radius: var(--radius); padding: 1rem 1.25rem; margin: 1rem 0; background: var(--bg); border-left: 4px solid var(--accent2); }
+.task-card .ttitle { font-weight: 700; font-size: 15px; color: var(--ink); }
+.task-card .tmeta { font-size: 12px; color: var(--muted); margin-top: 0.15rem; }
+.task-card ul { margin-top: 0.5rem; margin-bottom: 0; }
+.scenario { border: 1px solid var(--rule); border-radius: var(--radius); padding: 1.25rem; margin: 1.5rem 0; background: var(--bg); }
+.scenario .title { font-weight: 600; color: var(--accent); margin-bottom: 0.5rem; font-size: 14px; }
+.step-list { counter-reset: step; list-style: none; padding-left: 0; }
+.step-list li { counter-increment: step; position: relative; padding-left: 2.5rem; margin-bottom: 0.75rem; min-height: 2rem; }
+.step-list li::before { content: counter(step); position: absolute; left: 0; top: 0; width: 1.75rem; height: 1.75rem; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+.state-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+.state-card { border: 1px solid var(--rule); border-radius: var(--radius); padding: 0.75rem; text-align: center; background: var(--bg); }
+.state-card .state-icon { font-size: 1.5rem; }
+.state-card .state-name { font-weight: 600; font-size: 13px; margin-top: 0.25rem; }
+.state-card .state-desc { font-size: 11px; color: var(--muted); margin-top: 0.15rem; }
+.menu-tree { font-family: monospace; font-size: 13px; line-height: 1.8; background: var(--bg2); border-radius: var(--radius); padding: 1rem; margin: 1rem 0; }
+.menu-tree .root { font-weight: 700; }
+.menu-tree .item { padding-left: 1rem; }
+.menu-tree .item.disabled { color: var(--muted); text-decoration: line-through; }
+.menu-tree .sep { color: var(--muted); }
+.menu-tree .sub { padding-left: 2rem; }
+.menu-tree .accel { float: right; color: var(--muted); }
+footer { margin-top: 3rem; padding: 2rem 0; border-top: 1px solid var(--rule); font-size: 13px; color: var(--muted); }
+footer .rev-history { margin-top: 1rem; }
+@media (max-width: 768px) { .container { grid-template-columns: 1fr; } .toc { display: none; } .cover { padding: 2rem 1.25rem; } }
+@media print { .toc { display: none; } .container { grid-template-columns: 1fr; max-width: 100%; } .content { max-width: 100%; } .cover { background: #1a1a2e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; } pre, table, .callout, .phase-card { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- TOC -->
+  <aside class="toc">
+    <h3>目录</h3>
+    <h4>第一部分：基础架构</h4>
+    <ul>
+      <li><a href="#ch1">1. 文档概述</a></li>
+      <li><a href="#ch2">2. 系统总体架构</a></li>
+    </ul>
+    <h4>第二部分：核心层设计</h4>
+    <ul>
+      <li><a href="#ch3">3. 感知输入层</a></li>
+      <li><a href="#ch4">4. 核心大脑层</a></li>
+      <li><a href="#ch5">5. 能力扩展层</a></li>
+      <li><a href="#ch6">6. 输出响应层</a></li>
+    </ul>
+    <h4>第三部分：五大核心特性</h4>
+    <ul>
+      <li><a href="#ch7">7. Vibe Coding</a></li>
+      <li><a href="#ch8">8. 记忆连续性</a></li>
+      <li><a href="#ch9">9. 专属认证</a></li>
+      <li><a href="#ch10">10. 一句话做软件</a></li>
+      <li><a href="#ch11">11. 自动预览</a></li>
+    </ul>
+    <h4>第四部分：桌面端与工程化</h4>
+    <ul>
+      <li><a href="#ch12">12. 桌面端架构</a></li>
+      <li><a href="#ch13">13. 自动更新与签名</a></li>
+      <li><a href="#ch14">14. 热启动与热交换</a></li>
+      <li><a href="#ch15">15. 托盘交互设计</a></li>
+    </ul>
+    <h4>第五部分：工程规格</h4>
+    <ul>
+      <li><a href="#ch16">16. 数据流与通信协议</a></li>
+      <li><a href="#ch17">17. 技术选型清单</a></li>
+      <li><a href="#ch18">18. 部署与硬件</a></li>
+      <li><a href="#ch19">19. 安全与隐私</a></li>
+      <li><a href="#ch20">20. 性能指标</a></li>
+      <li><a href="#ch21">21. 测试与可观测性</a></li>
+      <li><a href="#ch22">22. 开源复用矩阵</a></li>
+    </ul>
+    <h4>第六部分：实施计划</h4>
+    <ul>
+      <li><a href="#ch23">23. 开发计划与里程碑</a></li>
+      <li><a href="#ch24">24. 功能模块任务清单</a></li>
+      <li><a href="#ch25">25. 风险评估</a></li>
+    </ul>
+  </aside>
+
+  <!-- Content -->
+  <main class="content">
+
+    <!-- Cover -->
+    <div class="cover">
+      <h1>AivyOS</h1>
+      <div class="subtitle">个人专属AI伴侣系统 · 完整技术工程文档</div>
+      <div class="meta">
+        <div><span class="label">文档编号</span><span class="value">AIVY-TDD-2026-001</span></div>
+        <div><span class="label">版本</span><span class="value">V2.0</span></div>
+        <div><span class="label">日期</span><span class="value">2026-08-17</span></div>
+        <div><span class="label">编写视角</span><span class="value">AI系统工程师</span></div>
+        <div><span class="label">密级</span><span class="value">个人使用</span></div>
+      </div>
+    </div>
+
+    <p>本文档整合了 AivyOS 全部技术规格，涵盖系统架构、四层核心设计、五大核心特性、桌面端工程化能力（托盘/热键/自动更新/签名/热交换）、部署规格、安全隐私、性能基准、测试策略、开源复用决策、开发计划及功能模块任务清单。所有模块经文档审查后统一修正，确保技术选型一致、数据指标准确。</p>
+
+    <div class="callout success">
+      <strong>V2.0 整合说明</strong> — 本版本将原有 5 份独立文档（技术工程文档、核心特性规格、桌面端与热启动规格、签名/热交换/托盘深度规格、文档审查与开源复用建议）整合为一份完整文档，修正了 TTS 引擎选型、ASR 选型、记忆架构、Agent 编排等全部不一致之处，并新增功能模块任务清单。
+    </div>
+
+    <!-- ===== Chapter 1 ===== -->
+    <h2 id="ch1">1. 文档概述</h2>
+
+    <h3>1.1 项目背景</h3>
+    <p>当前主流AI助理产品（Siri、Google Assistant、小爱同学等）普遍存在以下局限性：</p>
+    <ul>
+      <li><strong>隐私依赖云端</strong> — 用户语音、文本、行为数据需上传至厂商服务器处理，存在数据泄露与合规风险。</li>
+      <li><strong>能力受限</strong> — 以简单指令执行为主，缺乏复杂推理、多步规划和自主决策能力。</li>
+      <li><strong>无持续记忆</strong> — 跨会话记忆能力薄弱，无法形成对用户偏好的深度理解。</li>
+      <li><strong>缺乏个性化</strong> — 通用AI人格无法适配不同用户的交互风格和情感需求。</li>
+    </ul>
+    <p>受Marvel"贾维斯"（J.A.R.V.I.S.）概念启发，本项目旨在打造一个本地优先、隐私至上、持续进化的私人专属AI伴侣系统——<strong>AivyOS</strong>。</p>
+
+    <h3>1.2 项目目标</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>目标维度</th><th>具体指标</th><th>对标参照</th></tr></thead>
+        <tbody>
+          <tr><td>智能水平</td><td>具备不输于 Codex 和 Claude Code 的编程/推理能力</td><td>OpenAI Codex / Anthropic Claude Code</td></tr>
+          <tr><td>记忆能力</td><td>跨会话长期记忆，支持情节/语义/程序三类记忆，重启后连续</td><td>MemGPT / Letta MemFS</td></tr>
+          <tr><td>自进化</td><td>基于用户反馈的持续学习与行为优化闭环</td><td>Self-Refine / Reflexion / OpenJarvis</td></tr>
+          <tr><td>人格定制</td><td>可自定义性格参数、语气、交互风格</td><td>Character.AI / Replika</td></tr>
+          <tr><td>主动服务</td><td>支持定时唤醒、事件触发、条件监控</td><td>贾维斯概念原型</td></tr>
+          <tr><td>隐私保护</td><td>核心推理与数据存储均在本地，最小化云端依赖</td><td>Local-First Architecture</td></tr>
+          <tr><td>工程化</td><td>原生桌面应用、自动更新、热交换零中断</td><td>Tauri 2.0 + Ed25519 签名</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>1.3 设计理念</h3>
+    <ul>
+      <li><strong>本地优先（Local-First）</strong> — LLM推理、向量存储、记忆检索等核心环节在本地完成，仅在需要外部知识或进化优化时调用云端API。</li>
+      <li><strong>隐私至上（Privacy-First）</strong> — 用户行为数据、对话历史、偏好模型均在本地加密存储，不主动上传。</li>
+      <li><strong>持续进化（Continuous Evolution）</strong> — 构建反馈学习闭环，AI通过每次交互持续优化自身行为。</li>
+      <li><strong>多模态感知（Multimodal Perception）</strong> — 同时支持语音、文本、视觉三种感知通道，实现自然交互。</li>
+      <li><strong>人格化交互（Personified Interaction）</strong> — 可定制AI性格、语气、情感表达，打造"专属感"。</li>
+      <li><strong>开源复用优先（Reuse-First）</strong> — 优先复用成熟开源组件（Mem0/LangGraph/MCP/Cline/CosyVoice），减少约 60% 自研工作量。</li>
+    </ul>
+
+    <h3>1.4 文档结构</h3>
+    <p>本文档分为六大部分，共 25 章：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>部分</th><th>章节</th><th>内容</th></tr></thead>
+        <tbody>
+          <tr><td>第一部分：基础架构</td><td>第 1-2 章</td><td>文档概述、系统总体架构</td></tr>
+          <tr><td>第二部分：核心层设计</td><td>第 3-6 章</td><td>感知输入层、核心大脑层、能力扩展层、输出响应层</td></tr>
+          <tr><td>第三部分：五大核心特性</td><td>第 7-11 章</td><td>Vibe Coding、记忆连续性、专属认证、一句话做软件、自动预览</td></tr>
+          <tr><td>第四部分：桌面端与工程化</td><td>第 12-15 章</td><td>桌面端架构、自动更新与签名、热启动与热交换、托盘交互设计</td></tr>
+          <tr><td>第五部分：工程规格</td><td>第 16-22 章</td><td>数据流、技术选型、部署、安全、性能、测试、开源复用</td></tr>
+          <tr><td>第六部分：实施计划</td><td>第 23-25 章</td><td>开发计划、功能模块任务清单、风险评估</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ===== Chapter 2 ===== -->
+    <h2 id="ch2">2. 系统总体架构</h2>
+
+    <h3>2.1 架构总览</h3>
+    <p>AivyOS采用<strong>四层架构</strong>设计，数据自上而下流动，同时存在一条反馈回路使系统持续进化。各层之间通过内部消息总线和事件驱动机制通信，层间耦合度低，可独立替换组件。外层包裹 Tauri 2.0 桌面壳，提供原生窗口、系统托盘、全局热键、自动更新等桌面能力。</p>
+
+    <figure class="figure">
+      <svg viewBox="0 0 720 600" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 L7 4 L1 7 Z" fill="#6B7280"/></marker>
+          <marker id="arb" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 L7 4 L1 7 Z" fill="#2563EB"/></marker>
+        </defs>
+        <!-- Tauri Shell -->
+        <rect x="20" y="20" width="680" height="560" rx="16" fill="none" stroke="#E0E3E9" stroke-width="2" stroke-dasharray="8 4"/>
+        <text x="360" y="40" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="600" fill="#6B7280">Tauri 2.0 桌面壳（托盘 · 热键 · 自动更新 · 签名验证）</text>
+        <!-- Perception Layer -->
+        <rect x="48" y="60" width="624" height="80" rx="12" fill="none" stroke="#E0E3E9" stroke-width="1" stroke-dasharray="6 4"/>
+        <text x="64" y="80" font-family="sans-serif" font-size="12" font-weight="500" fill="#6B7280">感知输入层</text>
+        <rect x="110" y="90" width="140" height="40" rx="8" fill="#FAFBFC" stroke="#E0E3E9" stroke-width="1.5"/>
+        <text x="180" y="115" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#1A1A2E">语音输入</text>
+        <rect x="290" y="90" width="140" height="40" rx="8" fill="#FAFBFC" stroke="#E0E3E9" stroke-width="1.5"/>
+        <text x="360" y="115" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#1A1A2E">文本输入</text>
+        <rect x="470" y="90" width="140" height="40" rx="8" fill="#FAFBFC" stroke="#E0E3E9" stroke-width="1.5"/>
+        <text x="540" y="115" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#1A1A2E">视觉输入</text>
+        <path d="M 360 140 L 360 168" stroke="#6B7280" stroke-width="1.5" fill="none" stroke-linecap="round" marker-end="url(#ar)"/>
+        <!-- Brain Layer -->
+        <rect x="48" y="168" width="624" height="116" rx="12" fill="none" stroke="#E0E3E9" stroke-width="1" stroke-dasharray="6 4"/>
+        <text x="64" y="188" font-family="sans-serif" font-size="12" font-weight="500" fill="#6B7280">核心大脑层</text>
+        <rect x="110" y="200" width="140" height="64" rx="8" fill="#FAFBFC" stroke="#E0E3E9" stroke-width="1.5"/>
+        <text x="180" y="226" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#1A1A2E">长期记忆</text>
+        <text x="180" y="246" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#6B7280">Mem0 + ChromaDB</text>
+        <rect x="290" y="200" width="140" height="64" rx="8" fill="#DBEAFE" stroke="#2563EB" stroke-width="2"/>
+        <text x="360" y="226" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#1A1759">LLM + LangGraph</text>
+        <text x="360" y="246" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#2563EB">vLLM · 推理+编排</text>
+        <rect x="470" y="200" width="140" height="64" rx="8" fill="#FAFBFC" stroke="#E0E3E9" stroke-width="1.5"/>
+        <text x="540" y="226" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#1A1A2E">人格系统</text>
+        <text x="540" y="246" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#6B7280">Big Five 自定义</text>
+        <path d="M 250 232 L 290 232" stroke="#6B7280" stroke-width="1.5" fill="none" stroke-linecap="round" marker-end="url(#ar)"/>
+        <path d="M 470 232 L 430 232" stroke="#6B7280" stroke-width="1.5" fill="none" stroke-linecap="round" marker-end="url(#ar)"/>
+        <!-- Feedback loop -->
+        <path d="M 290 344 Q 230 304 290 264" stroke="#2563EB" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-dasharray="4 4" marker-end="url(#arb)"/>
+        <rect x="180" y="294" width="62" height="20" rx="10" fill="#FAFBFC" stroke="#E0E3E9" stroke-width="1"/>
+        <text x="211" y="308" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#6B7280">反馈学习</text>
+        <path d="M 360 284 L 360 312" stroke="#6B7280" stroke-width="1.5" fill="none" stroke-linecap="round" marker-end="url(#ar)"/>
+        <!-- Capability Layer -->
+        <rect x="48" y="312" width="624" height="116" rx="12" fill="none" stroke="#E0E3E9" stroke-width="1" stroke-dasharray="6 4"/>
+        <text x="64" y="332" font-family="sans-serif" font-size="12" font-weight="500" fill="#6B7280">能力扩展层</text>
+        <rect x="110" y="344" width="140" height="64" rx="8" fill="#FAFBFC" stroke="#E0E3E9" stroke-width="1.5"/>
+        <text x="180" y="370" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#1A1A2E">MCP 工具调用</text>
+        <text x="180" y="390" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#6B7280">browser · code · office</text>
+        <rect x="290" y="344" width="140" height="64" rx="8" fill="#FAFBFC" stroke="#E0E3E9" stroke-width="1.5"/>
+        <text x="360" y="370" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#1A1A2E">自我进化</text>
+        <text x="360" y="390" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#6B7280">Spec 搜索</text>
+        <rect x="470" y="344" width="140" height="64" rx="8" fill="#FAFBFC" stroke="#E0E3E9" stroke-width="1.5"/>
+        <text x="540" y="370" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#1A1A2E">主动调度</text>
+        <text x="540" y="390" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#6B7280">Cron · 事件</text>
+        <path d="M 360 428 L 360 456" stroke="#6B7280" stroke-width="1.5" fill="none" stroke-linecap="round" marker-end="url(#ar)"/>
+        <!-- Output Layer -->
+        <rect x="48" y="456" width="624" height="80" rx="12" fill="none" stroke="#E0E3E9" stroke-width="1" stroke-dasharray="6 4"/>
+        <text x="64" y="476" font-family="sans-serif" font-size="12" font-weight="500" fill="#6B7280">输出响应层</text>
+        <rect x="170" y="486" width="180" height="40" rx="8" fill="#FAFBFC" stroke="#E0E3E9" stroke-width="1.5"/>
+        <text x="260" y="511" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#1A1A2E">语音回复 (CosyVoice 3)</text>
+        <rect x="370" y="486" width="180" height="40" rx="8" fill="#FAFBFC" stroke="#E0E3E9" stroke-width="1.5"/>
+        <text x="460" y="511" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="500" fill="#1A1A2E">执行动作</text>
+      </svg>
+      <figcaption>图 1. AivyOS 系统架构总览（蓝色路径为反馈学习回路，外层为 Tauri 2.0 桌面壳）</figcaption>
+    </figure>
+
+    <h3>2.2 分层职责说明</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>层级</th><th>核心职责</th><th>关键组件</th><th>通信方式</th></tr></thead>
+        <tbody>
+          <tr><td>感知输入层</td><td>多模态信号采集与预处理</td><td>SenseVoice/FunASR、Silero VAD、PaddleOCR、LLaVA</td><td>事件推送 → 消息总线</td></tr>
+          <tr><td>核心大脑层</td><td>推理决策、记忆管理、人格控制、工作流编排</td><td>vLLM、Mem0+ChromaDB、LangGraph、人格配置</td><td>内部RPC + 消息总线</td></tr>
+          <tr><td>能力扩展层</td><td>外部能力接入与自主行为</td><td>MCP Server 集群、进化引擎、调度器</td><td>事件驱动 + 异步队列</td></tr>
+          <tr><td>输出响应层</td><td>多模态输出与动作执行</td><td>CosyVoice 3、动作执行器</td><td>回调 + 事件推送</td></tr>
+          <tr><td>桌面壳层</td><td>原生窗口、托盘、热键、更新</td><td>Tauri 2.0 + React + Rust</td><td>IPC (Named Pipe/UDS)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>2.3 系统边界定义</h3>
+    <ul>
+      <li><strong>内部系统</strong>：四层之间的所有通信均在本地进程间完成，使用 Unix Domain Socket / Named Pipe + Redis Streams。</li>
+      <li><strong>外部系统</strong>：云端LLM API（可选，仅进化优化时）、互联网搜索、智能家居网关（HomeAssistant）、第三方API。</li>
+      <li><strong>信任边界</strong>：本地四层为可信域；外部API调用需经审批网关，敏感数据脱敏后传出。</li>
+    </ul>
+
+    <!-- ===== Chapter 3 ===== -->
+    <h2 id="ch3">3. 感知输入层设计</h2>
+
+    <h3>3.1 语音输入子系统</h3>
+    <p>语音是贾维斯级别AI助理的核心交互通道。本子系统负责实时语音活动检测（VAD）、流式语音识别（ASR）及说话人识别。</p>
+    <h4>3.1.1 技术规格</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>参数</th><th>规格</th><th>备注</th></tr></thead>
+        <tbody>
+          <tr><td>ASR引擎</td><td>SenseVoice / FunASR (Paraformer)</td><td>本地推理，支持流式，OpenAI兼容API</td></tr>
+          <tr><td>模型大小</td><td>~1.5 GB (INT8量化)</td><td>按精度选择</td></tr>
+          <tr><td>采样率</td><td>16 kHz / 24 kHz</td><td>单声道 PCM</td></tr>
+          <tr><td>识别延迟</td><td>&lt;300 ms（流式首包）/ &lt;1s（完整句）</td><td>本地GPU推理</td></tr>
+          <tr><td>字错率（CER）</td><td>&lt;5%（中文普通话）/ &lt;8%（中英混合）</td><td>基于Common Voice测试集</td></tr>
+          <tr><td>VAD引擎</td><td>Silero VAD v5</td><td>帧长 30ms，支持静音检测</td></tr>
+          <tr><td>说话人识别</td><td>SpeechBrain (ECAPA-TDNN / ReDimNet)</td><td>统一API，多模型可选</td></tr>
+          <tr><td>GPU显存占用</td><td>~2 GB（FP16推理）</td><td>可与其他模块共享</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>3.1.2 处理流程</h4>
+    <pre><code>音频流 (16kHz PCM)
+    │
+    ├─→ Silero VAD ──→ 静音段裁剪 / 断句
+    │
+    ├─→ SenseVoice 流式ASR ──→ 实时文本输出
+    │
+    └─→ ECAPA-TDNN ──→ 说话人ID (可选多用户)
+    │
+    └─→ 输出: { text, speaker_id, confidence, timestamp }</code></pre>
+
+    <div class="callout">
+      <strong>选型说明</strong> — ASR 统一采用 SenseVoice/FunASR 生态（与 TTS 的 CosyVoice 同属阿里通义实验室），而非原方案的 Whisper。SenseVoice 支持中英混合识别且延迟更低，FunASR (Paraformer) 支持流式推理。说话人识别从 3D-Speaker 迁移到 SpeechBrain 统一 API，可平滑切换 ECAPA-TDNN / ReDimNet。
+    </div>
+
+    <h3>3.2 文本输入子系统</h3>
+    <p>文本输入是基础交互通道，支持CLI、Web UI、API三种接入方式。系统对输入文本进行预处理（清洗、分词、意图预分类），再送入核心大脑层。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>参数</th><th>规格</th></tr></thead>
+        <tbody>
+          <tr><td>输入通道</td><td>CLI / Tauri WebView / RESTful API / WebSocket</td></tr>
+          <tr><td>编码格式</td><td>UTF-8</td></tr>
+          <tr><td>最大输入长度</td><td>32,768 tokens（单次请求）</td></tr>
+          <tr><td>预处理</td><td>HTML清洗 / 空白规范化 / 敏感词过滤</td></tr>
+          <tr><td>意图预分类</td><td>基于轻量BERT模型，延迟 &lt;50ms</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>3.3 视觉输入子系统</h3>
+    <p>视觉输入让AI"看"到用户屏幕或摄像头画面，支持OCR文字提取和图像内容理解。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>参数</th><th>规格</th><th>备注</th></tr></thead>
+        <tbody>
+          <tr><td>OCR引擎</td><td>PaddleOCR (PP-OCRv4)</td><td>支持中英文、版面分析</td></tr>
+          <tr><td>图像理解</td><td>LLaVA-1.5 / Qwen2-VL</td><td>图文匹配 + 视觉问答</td></tr>
+          <tr><td>屏幕捕获</td><td>mss (Python) / DXcam (Windows)</td><td>支持全屏/区域截取</td></tr>
+          <tr><td>处理延迟</td><td>&lt;500ms（OCR）/ &lt;1.5s（VQA）</td><td>取决于图像分辨率</td></tr>
+          <tr><td>支持格式</td><td>PNG / JPEG / 截屏帧</td><td>最大 4K分辨率</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>3.4 多模态融合策略</h3>
+    <p>当多个模态同时输入时（如语音+屏幕截图），系统采用<strong>晚期融合（Late Fusion）</strong>策略：</p>
+    <ol>
+      <li>各模态独立预处理，生成结构化中间表示。</li>
+      <li>时间戳对齐：将语音识别结果与屏幕截图按时间窗口关联。</li>
+      <li>统一编码：各模态中间表示拼接为统一上下文，送入LLM引擎。</li>
+      <li>LLM引擎在统一上下文中进行跨模态推理。</li>
+    </ol>
+
+    <!-- ===== Chapter 4 ===== -->
+    <h2 id="ch4">4. 核心大脑层设计</h2>
+    <p>核心大脑层是整个系统的中枢，包含LLM引擎、长期记忆、人格系统、上下文管理和 Agent 编排五个子模块。其设计目标是让AI不仅能"回答问题"，还能"记住你"、"像你专属的助手"。</p>
+
+    <h3>4.1 LLM引擎子系统</h3>
+    <p>LLM引擎是推理与决策的核心。系统采用<strong>混合模型策略</strong>：日常对话使用本地模型（低延迟、隐私好），复杂推理任务可调用云端API（能力强）。</p>
+
+    <h4>4.1.1 模型选型矩阵</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>场景</th><th>模型</th><th>部署方式</th><th>上下文窗口</th><th>延迟</th></tr></thead>
+        <tbody>
+          <tr><td>日常对话</td><td>Qwen2.5-7B / Llama 3.1-8B</td><td>本地 (INT4量化)</td><td>32K</td><td>~200ms</td></tr>
+          <tr><td>复杂推理</td><td>Qwen2.5-72B / DeepSeek-V3</td><td>本地 (FP16/INT4)</td><td>128K</td><td>~1s</td></tr>
+          <tr><td>编程任务</td><td>Claude 3.5 Sonnet / DeepSeek-Coder</td><td>云端API (可选)</td><td>200K</td><td>~500ms</td></tr>
+          <tr><td>视觉理解</td><td>LLaVA-1.5 / Qwen2-VL</td><td>本地</td><td>32K</td><td>~800ms</td></tr>
+          <tr><td>嵌入向量化</td><td>BGE-M3</td><td>本地</td><td>8K</td><td>~20ms</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>4.1.2 推理框架</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>框架</th><th>用途</th><th>吞吐量</th><th>量化支持</th></tr></thead>
+        <tbody>
+          <tr><td>vLLM</td><td>高并发推理（PagedAttention）</td><td>~50 tok/s (72B, A100)</td><td>AWQ / GPTQ / FP8</td></tr>
+          <tr><td>llama.cpp</td><td>低资源推理（CPU/GPU混合）</td><td>~15 tok/s (7B, i7 CPU)</td><td>GGUF Q4_K_M ~ Q8_0</td></tr>
+          <tr><td>Ollama</td><td>快速部署与模型管理</td><td>~30 tok/s (7B, RTX 4090)</td><td>Q4_0 ~ FP16</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>4.1.3 路由策略</h4>
+    <pre><code>def route_model(input_text, context):
+    complexity = estimate_complexity(input_text, context)
+
+    if complexity == "simple_chat":
+        return LocalModel("qwen2.5-7b", quantization="int4")
+    elif complexity == "complex_reasoning":
+        if has_gpu(48):  # 48GB+ VRAM
+            return LocalModel("qwen2.5-72b", precision="fp16")
+        else:
+            return CloudAPI("claude-3.5-sonnet")
+    elif complexity == "coding":
+        return CloudAPI("claude-3.5-sonnet")  # 编程优先云端
+    elif complexity == "vision":
+        return LocalModel("qwen2-vl-7b")</code></pre>
+
+    <h3>4.2 长期记忆子系统（Mem0 + ChromaDB）</h3>
+    <p>长期记忆是AI从"工具"进化为"贾维斯"的关键。系统支持三类记忆模型：情节记忆（事件和交互历史）、语义记忆（用户偏好、事实知识）、程序记忆（操作流程和技能）。</p>
+
+    <h4>4.2.1 技术规格</h4>
+    <p>记忆系统采用 <strong>Mem0</strong>（61.6K stars，Apache-2.0）作为记忆管理层，负责自动从对话中抽取事实、去重、分类和混合检索；<strong>ChromaDB</strong> 作为底层向量存储后端。这替代了原方案中手动 BGE-M3 编码 + ChromaDB 写入 + BM25 检索 + RRF 融合的全部自研逻辑。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>参数</th><th>规格</th><th>备注</th></tr></thead>
+        <tbody>
+          <tr><td>记忆管理层</td><td>Mem0 SDK 2.0</td><td>自动抽取事实、混合检索、永不覆写保留历史</td></tr>
+          <tr><td>向量数据库</td><td>ChromaDB（作为 Mem0 后端）</td><td>嵌入式，无需独立服务</td></tr>
+          <tr><td>嵌入模型</td><td>BGE-M3 (1024维)</td><td>Mem0 内部调用，无需手动编码</td></tr>
+          <tr><td>检索策略</td><td>Mem0 混合检索：语义 + 关键词 + 实体</td><td>单通道抽取，写入延迟降低~50%</td></tr>
+          <tr><td>存储容量</td><td>~10万条记忆 / 1GB</td><td>含元数据和原始文本</td></tr>
+          <tr><td>检索延迟</td><td>&lt;50ms (10万条)</td><td>本地SSD</td></tr>
+          <tr><td>记忆更新</td><td>Mem0 自动去重 + 合并 + TTL过期</td><td>无需手动合并去重</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>4.2.2 记忆写入与检索流程</h4>
+    <pre><code>from mem0 import Memory
+
+config = {
+    "vector_store": {
+        "provider": "chroma",
+        "config": {"collection_name": "aivyos_memory", "path": "./.aivyos/memory_db"}
+    },
+    "embedder": {"provider": "huggingface", "config": {"model": "BAAI/bge-m3"}},
+    "llm": {"provider": "ollama", "config": {"model": "qwen2.5:7b"}}
+}
+
+memory = Memory.from_config(config)
+
+def write_memory(text, user_id="owner", metadata=None):
+    memory.add(messages=text, user_id=user_id, metadata=metadata or {})
+
+def retrieve_memory(query, user_id="owner", top_k=5):
+    return memory.search(query=query, user_id=user_id, limit=top_k)</code></pre>
+
+    <div class="callout">
+      <strong>对比原方案</strong> — 原方案需手动实现 BGE-M3 编码、ChromaDB 写入、BM25 检索、RRF 融合、去重合并等全部逻辑（约 200 行代码）。Mem0 将这些封装为 <code>add()</code> / <code>search()</code> 两个 API，减少约 70% 记忆层自研代码。
+    </div>
+
+    <h3>4.3 人格系统</h3>
+    <p>人格系统让AI拥有可定制的性格、语气和交互风格，而非千篇一律的通用助手。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>参数维度</th><th>取值范围</th><th>示例</th></tr></thead>
+        <tbody>
+          <tr><td>开放性 (Openness)</td><td>0.0 – 1.0</td><td>0.8 = 喜欢探索新想法</td></tr>
+          <tr><td>尽责性 (Conscientiousness)</td><td>0.0 – 1.0</td><td>0.9 = 严谨细致</td></tr>
+          <tr><td>外向性 (Extraversion)</td><td>0.0 – 1.0</td><td>0.3 = 内敛沉稳</td></tr>
+          <tr><td>宜人性 (Agreeableness)</td><td>0.0 – 1.0</td><td>0.7 = 友好合作</td></tr>
+          <tr><td>情绪稳定性 (Neuroticism)</td><td>0.0 – 1.0</td><td>0.2 = 冷静理性</td></tr>
+          <tr><td>语气风格</td><td>枚举</td><td>professional / casual / witty / serious</td></tr>
+          <tr><td>称呼方式</td><td>字符串</td><td>"先生" / "老板" / 用户昵称</td></tr>
+          <tr><td>回复长度偏好</td><td>枚举</td><td>concise / balanced / detailed</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>人格参数通过 System Prompt 注入 LLM，在每次推理时生效：</p>
+    <pre><code>PERSONA_TEMPLATE = """
+你是 {name}，用户的私人AI助理。
+
+## 性格参数 (Big Five)
+- 开放性: {openness} / 1.0
+- 尽责性: {conscientiousness} / 1.0
+- 外向性: {extraversion} / 1.0
+- 宜人性: {agreeableness} / 1.0
+- 情绪稳定性: {stability} / 1.0
+
+## 交互风格
+- 语气: {tone}
+- 称呼用户为: {user_alias}
+- 回复长度: {response_length}
+- 语言: {language}
+
+## 行为准则
+1. 始终记住用户偏好和历史交互
+2. 主动提供有帮助的建议
+3. 不确定时坦诚说明，不编造信息
+"""</code></pre>
+
+    <h3>4.4 上下文管理</h3>
+    <h4>4.4.1 上下文窗口分配</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>组成</th><th>Token分配 (128K窗口)</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>System Prompt + 人格</td><td>~2K</td><td>固定，每次对话注入</td></tr>
+          <tr><td>检索记忆（长期）</td><td>~8K</td><td>从向量库检索的相关记忆</td></tr>
+          <tr><td>对话历史（短期）</td><td>~32K</td><td>滑动窗口，保留最近交互</td></tr>
+          <tr><td>当前用户输入</td><td>~4K</td><td>本次请求内容</td></tr>
+          <tr><td>工具调用上下文</td><td>~16K</td><td>工具执行结果</td></tr>
+          <tr><td>输出预留</td><td>~66K</td><td>LLM生成空间</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>4.4.2 上下文压缩策略</h4>
+    <ol>
+      <li><strong>近期保留</strong> — 最近3轮对话原样保留。</li>
+      <li><strong>中期摘要</strong> — 4-10轮前的对话压缩为摘要（每3轮压缩为1段摘要）。</li>
+      <li><strong>远期归档</strong> — 10轮以前的对话提取关键信息写入长期记忆，从上下文中移除。</li>
+    </ol>
+
+    <h3>4.5 Agent 编排框架（LangGraph）</h3>
+    <p>Agent 编排框架负责将 LLM 引擎、记忆系统、工具调用串联为可执行的工作流。AivyOS 采用 <strong>LangGraph</strong> 作为核心编排框架，以类型化状态图表达多步工作流，内置检查点支持失败恢复和断点续传。</p>
+
+    <h4>4.5.1 选型理由</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>LangGraph（选用）</th><th>CrewAI</th><th>OpenAI Agents SDK</th></tr></thead>
+        <tbody>
+          <tr><td>编排模型</td><td><strong>类型化状态图</strong></td><td>角色化团队</td><td>Handoff 链</td></tr>
+          <tr><td>状态持久化</td><td><strong>内置检查点（SQLite）</strong></td><td>有限</td><td>有限</td></tr>
+          <tr><td>模型无关</td><td><strong>是（vLLM + 云端均可）</strong></td><td>是</td><td>仅 OpenAI</td></tr>
+          <tr><td>记忆集成</td><td><strong>LangMem / Mem0 原生</strong></td><td>需自接</td><td>需自接</td></tr>
+          <tr><td>失败恢复</td><td><strong>从最后检查点续传</strong></td><td>重跑</td><td>重跑</td></tr>
+          <tr><td>许可证</td><td>MIT</td><td>MIT</td><td>MIT</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>4.5.2 工作流状态图设计</h4>
+    <pre><code>from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.sqlite import SqliteSaver
+from typing import TypedDict
+
+class VibeCodingState(TypedDict):
+    user_request: str
+    spec: dict
+    files: dict
+    preview_url: str
+    build_failed: bool
+    errors: list
+
+workflow = StateGraph(VibeCodingState)
+workflow.add_node("understand", understand_requirement)
+workflow.add_node("plan", plan_project)
+workflow.add_node("generate", generate_code)
+workflow.add_node("deliver", deliver_to_ide)
+workflow.add_node("build", build_and_test)
+workflow.add_node("preview", auto_preview)
+workflow.add_node("save_memory", save_session)
+
+workflow.set_entry_point("understand")
+workflow.add_edge("understand", "plan")
+workflow.add_edge("plan", "generate")
+workflow.add_edge("generate", "deliver")
+workflow.add_edge("deliver", "build")
+workflow.add_conditional_edges("build",
+    lambda s: "generate" if s["build_failed"] else "preview")
+workflow.add_edge("preview", "save_memory")
+workflow.add_edge("save_memory", END)
+
+app = workflow.compile(checkpointer=SqliteSaver.from_conn_string(
+    "./.aivyos/checkpoints.sqlite"
+))</code></pre>
+
+    <div class="callout">
+      <strong>个人使用简化</strong> — 单机场景下检查点存本地 SQLite 即可，无需 LangSmith 云端 trace。工作流失败后从最后检查点续传，无需从头重跑。
+    </div>
+
+    <!-- ===== Chapter 5 ===== -->
+    <h2 id="ch5">5. 能力扩展层设计</h2>
+    <p>能力扩展层让AI从"只会聊天"进化为"能做事"的贾维斯。包含工具调用、自我进化和主动调度三个子系统。</p>
+
+    <h3>5.1 工具调用子系统（MCP 架构）</h3>
+    <p>系统采用 <strong>MCP（Model Context Protocol）2026-07-28 规范</strong>作为统一工具调用层。每个工具能力封装为独立 MCP Server，LLM 通过标准协议自动发现并调用工具，无需自研工具注册机制。</p>
+
+    <h4>5.1.1 MCP Server 架构</h4>
+    <pre><code>from mcp.server import Server
+from mcp.types import Tool, TextContent
+
+server = Server("aivyos-filesystem")
+
+@server.list_tools()
+async def list_tools() -> list[Tool]:
+    return [
+        Tool(name="file_read", description="读取本地文件",
+             inputSchema={"type": "object",
+                          "properties": {"path": {"type": "string"}},
+                          "required": ["path"]}),
+        Tool(name="file_write", description="写入本地文件（需确认）",
+             inputSchema={"type": "object",
+                          "properties": {"path": {"type": "string"},
+                                         "content": {"type": "string"}},
+                          "required": ["path", "content"]}),
+    ]
+
+@server.call_tool()
+async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    if name == "file_read":
+        content = Path(arguments["path"]).read_text()
+        return [TextContent(type="text", text=content)]
+    elif name == "file_write":
+        Path(arguments["path"]).write_text(arguments["content"])
+        return [TextContent(type="text", text=f"已写入: {arguments['path']}")]</code></pre>
+
+    <h4>5.1.2 MCP Server 清单</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>MCP Server</th><th>功能描述</th><th>权限级别</th><th>来源</th></tr></thead>
+        <tbody>
+          <tr><td>filesystem</td><td>文件读写（路径白名单）</td><td>低（读）/ 高（写需确认）</td><td>官方 MCP Server</td></tr>
+          <tr><td>browser</td><td>浏览器自动化（browser-use 驱动）</td><td>低 — 只读为主</td><td>自封装</td></tr>
+          <tr><td>code-exec</td><td>Python 本地执行</td><td>高 — 需确认</td><td>自封装</td></tr>
+          <tr><td>shell</td><td>系统命令执行</td><td>高 — 需确认</td><td>自封装</td></tr>
+          <tr><td>memory</td><td>Mem0 记忆读写</td><td>低</td><td>自封装</td></tr>
+          <tr><td>search</td><td>SearXNG 搜索</td><td>低 — 只读</td><td>自封装</td></tr>
+          <tr><td>screenshot</td><td>屏幕截图</td><td>低</td><td>自封装</td></tr>
+          <tr><td>office</td><td>Word/Excel/PPT 生成</td><td>低</td><td>自封装</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <strong>安全提示</strong> — 高权限工具（code-exec、shell、file_write）通过 MCP 的 <strong>MRTR（Multi Round-Trip Requests）</strong>机制触发用户确认：Server 返回 <code>resultType: "input_required"</code>，客户端展示工具名称、参数和预期影响，用户批准后带答案重试请求。
+    </div>
+
+    <h3>5.2 自我进化子系统</h3>
+    <p>自我进化是AivyOS区别于普通AI助理的核心特性，通过反馈学习闭环让AI越用越懂用户。</p>
+
+    <h4>5.2.1 进化维度</h4>
+    <ul>
+      <li><strong>偏好学习</strong> — 记录用户对回复的隐式反馈（采纳/修改/拒绝），训练偏好模型。</li>
+      <li><strong>提示词优化</strong> — 基于交互效果自动优化System Prompt中的行为准则。</li>
+      <li><strong>工具使用优化</strong> — 学习用户常用的工具组合和参数偏好。</li>
+      <li><strong>知识更新</strong> — 从交互中提取新知识写入语义记忆。</li>
+      <li><strong>行为模式学习</strong> — 识别用户的日常行为模式，用于主动调度。</li>
+    </ul>
+
+    <h4>5.2.2 LLM 引导的 Spec 搜索（参考 OpenJarvis）</h4>
+    <p>自进化的核心难题是"如何让本地模型越用越聪明而不退化"。AivyOS 借鉴 <strong>OpenJarvis</strong>（Apache-2.0）的 LLM-guided spec search 机制：云端强模型作为"教师"，在搜索时读取本地运行 trace、诊断失败簇、跨原语提出配置编辑建议，通过 gate（默认 1% 容差）只接受不退化的修改，优化后完全本地运行。</p>
+    <pre><code>class SpecSearchEngine:
+    def __init__(self, local_llm, cloud_llm, tolerance=0.01):
+        self.local = local_llm
+        self.cloud = cloud_llm
+        self.tolerance = tolerance
+
+    async def search_and_optimize(self, spec: dict, eval_set: list):
+        baseline = await self._evaluate(self.local, spec, eval_set)
+        traces = self._collect_traces(spec, eval_set)
+        failure_clusters = await self.cloud.analyze(traces)
+        candidates = await self.cloud.propose_edits(spec, failure_clusters)
+
+        for candidate in candidates:
+            score = await self._evaluate(self.local, candidate, eval_set)
+            if score >= baseline * (1 - self.tolerance):
+                spec = candidate
+                baseline = score
+            else:
+                print(f"[进化] 拒绝退化，score: {score:.4f} < {baseline:.4f}")
+        return spec</code></pre>
+
+    <div class="callout">
+      <strong>个人使用简化</strong> — 云端教师仅在"进化"时调用（如每周一次），日常运行完全本地。OpenJarvis 报告该机制可恢复 13-32pp 的云-本地差距。
+    </div>
+
+    <h3>5.3 主动调度子系统</h3>
+    <p>主动调度让AI不只在用户提问时才响应，还能<strong>主动</strong>提供服务——这正是贾维斯区别于普通助手的关键。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>触发类型</th><th>机制</th><th>示例</th></tr></thead>
+        <tbody>
+          <tr><td>定时触发</td><td>Cron表达式调度</td><td>每天 09:00 汇报今日日程</td></tr>
+          <tr><td>事件触发</td><td>监听系统/外部事件</td><td>收到邮件时主动提醒</td></tr>
+          <tr><td>条件触发</td><td>周期性检查条件是否满足</td><td>CPU使用率&gt;90%时告警</td></tr>
+          <tr><td>行为预测</td><td>基于行为模式预测用户需求</td><td>检测到打开IDE，准备项目上下文</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ===== Chapter 6 ===== -->
+    <h2 id="ch6">6. 输出响应层设计</h2>
+
+    <h3>6.1 语音合成子系统（CosyVoice 3）</h3>
+    <p>语音合成让AI像贾维斯一样"开口说话"，是沉浸式交互的关键。采用 <strong>CosyVoice 3</strong>（2026 年开源 TTS SOTA，Apache-2.0）作为主引擎，GPT-SoVITS 保留为备选。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>参数</th><th>规格</th><th>备注</th></tr></thead>
+        <tbody>
+          <tr><td>TTS引擎（主）</td><td><strong>CosyVoice 3</strong> (0.5B)</td><td>LibriSpeech test-clean SOTA</td></tr>
+          <tr><td>TTS引擎（备）</td><td>GPT-SoVITS V4</td><td>保留为备选，可插拔切换</td></tr>
+          <tr><td>音色克隆</td><td>3秒样本 zero-shot 克隆</td><td>比 GPT-SoVITS 的5秒更短</td></tr>
+          <tr><td>情感控制</td><td>14种细粒度标签（[laughter][breath]等）</td><td>适合 AI 伴侣情感表达</td></tr>
+          <tr><td>合成延迟</td><td>&lt;150ms（首音频帧）</td><td>vLLM/TRT-LLM 加速</td></tr>
+          <tr><td>多语言</td><td>中英日韩 + 9方言 × 18</td><td>—</td></tr>
+          <tr><td>采样率</td><td>24 kHz / 48 kHz</td><td>16-bit PCM</td></tr>
+          <tr><td>GPU占用</td><td>~2 GB（推理）</td><td>可与ASR共享</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <strong>选型升级理由</strong> — CosyVoice 3 在 LibriSpeech test-clean 上达到 SOTA，首包延迟仅 150ms，3 秒克隆样本，14 种细粒度情感标签适合"AI 伴侣"的情感表达需求。Apache-2.0 许可证可商用。可参考 OmniVoice Studio 的多引擎统一架构实现 TTS 引擎可插拔。
+    </div>
+
+    <h3>6.2 动作执行子系统</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>执行域</th><th>能力</th><th>接入方式</th></tr></thead>
+        <tbody>
+          <tr><td>智能家居</td><td>灯光/空调/窗帘/安防控制</td><td>HomeAssistant REST API</td></tr>
+          <tr><td>系统操作</td><td>文件管理/进程控制/系统设置</td><td>MCP shell/filesystem Server</td></tr>
+          <tr><td>消息通信</td><td>邮件/即时消息/通知推送</td><td>SMTP/IMAP + Webhook</td></tr>
+          <tr><td>代码部署</td><td>Git操作/CI触发/容器管理</td><td>Git CLI + Docker API</td></tr>
+          <tr><td>日程管理</td><td>日历查询/创建/修改</td><td>CalDAV / Graph API</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>6.3 多模态输出策略</h3>
+    <ul>
+      <li><strong>语音交互场景</strong> — 语音输入触发语音输出（全双工对话）。</li>
+      <li><strong>文本交互场景</strong> — 文本输入触发文本输出，复杂结果辅以可视化。</li>
+      <li><strong>主动通知场景</strong> — 低紧急度用文本通知，高紧急度用语音播报。</li>
+      <li><strong>代码/文档场景</strong> — 文本输出 + 文件写入，在IDE或文件管理器中展示。</li>
+    </ul>
+
+    <!-- ===== Chapter 7 ===== -->
+    <h2 id="ch7">7. 核心特性一：Vibe Coding 氛围编程 <span class="badge core">核心</span></h2>
+    <p><strong>"Vibe Coding"</strong>是指AI以沉浸式方式参与完整的编程工作流——从理解需求、生成代码、打开浏览器预览、到交付到IDE，全程无需用户手动切换工具。AI同时掌握浏览器、Office文档和IDE三个执行域，形成无缝的工作氛围。</p>
+
+    <h3>7.1 浏览器自动化（browser-use + Playwright）</h3>
+    <p>采用 <strong>browser-use</strong>（95K+ stars）实现自然语言驱动的浏览器操控，底层基于 Playwright。AI 用自然语言描述任务即可完成打开页面、填表、点击、截图、抓取数据，无需编写复杂的选择器脚本。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>参数</th><th>规格</th><th>备注</th></tr></thead>
+        <tbody>
+          <tr><td>驱动方式（主）</td><td><strong>browser-use（自然语言）</strong></td><td>AI 描述任务→自动规划浏览器操作</td></tr>
+          <tr><td>底层引擎</td><td>Playwright (Python)</td><td>browser-use 底层调用，可降级直接使用</td></tr>
+          <tr><td>浏览器模式</td><td>有头模式（可见）/ 无头模式（后台）</td><td>用户可见预览用有头，数据抓取用无头</td></tr>
+          <tr><td>页面操作</td><td>自然语言描述 + 视觉定位</td><td>browser-use 自动元素定位</td></tr>
+          <tr><td>Cookie/Session</td><td>持久化浏览器上下文</td><td>storageState保存登录态</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>7.2 Office 自动化</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>文档类型</th><th>库</th><th>能力</th></tr></thead>
+        <tbody>
+          <tr><td>Word (.docx)</td><td>python-docx</td><td>创建/编辑段落、表格、图片、样式</td></tr>
+          <tr><td>Excel (.xlsx)</td><td>openpyxl</td><td>创建/编辑单元格、公式、图表</td></tr>
+          <tr><td>PPT (.pptx)</td><td>python-pptx</td><td>创建/编辑幻灯片、文本框、形状</td></tr>
+          <tr><td>PDF</td><td>reportlab / PyPDF2</td><td>生成PDF报告 / 合并拆分</td></tr>
+          <tr><td>Markdown</td><td>Python原生</td><td>生成.md文档</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>所有 Office 能力封装为 MCP Office Server，LLM 通过标准 MCP 协议调用。</p>
+
+    <h3>7.3 IDE 集成（Cline SDK）</h3>
+    <p>采用 <strong>Cline SDK</strong>（Apache-2.0，8M+ 开发者使用）作为核心代码生成与写入引擎，支持 Plan/Act 双模式和多模型 BYOK。Cline SDK 可直接嵌入 AivyOS，省去自研代码生成管线的大部分工作。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>集成维度</th><th>技术方案</th><th>能力</th></tr></thead>
+        <tbody>
+          <tr><td>代码生成引擎（主）</td><td><strong>Cline SDK（可嵌入）</strong></td><td>Plan/Act双模式、多文件编辑、多模型BYOK</td></tr>
+          <tr><td>文件系统</td><td>MCP filesystem Server</td><td>创建/修改/删除文件和目录</td></tr>
+          <tr><td>VS Code Extension</td><td>VS Code Extension API</td><td>在编辑器中打开文件、设置光标、显示Diff</td></tr>
+          <tr><td>LSP协议</td><td>Language Server Protocol</td><td>代码诊断、跳转定义、自动补全</td></tr>
+          <tr><td>终端集成</td><td>VS Code Integrated Terminal API</td><td>在IDE终端中执行命令、运行构建</td></tr>
+          <tr><td>多IDE支持</td><td>Cursor / Windsurf / Trae 兼容</td><td>基于标准文件系统+LSP</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>7.4 完整工作流编排（LangGraph 状态图）</h3>
+    <p>Vibe Coding 的核心是<strong>工作流引擎</strong>——基于 LangGraph 状态图，将多个步骤编排为自动化的流水线。每个节点执行后自动保存检查点到本地 SQLite，失败可从断点恢复，构建失败时通过条件边自动回到生成阶段修复。</p>
+    <pre><code>workflow = StateGraph(VibeCodingState)
+workflow.add_node("understand", understand_requirement)
+workflow.add_node("plan", plan_project)
+workflow.add_node("generate", generate_code)        # Cline Act 模式
+workflow.add_node("deliver", deliver_to_ide)        # MCP filesystem 写入
+workflow.add_node("build", build_and_test)           # MCP shell 构建
+workflow.add_node("preview", auto_preview)           # browser-use 预览
+workflow.add_node("save_memory", save_to_memory)     # Mem0 保存记忆
+
+workflow.set_entry_point("understand")
+workflow.add_edge("understand", "plan")
+workflow.add_edge("plan", "generate")
+workflow.add_edge("generate", "deliver")
+workflow.add_edge("deliver", "build")
+workflow.add_conditional_edges("build",
+    lambda s: "generate" if s["build_failed"] else "preview")
+workflow.add_edge("preview", "save_memory")
+workflow.add_edge("save_memory", END)
+
+app = workflow.compile(checkpointer=SqliteSaver.from_conn_string(
+    "./.aivyos/checkpoints.sqlite"
+))</code></pre>
+
+    <!-- ===== Chapter 8 ===== -->
+    <h2 id="ch8">8. 核心特性二：记忆连续性 <span class="badge core">核心</span></h2>
+    <p>重启后AI"醒来"时，仍然记得上次在做什么、用户偏好是什么、正在进行哪个项目——就像贾维斯从不"失忆"。</p>
+
+    <h3>8.1 三层持久化架构</h3>
+    <p>记忆连续性采用三层架构：<strong>Letta MemFS</strong>（类文件系统持久化记忆，Agent 自主管理记忆生命周期，跨重启存活）+ <strong>Mem0</strong>（向量记忆层，自动抽取事实）+ <strong>LangGraph 检查点</strong>（工作流状态持久化，断点续传）。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>数据类别</th><th>存储位置</th><th>保存时机</th><th>恢复时机</th></tr></thead>
+        <tbody>
+          <tr><td>长期记忆（事实/偏好/技能）</td><td>Mem0 → ChromaDB (磁盘)</td><td>Mem0 自动抽取写入</td><td>启动时 Mem0 加载索引</td></tr>
+          <tr><td>Agent 记忆文件系统</td><td>Letta MemFS</td><td>Agent 自主调用记忆工具</td><td>启动时 MemFS 自动恢复</td></tr>
+          <tr><td>工作流状态</td><td>LangGraph 检查点 (SQLite)</td><td>每个图节点执行后自动保存</td><td>启动时从最后检查点恢复</td></tr>
+          <tr><td>工作区状态</td><td>workspace_snapshot.json</td><td>任务切换/定时保存</td><td>启动时恢复工作区</td></tr>
+          <tr><td>浏览器状态</td><td>browser_state.json</td><td>浏览器关闭时</td><td>启动时恢复登录态</td></tr>
+          <tr><td>人格配置</td><td>persona.yaml</td><td>用户修改时</td><td>启动时读取</td></tr>
+          <tr><td>工具使用历史</td><td>MCP 调用日志 (JSONL)</td><td>每次 MCP 工具调用后追加</td><td>启动时加载最近N条</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>8.2 启动时上下文重建</h3>
+    <pre><code>class MemoryContinuity:
+    def __init__(self, data_dir="./.aivyos"):
+        self.data_dir = Path(data_dir)
+        self.memory = Memory.from_config({
+            "vector_store": {"provider": "chroma",
+                            "config": {"path": str(self.data_dir / "memory_db")}},
+            "embedder": {"provider": "huggingface",
+                        "config": {"model": "BAAI/bge-m3"}}
+        })
+        self.memfs = MemFS(persist_path=self.data_dir / "memfs")
+        self.checkpointer = SqliteSaver.from_conn_string(
+            str(self.data_dir / "checkpoints.sqlite")
+        )
+
+    def restore_on_boot(self):
+        all_memories = self.memory.get_all(user_id="owner")
+        memfs_state = self.memfs.read_state()
+        last_checkpoint = self.checkpointer.aget_latest()
+        summary = self._generate_recovery_summary(
+            all_memories, memfs_state, last_checkpoint
+        )
+        return {
+            "long_term_memory": all_memories,
+            "memfs_state": memfs_state,
+            "workflow_checkpoint": last_checkpoint,
+            "recovery_summary": summary
+        }</code></pre>
+
+    <div class="callout success">
+      <strong>三重保障</strong> — (1) <strong>Mem0</strong> 自动从对话中抽取事实存入向量库；(2) <strong>Letta MemFS</strong> 让 Agent 自主管理记忆生命周期，跨重启存活；(3) <strong>LangGraph 检查点</strong> 自动保存工作流进度，断电后从最后成功节点恢复。
+    </div>
+
+    <!-- ===== Chapter 9 ===== -->
+    <h2 id="ch9">9. 核心特性三：专属认证 <span class="badge safe">安全</span></h2>
+    <p>AI只认主人——通过声纹+面部双重认证，未授权者无法唤醒系统。</p>
+
+    <h3>9.1 认证流程</h3>
+    <ol class="step-list">
+      <li><strong>待机监听</strong> — 系统持续运行VAD，检测到语音活动时启动ASR。</li>
+      <li><strong>声纹采集</strong> — 提取说话人的声纹嵌入向量（SpeechBrain ECAPA-TDNN，192维）。</li>
+      <li><strong>声纹比对</strong> — 与注册的主人声纹模板做余弦相似度计算，阈值 &gt;0.75通过。</li>
+      <li><strong>面部验证（可选）</strong> — 若摄像头可用，同步进行面部识别（InsightFace），阈值 &gt;0.6通过。</li>
+      <li><strong>活体检测</strong> — 检测是否为真人而非录音/照片（频谱分析+眨眼检测）。</li>
+      <li><strong>认证通过/拒绝</strong> — 通过则唤醒AI进入工作状态；拒绝则静默忽略，保持待机。</li>
+    </ol>
+
+    <h3>9.2 技术规格</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>参数</th><th>规格</th><th>备注</th></tr></thead>
+        <tbody>
+          <tr><td>声纹模型</td><td>SpeechBrain ECAPA-TDNN / ReDimNet</td><td>统一API，可平滑切换</td></tr>
+          <tr><td>声纹注册</td><td>3-10秒纯净语音样本</td><td>支持多模板注册</td></tr>
+          <tr><td>声纹比对</td><td>余弦相似度，阈值0.75</td><td>EER &lt;3%（中文场景）</td></tr>
+          <tr><td>面部识别</td><td>InsightFace (Buffalo_L)</td><td>512维嵌入</td></tr>
+          <tr><td>面部阈值</td><td>余弦相似度，阈值0.6</td><td>FAR &lt;0.1%</td></tr>
+          <tr><td>活体检测</td><td>频谱反欺骗 + 视觉活体</td><td>防止录音/照片/视频攻击</td></tr>
+          <tr><td>认证延迟</td><td>&lt;500ms（声纹）/ &lt;300ms（面部）</td><td>可并行执行</td></tr>
+          <tr><td>失败处理</td><td>静默忽略，不回应</td><td>不暴露系统存在</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ===== Chapter 10 ===== -->
+    <h2 id="ch10">10. 核心特性四：一句话做软件 <span class="badge core">核心</span></h2>
+    <p>用户用一句话描述需求，AI自动完成：需求解析 → 项目规划 → 代码生成 → 依赖安装 → 构建 → 交付到IDE。全程零手动干预。</p>
+
+    <h3>10.1 代码生成管线（Cline SDK 集成）</h3>
+    <p>原 8 阶段自研管线中，阶段 2-6 由 <strong>Cline SDK</strong> 接管。Cline 的 Plan/Act 双模式自动完成项目规划、代码生成、自审查和修复，AivyOS 只需负责需求解析（阶段1）和构建验证+预览（阶段7-8）。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>阶段</th><th>输入</th><th>输出</th><th>执行方</th></tr></thead>
+        <tbody>
+          <tr><td>1. 需求解析</td><td>自然语言一句话</td><td>结构化项目规格(JSON)</td><td>AivyOS LLM</td></tr>
+          <tr><td>2. 项目规划</td><td>项目规格</td><td>文件树 + 每个文件职责</td><td><strong>Cline Plan 模式</strong></td></tr>
+          <tr><td>3. 代码生成 + 写入</td><td>文件树</td><td>完整代码文件写入工作区</td><td><strong>Cline Act 模式</strong></td></tr>
+          <tr><td>4. 自审查 + 修复</td><td>生成的代码</td><td>修复后的代码</td><td><strong>Cline 内置</strong></td></tr>
+          <tr><td>5. 构建验证</td><td>完整项目</td><td>构建结果 + 错误日志</td><td>MCP shell Server</td></tr>
+          <tr><td>6. 构建修复</td><td>错误日志</td><td>修复后的代码</td><td><strong>Cline Act 模式</strong>（LangGraph 条件边回环）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>10.2 项目脚手架模板</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>模板</th><th>技术栈</th><th>触发关键词</th></tr></thead>
+        <tbody>
+          <tr><td>react-web-app</td><td>React + Vite + TailwindCSS</td><td>"网页""React""前端"</td></tr>
+          <tr><td>vue-web-app</td><td>Vue 3 + Vite + TailwindCSS</td><td>"Vue""前端"</td></tr>
+          <tr><td>nextjs-app</td><td>Next.js 14 + TailwindCSS</td><td>"全栈""SSR""Next"</td></tr>
+          <tr><td>python-cli</td><td>Python + Click/Typer</td><td>"命令行""CLI""脚本"</td></tr>
+          <tr><td>python-api</td><td>FastAPI + SQLAlchemy</td><td>"API""后端""服务"</td></tr>
+          <tr><td>static-site</td><td>HTML + CSS + JS</td><td>"静态网页""简单页面"</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <strong>对比原方案</strong> — 原方案 8 阶段全部自研。集成 Cline SDK 后，阶段 2-4 和 6 由 Cline 接管，自研代码减少约 75%。
+    </div>
+
+    <!-- ===== Chapter 11 ===== -->
+    <h2 id="ch11">11. 核心特性五：自动预览 <span class="badge core">核心</span></h2>
+    <p>代码写完，AI自己打开浏览器，导航到预览页面，截图验证效果——用户只需看着结果。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>参数</th><th>规格</th><th>备注</th></tr></thead>
+        <tbody>
+          <tr><td>浏览器引擎</td><td>Playwright (Chromium)</td><td>有头模式，用户可见</td></tr>
+          <tr><td>启动方式</td><td>自动启动浏览器实例</td><td>无需用户手动打开</td></tr>
+          <tr><td>开发服务器</td><td>自动启动并管理生命周期</td><td>vite/webpack/python http.server</td></tr>
+          <tr><td>热重载</td><td>文件变化时自动刷新页面</td><td>Playwright page.reload()</td></tr>
+          <tr><td>截图反馈</td><td>自动截图供AI视觉检查</td><td>全页截图 + 元素截图</td></tr>
+          <tr><td>多设备预览</td><td>支持桌面/手机/平板视口</td><td>viewport切换</td></tr>
+          <tr><td>控制台监控</td><td>捕获浏览器console错误/警告</td><td>page.on("console")</td></tr>
+          <tr><td>网络监控</td><td>检测失败的API请求</td><td>page.on("requestfailed")</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>11.1 端到端完整工作流示例</h3>
+    <div class="scenario">
+      <div class="title">示例："做一个天气预报网页"</div>
+      <ol class="step-list">
+        <li><strong>专属认证</strong> — 用户说"帮我做个天气预报网页"，声纹认证通过，AI唤醒</li>
+        <li><strong>需求解析</strong> — AI解析为：web_app / 静态HTML / 天气展示 / 需调用天气API</li>
+        <li><strong>模板选择</strong> — 匹配 static-site 模板</li>
+        <li><strong>项目规划</strong> — Cline Plan 模式规划文件树：index.html / style.css / script.js</li>
+        <li><strong>代码生成</strong> — Cline Act 模式逐文件生成完整代码</li>
+        <li><strong>写入IDE</strong> — MCP filesystem 写入用户工作区，IDE自动检测并打开</li>
+        <li><strong>启动预览</strong> — AI启动本地HTTP服务器，browser-use打开浏览器加载页面</li>
+        <li><strong>视觉验证</strong> — AI截图检查页面是否正常渲染，确认天气数据加载</li>
+        <li><strong>控制台检查</strong> — 捕获console错误，如有则自动修复</li>
+        <li><strong>保存记忆</strong> — Mem0记录"用户做了一个天气预报网页"，下次可在此基础上修改</li>
+      </ol>
+    </div>
+
+    <!-- ===== Chapter 12 ===== -->
+    <h2 id="ch12">12. 桌面端架构 <span class="badge core">核心</span></h2>
+
+    <h3>12.1 技术选型（Tauri 2.0）</h3>
+    <p>AivyOS 桌面端采用 <strong>Tauri 2.0</strong> 作为应用壳层，Python 作为 AI 核心引擎。Tauri 提供原生窗口、系统托盘、全局热键等桌面能力，Python 通过子进程 + IPC 通信提供 AI 功能。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>Tauri 2.0</th><th>Electron</th><th>选型理由</th></tr></thead>
+        <tbody>
+          <tr><td>安装包大小</td><td>~8 MB</td><td>~150 MB</td><td>系统WebView，不打包Chromium</td></tr>
+          <tr><td>内存占用</td><td>~80 MB</td><td>~300 MB</td><td>无Node.js运行时开销</td></tr>
+          <tr><td>启动速度</td><td>&lt;500 ms</td><td>~2 s</td><td>Rust原生编译</td></tr>
+          <tr><td>系统托盘</td><td>原生API</td><td>需Tray插件</td><td>Tauri 2.0内置tray-permission</td></tr>
+          <tr><td>全局热键</td><td>原生API (global-shortcut)</td><td>需globalShortcut插件</td><td>Tauri 2.0内置</td></tr>
+          <tr><td>自动更新</td><td>updater插件 (原生)</td><td>electron-updater</td><td>支持增量更新</td></tr>
+          <tr><td>安全性</td><td>Rust内存安全 + 权限沙箱</td><td>Node.js安全模型</td><td>Rust无内存泄漏风险</td></tr>
+          <tr><td>跨平台</td><td>Windows / macOS / Linux</td><td>同左</td><td>均支持三平台</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <strong>架构决策</strong> — Tauri 壳层负责 UI 渲染（React + WebView）、系统托盘、全局热键、自动更新、原生通知。Python 子进程负责 AI 推理（LLM/ASR/TTS）、记忆管理、工具执行。两者通过 <strong>Unix Domain Socket / Named Pipe</strong> 通信，延迟 &lt;1ms。
+    </div>
+
+    <h3>12.2 系统托盘</h3>
+    <p>AivyOS 常驻系统托盘，用户随时可呼出。这是"贾维斯始终在"的视觉体现。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>功能</th><th>实现</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>托盘图标</td><td>Tauri tray-icon API</td><td>动态图标：待机(蓝)/监听(脉动)/工作(绿)/错误(红)</td></tr>
+          <tr><td>左键单击</td><td>显示/隐藏主窗口</td><td>快速切换对话界面</td></tr>
+          <tr><td>右键菜单</td><td>context menu</td><td>打开主界面 / 设置 / 暂停监听 / 退出</td></tr>
+          <tr><td>双击</td><td>全局语音唤醒</td><td>立即进入语音交互模式</td></tr>
+          <tr><td>气泡通知</td><td>原生系统通知</td><td>AI主动消息以通知形式展示</td></tr>
+          <tr><td>拖拽文件</td><td>托盘drag-drop</td><td>拖文件到托盘图标，AI自动分析</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>12.3 全局热键</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>热键</th><th>功能</th><th>平台</th></tr></thead>
+        <tbody>
+          <tr><td>Alt + Space</td><td>唤醒AI（显示悬浮输入框）</td><td>Windows / Linux</td></tr>
+          <tr><td>Cmd + Space (覆盖Spotlight)</td><td>唤醒AI</td><td>macOS (可选)</td></tr>
+          <tr><td>Alt + V</td><td>开始/停止语音输入</td><td>全平台</td></tr>
+          <tr><td>Alt + S</td><td>截屏并发送给AI</td><td>全平台</td></tr>
+          <tr><td>Alt + Q</td><td>快速退出/最小化</td><td>全平台</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>12.4 后台常驻服务</h3>
+    <p>关闭主窗口时 AivyOS 不退出，而是最小化到托盘后台运行。语音监听、定时任务、事件触发等持续工作。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>常驻组件</th><th>运行方式</th><th>关闭窗口后状态</th></tr></thead>
+        <tbody>
+          <tr><td>Python AI核心</td><td>子进程 (persistent)</td><td>持续运行</td></tr>
+          <tr><td>VAD语音监听</td><td>Python线程</td><td>持续监听</td></tr>
+          <tr><td>调度器(Cron/事件)</td><td>Python asyncio loop</td><td>持续运行</td></tr>
+          <tr><td>记忆持久化</td><td>Mem0 + ChromaDB (磁盘)</td><td>持续可读写</td></tr>
+          <tr><td>WebSocket服务</td><td>Python aiohttp</td><td>持续监听</td></tr>
+          <tr><td>UI渲染(WebView)</td><td>Tauri窗口</td><td>隐藏，托盘可唤出</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>12.5 开机自启动</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>平台</th><th>自启机制</th><th>实现</th></tr></thead>
+        <tbody>
+          <tr><td>Windows</td><td>注册表 HKCU\...\Run</td><td>Tauri autostart插件</td></tr>
+          <tr><td>macOS</td><td>LaunchAgent plist</td><td>Tauri autostart插件</td></tr>
+          <tr><td>Linux</td><td>~/.config/autostart/.desktop</td><td>Tauri autostart插件</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>12.6 原生通知</h3>
+    <ul>
+      <li><strong>普通通知</strong> — 文本消息，点击后在 AivyOS 中打开详情。</li>
+      <li><strong>带操作按钮</strong> — 通知附带"确认"/"忽略"按钮，用户可直接在通知中操作。</li>
+      <li><strong>紧急通知</strong> — 高优先级消息（如系统异常），绕过勿扰模式。</li>
+    </ul>
+
+    <!-- ===== Chapter 13 ===== -->
+    <h2 id="ch13">13. 自动更新与签名机制 <span class="badge sec">安全</span></h2>
+
+    <h3>13.1 更新检测</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>参数</th><th>规格</th></tr></thead>
+        <tbody>
+          <tr><td>检测频率</td><td>每6小时检查一次（可配置）</td></tr>
+          <tr><td>检测方式</td><td>GET /update/{target}/{arch}/{current_version}</td></tr>
+          <tr><td>更新类型</td><td>critical(安全) / feature(功能) / patch(补丁)</td></tr>
+          <tr><td>用户通知</td><td>critical: 立即更新 / feature: 询问 / patch: 静默</td></tr>
+          <tr><td>回退检测</td><td>更新后启动失败3次 → 自动回滚到上一版本</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>13.2 增量下载</h3>
+    <p>通过 bsdiff/zstd 算法生成差异补丁，仅下载变更部分。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>更新类型</th><th>包大小</th><th>下载时间</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>Tauri壳层更新</td><td>2-5 MB</td><td>&lt;5s</td><td>前端资源+Rust二进制差异补丁</td></tr>
+          <tr><td>Python模块更新</td><td>0.5-3 MB</td><td>&lt;3s</td><td>仅变更的.py文件打包</td></tr>
+          <tr><td>模型权重更新</td><td>10-50 MB</td><td>&lt;30s</td><td>LoRA差异权重，非全量模型</td></tr>
+          <tr><td>全量更新（回退用）</td><td>~15 MB</td><td>&lt;15s</td><td>完整安装包，仅在增量失败时使用</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>13.3 版本管理</h3>
+    <p>系统保留最近3个版本，支持一键回滚。版本目录结构使用符号链接指向当前运行版本。</p>
+
+    <h3>13.4 更新签名机制</h3>
+    <p>AivyOS 的自动更新涉及从远程服务器下载可执行代码并执行。签名机制是唯一保障——确保用户收到的更新包<strong>未被篡改</strong>且<strong>来源可信</strong>，同时防止攻击者通过降级攻击植入旧版漏洞。</p>
+
+    <h4>13.4.1 三层 PKI 密钥体系</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>层级</th><th>密钥名称</th><th>算法</th><th>用途</th><th>存储位置</th><th>泄露影响</th></tr></thead>
+        <tbody>
+          <tr><td>L0 (Root)</td><td>Root CA</td><td>Ed25519</td><td>签发 Intermediate 证书</td><td>离线 HSM / 气隙机器</td><td>灾难级 — 全体系重建</td></tr>
+          <tr><td>L1 (Intermediate)</td><td>Release Signing CA</td><td>Ed25519</td><td>签发 Code Signing 证书</td><td>CI/CD 签名服务器 (TPM)</td><td>严重 — 需撤销所有叶子证书</td></tr>
+          <tr><td>L2 (Leaf)</td><td>Code Signing Key</td><td>Ed25519</td><td>签名实际更新包</td><td>CI/CD 临时密钥 (每次发布)</td><td>可控 — 撤销单次发布</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>13.4.2 签名算法选型</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>候选算法</th><th>密钥长度</th><th>签名长度</th><th>验证速度</th><th>选型决策</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Ed25519</strong></td><td>32 bytes</td><td>64 bytes</td><td>~50μs</td><td><strong>采用</strong> — 签名快、长度小、无随机数陷阱</td></tr>
+          <tr><td>RSA-2048</td><td>256 bytes</td><td>256 bytes</td><td>~100μs</td><td>不采用 — 签名过大、性能差</td></tr>
+          <tr><td>ECDSA P-256</td><td>32 bytes</td><td>64 bytes</td><td>~80μs</td><td>不采用 — 有 k 值泄露风险</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>13.4.3 客户端七步验签流程</h4>
+    <p>客户端下载更新包后，<strong>必须完整通过以下七步验证</strong>才能执行安装。任何一步失败，立即中止并上报。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>步骤</th><th>验证内容</th><th>失败动作</th><th>耗时</th></tr></thead>
+        <tbody>
+          <tr><td>① 证书链验证</td><td>Leaf → Intermediate → Root CA 信任链</td><td>拒绝更新，上报可疑活动</td><td>~1ms</td></tr>
+          <tr><td>② 证书有效期</td><td>检查 not_before / not_after</td><td>拒绝更新</td><td>&lt;1ms</td></tr>
+          <tr><td>③ 撤销列表检查</td><td>查询 CRL / OCSP</td><td>拒绝更新，上报</td><td>~50ms</td></tr>
+          <tr><td>④ Ed25519 签名验证</td><td>用 Leaf 公钥验证 manifest 签名</td><td>拒绝更新，立即删除已下载文件</td><td>~50μs</td></tr>
+          <tr><td>⑤ 全包哈希校验</td><td>计算下载包 BLAKE3，比对 manifest</td><td>删除文件，从 CDN 重新下载</td><td>~100ms</td></tr>
+          <tr><td>⑥ 逐文件哈希校验</td><td>解包后每个文件 BLAKE3 比对</td><td>删除损坏文件，重下该文件</td><td>~200ms</td></tr>
+          <tr><td>⑦ 防降级检查</td><td>新版本号 &gt; 当前版本号</td><td>拒绝更新，上报可疑活动</td><td>&lt;1ms</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>13.4.4 防篡改与防降级</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>攻击场景</th><th>防御机制</th><th>攻击结果</th></tr></thead>
+        <tbody>
+          <tr><td>CDN 被入侵，替换二进制</td><td>逐文件 BLAKE3 哈希校验</td><td>Step 6 拦截，文件被删除重下</td></tr>
+          <tr><td>中间人篡改 manifest</td><td>Ed25519 签名验证</td><td>Step 4 拦截，包被隔离</td></tr>
+          <tr><td>中间人重放旧版 manifest</td><td>时间戳 + 版本号检查</td><td>Step 7 拦截，拒绝降级</td></tr>
+          <tr><td>自签名伪造证书</td><td>Root CA 信任锚点预置</td><td>Step 1 拦截，证书链断裂</td></tr>
+          <tr><td>混合攻击：真签名+假文件</td><td>签名覆盖 manifest（含文件哈希）</td><td>Step 4 签名验证失败</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>13.4.5 密钥轮换策略</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>密钥层级</th><th>轮换周期</th><th>轮换流程</th></tr></thead>
+        <tbody>
+          <tr><td>Root CA</td><td>10 年</td><td>气隙机器生成新密钥 → 签发新 Intermediate → 客户端收到新 Root 公钥</td></tr>
+          <tr><td>Intermediate CA</td><td>1 年</td><td>CI 签名服务器用 Root 签发新 Intermediate → 旧证书加入 CRL</td></tr>
+          <tr><td>Leaf Key</td><td><strong>每次发布</strong></td><td>CI 生成临时密钥 → 用 Intermediate 签发单次证书 → 发布后销毁私钥</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout success">
+      <strong>安全基线</strong> — ① 更新包完整性 — 64 字节 Ed25519 签名 + BLAKE3 哈希；② 来源认证 — 三层 PKI 证书链；③ 防降级 — 版本单调递增 + 时间戳新鲜度；④ 密钥安全 — Root 离线、Leaf 单次使用；⑤ 抗中间人 — 签名覆盖 manifest。
+    </div>
+
+    <!-- ===== Chapter 14 ===== -->
+    <h2 id="ch14">14. 热启动与热交换 <span class="badge core">核心</span></h2>
+    <p>热启动（Hot Restart）是 AivyOS 的核心工程能力——更新代码/模型后<strong>不中断服务</strong>，用户无感知地切换到新版本。即使必须重启，也通过状态快照实现秒级恢复。</p>
+
+    <h3>14.1 热交换机制</h3>
+    <p>热交换是热启动的核心机制：在不停止进程的前提下，卸载旧模块、加载新模块、切换流量。支持三类热交换：</p>
+    <ul>
+      <li><strong>Python 模块热交换</strong> — 通过 <code>importlib.reload()</code> 重新导入模块，保留全局状态（如数据库连接）。</li>
+      <li><strong>LLM 模型热交换</strong> — 加载新模型到内存 → 原子切换引用 → 等待旧请求完成 → 卸载旧模型释放显存。</li>
+      <li><strong>前端热交换</strong> — Tauri WebView 通过 HMR 热替换前端资源，无需刷新整个页面。</li>
+    </ul>
+
+    <h3>14.2 热交换冲突处理</h3>
+    <p>热交换期间"模块正在被调用"会产生冲突。本章定义完整的冲突检测、隔离和解决体系，确保<strong>零请求丢失、零状态损坏、零数据竞争</strong>。</p>
+
+    <h4>14.2.1 冲突场景分类</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>冲突类别</th><th>典型场景</th><th>风险等级</th><th>核心解决策略</th></tr></thead>
+        <tbody>
+          <tr><td><strong>C1: 执行中热交换</strong></td><td>LLM 正在推理时模块被 reload</td><td>高危</td><td>引用计数 + Drain 排空</td></tr>
+          <tr><td><strong>C2: 状态结构不兼容</strong></td><td>旧模块状态 JSON schema 与新模块不匹配</td><td>中危</td><td>版本化 schema + 自动迁移</td></tr>
+          <tr><td><strong>C3: 并发请求竞争</strong></td><td>热交换瞬间，请求 A 进入旧模块、请求 B 进入新模块</td><td>高危</td><td>读写锁 + 原子指针切换</td></tr>
+          <tr><td><strong>C4: 资源依赖冲突</strong></td><td>新模块需要新版底层依赖</td><td>中危</td><td>依赖兼容性矩阵 + 预检查</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>14.2.2 读写锁与引用计数</h4>
+    <p>解决 C1 和 C3 的核心机制：<strong>模块级读写锁</strong>。正常请求持读锁（可并发），热交换持写锁（独占）。热交换必须等所有读锁释放后才能执行。</p>
+    <pre><code>class ModuleRWLock:
+    """模块级读写锁 — 读操作可并发，写操作（热交换）独占"""
+    def __init__(self):
+        self._read_ready = threading.Condition(threading.Lock())
+        self._readers = 0
+        self._writer_active = False
+        self._active_calls = 0
+
+    def acquire_read(self):
+        with self._read_ready:
+            while self._writer_active:
+                self._read_ready.wait()
+            self._readers += 1
+            self._active_calls += 1
+
+    def release_read(self):
+        with self._read_ready:
+            self._readers -= 1
+            self._active_calls -= 1
+            if self._readers == 0:
+                self._read_ready.notify_all()
+
+    def acquire_write(self, timeout: float = 30.0):
+        deadline = time.time() + timeout
+        with self._read_ready:
+            while self._readers > 0:
+                remaining = deadline - time.time()
+                if remaining &lt;= 0:
+                    raise TimeoutError(f"热交换超时：仍有 {self._readers} 个请求在执行")
+                self._read_ready.wait(remaining)
+            self._writer_active = True</code></pre>
+
+    <h4>14.2.3 Drain 排空策略</h4>
+    <p>热交换不是瞬间完成的——必须<strong>排空</strong>（Drain）旧模块上的所有活跃请求，才能安全替换。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Drain 阶段</th><th>动作</th><th>超时</th><th>超时后动作</th></tr></thead>
+        <tbody>
+          <tr><td>D1: 进入排空</td><td>设置 draining=True，拒绝新请求入队</td><td>—</td><td>—</td></tr>
+          <tr><td>D2: 请求排队</td><td>新请求进入等待队列</td><td>30s</td><td>超时后请求转入新模块</td></tr>
+          <tr><td>D3: 等待活跃请求完成</td><td>轮询 active_count → 0</td><td>30s</td><td>强制切换 — 标记中断请求</td></tr>
+          <tr><td>D4: 状态提取</td><td>从旧模块提取持久状态</td><td>5s</td><td>跳过状态迁移，使用快照</td></tr>
+          <tr><td>D5: 模块重载</td><td>importlib.reload()</td><td>10s</td><td>回滚到旧模块</td></tr>
+          <tr><td>D6: 状态恢复</td><td>迁移并恢复状态到新模块</td><td>5s</td><td>跳过，继续无状态启动</td></tr>
+          <tr><td>D7: 健康检查</td><td>执行验证测试</td><td>10s</td><td>回滚</td></tr>
+          <tr><td>D8: 放行排队请求</td><td>队列中的请求转入新模块执行</td><td>—</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>14.2.4 冲突解决矩阵</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>冲突</th><th>检测方式</th><th>解决步骤</th><th>用户影响</th></tr></thead>
+        <tbody>
+          <tr><td>C1: 请求正在旧模块执行</td><td>active_count &gt; 0</td><td>Drain 排空 → 等待完成 → 超时强制标记中断</td><td>≤30s 延迟，无丢失</td></tr>
+          <tr><td>C2: 状态 schema 不兼容</td><td>schema_version 比对</td><td>调用 _migrate_state_() → 失败则从快照恢复</td><td>可能丢失当前会话上下文</td></tr>
+          <tr><td>C3: 新旧模块并发执行</td><td>读写锁互斥</td><td>写锁阻塞新请求 → 原子指针切换 → 写锁释放</td><td>无感知</td></tr>
+          <tr><td>C4: 依赖版本冲突</td><td>预检查 compat_matrix</td><td>预检查失败 → 拒绝热交换 → 回退全量安装</td><td>需要 4s 快速启动</td></tr>
+          <tr><td>C5: 新模块 import 失败</td><td>importlib.reload 抛异常</td><td>捕获异常 → 不切换指针 → 释放写锁</td><td>无感知</td></tr>
+          <tr><td>C6: 健康检查不通过</td><td>HealthChecker.verify()</td><td>回滚指针 → 恢复旧状态 → 释放写锁</td><td>通知"更新失败已回滚"</td></tr>
+          <tr><td>C7: 显存不足无法加载新模型</td><td>torch.cuda.OutOfMemoryError</td><td>卸载旧模型 → 重试加载 → 仍失败则回滚</td><td>~10s 延迟</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>14.2.5 熔断与降级</h4>
+    <p>当热交换连续失败时，系统进入<strong>熔断状态</strong>，停止尝试热交换，降级为"下载后下次冷启动安装"模式。熔断阈值 3 次连续失败，冷却期 1 小时。</p>
+
+    <div class="callout success">
+      <strong>零中断保证</strong> — 通过读写锁 + Drain 排空 + 熔断降级三层机制，保证：① 热交换期间无请求丢失；② 热交换失败时无状态损坏（回滚+快照恢复）；③ 连续失败时不反复尝试（熔断保护）。
+    </div>
+
+    <h3>14.3 状态快照</h3>
+    <p>热交换前，系统对所有运行时状态做<strong>原子快照</strong>。如果热交换失败，从快照恢复。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>快照对象</th><th>内容</th><th>保存方式</th><th>恢复时间</th></tr></thead>
+        <tbody>
+          <tr><td>会话上下文</td><td>当前对话历史、工作记忆</td><td>JSON序列化</td><td>&lt;100ms</td></tr>
+          <tr><td>LLM推理状态</td><td>KV Cache、生成中间态</td><td>不保存（可重建）</td><td>—</td></tr>
+          <tr><td>工具执行状态</td><td>正在执行的工具、中间结果</td><td>JSON + 进程检查</td><td>&lt;50ms</td></tr>
+          <tr><td>调度器状态</td><td>定时任务列表、下次执行时间</td><td>JSON</td><td>&lt;50ms</td></tr>
+          <tr><td>浏览器状态</td><td>打开的页面、Cookie、表单</td><td>Playwright storageState</td><td>&lt;200ms</td></tr>
+          <tr><td>记忆索引</td><td>向量数据库状态</td><td>磁盘持久化</td><td>0（无需恢复）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>14.4 健康检查与回滚</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>检查项</th><th>方法</th><th>超时</th><th>失败动作</th></tr></thead>
+        <tbody>
+          <tr><td>LLM推理</td><td>发送测试prompt，检查响应</td><td>10s</td><td>回滚模型</td></tr>
+          <tr><td>记忆检索</td><td>执行测试查询，检查结果</td><td>5s</td><td>回滚记忆模块</td></tr>
+          <tr><td>工具调用</td><td>调用web_search测试</td><td>10s</td><td>回滚工具模块</td></tr>
+          <tr><td>ASR/TTS</td><td>发送测试音频，检查识别</td><td>5s</td><td>回滚语音模块</td></tr>
+          <tr><td>调度器</td><td>检查定时任务是否正常</td><td>3s</td><td>回滚调度器</td></tr>
+          <tr><td>前端渲染</td><td>检查WebView是否正常加载</td><td>5s</td><td>回滚前端资源</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ===== Chapter 15 ===== -->
+    <h2 id="ch15">15. 托盘交互设计 <span class="badge new">新增</span></h2>
+    <p>系统托盘是 AivyOS "始终在线"的视觉锚点。本章定义完整的<strong>状态机、交互流程、菜单结构</strong>，确保用户通过托盘即可完成所有核心操作。</p>
+
+    <h3>15.1 托盘状态机（8 种状态）</h3>
+    <div class="state-grid">
+      <div class="state-card"><div class="state-icon">🔵</div><div class="state-name">idle 待命</div><div class="state-desc">AI核心已就绪，等待交互</div></div>
+      <div class="state-card"><div class="state-icon">🌀</div><div class="state-name">listening 监听</div><div class="state-desc">VAD持续监听语音唤醒词</div></div>
+      <div class="state-card"><div class="state-icon">🟢</div><div class="state-name">working 工作</div><div class="state-desc">正在执行任务</div></div>
+      <div class="state-card"><div class="state-icon">🔊</div><div class="state-name">voice 语音</div><div class="state-desc">正在语音对话中</div></div>
+      <div class="state-card"><div class="state-icon">⏳</div><div class="state-name">updating 更新</div><div class="state-desc">正在下载/安装更新</div></div>
+      <div class="state-card"><div class="state-icon">⚡</div><div class="state-name">booting 启动</div><div class="state-desc">快速启动恢复中</div></div>
+      <div class="state-card"><div class="state-icon">🔴</div><div class="state-name">error 异常</div><div class="state-desc">AI核心异常，需关注</div></div>
+      <div class="state-card"><div class="state-icon">⏸️</div><div class="state-name">paused 暂停</div><div class="state-desc">用户手动暂停了监听</div></div>
+    </div>
+
+    <h3>15.2 左键交互流程</h3>
+    <p>左键是最高频操作，设计原则是<strong>单击即出/即收</strong>，零延迟切换窗口可见性。双击（300ms 内两次单击）进入语音模式。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>当前状态</th><th>左键单击动作</th><th>视觉反馈</th></tr></thead>
+        <tbody>
+          <tr><td>窗口隐藏 + idle</td><td>显示主窗口 + 聚焦</td><td>窗口淡入 200ms</td></tr>
+          <tr><td>窗口可见 + idle</td><td>隐藏窗口到托盘</td><td>窗口淡出 150ms，气泡"我还在"</td></tr>
+          <tr><td>working</td><td>显示窗口 + 滚动到任务进度区</td><td>任务进度高亮</td></tr>
+          <tr><td>updating</td><td>显示窗口 + 显示更新进度条</td><td>更新进度条 + 百分比</td></tr>
+          <tr><td>error</td><td>显示窗口 + 错误详情面板</td><td>红色错误卡片 + "重试"按钮</td></tr>
+          <tr><td>booting</td><td>忽略左键（正在启动）</td><td>图标闪烁，无窗口</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>15.3 右键菜单设计</h3>
+    <div class="menu-tree">
+      <div class="root">AivyOS 右键菜单</div>
+      <div class="sep">─────────────────────</div>
+      <div class="item">📋 打开主界面 <span class="accel">Alt+Space</span></div>
+      <div class="item">🎙️ 语音对话 <span class="accel">Alt+V</span></div>
+      <div class="item">📸 截屏分析 <span class="accel">Alt+S</span></div>
+      <div class="sep">─────────────────────</div>
+      <div class="item">⏸️ 暂停监听 / ▶️ 恢复监听 <span class="accel">Alt+P</span></div>
+      <div class="sep">─────────────────────</div>
+      <div class="sub">
+        <div class="item">🧠 记忆管理 ▸</div>
+        <div class="sub">
+          <div class="item">📊 查看记忆图谱</div>
+          <div class="item">🗑️ 清除短期记忆</div>
+          <div class="item">📥 导出记忆备份</div>
+          <div class="item">📤 导入记忆备份</div>
+        </div>
+      </div>
+      <div class="sub">
+        <div class="item">🔄 更新 ▸</div>
+        <div class="sub">
+          <div class="item">🔍 检查更新</div>
+          <div class="item">📜 查看更新历史</div>
+          <div class="item">⏪ 回滚到上一版本</div>
+        </div>
+      </div>
+      <div class="sep">─────────────────────</div>
+      <div class="item">⚙️ 设置</div>
+      <div class="item">📊 诊断信息</div>
+      <div class="sep">─────────────────────</div>
+      <div class="item">🚪 退出 AivyOS <span class="accel">Alt+Q</span></div>
+    </div>
+
+    <h3>15.4 双击交互（语音快捷入口）</h3>
+    <ol class="step-list">
+      <li><strong>检测双击</strong> — 300ms 内连续两次左键单击，触发双击事件。</li>
+      <li><strong>状态检查</strong> — updating 或 booting 状态忽略双击。</li>
+      <li><strong>切换到 voice 状态</strong> — 托盘图标变为 🎙️，播放提示音。</li>
+      <li><strong>激活 ASR</strong> — 启动语音识别，显示语音波形可视化。</li>
+      <li><strong>语音对话循环</strong> — 用户说话 → ASR → AI推理 → TTS语音回复 → 循环。</li>
+      <li><strong>退出语音模式</strong> — 再次双击 / 按 Alt+V / 5秒无语音输入 → 回到 idle。</li>
+    </ol>
+
+    <h3>15.5 拖拽文件交互</h3>
+    <p>用户可将文件直接拖到托盘图标上，AI 自动分析文件内容。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>文件类型</th><th>AI 分析动作</th><th>结果展示</th></tr></thead>
+        <tbody>
+          <tr><td>图片 (PNG/JPG)</td><td>OCR提取文字 + 视觉理解描述</td><td>弹窗显示分析结果</td></tr>
+          <tr><td>文档 (PDF/Word/Excel)</td><td>解析内容并生成摘要</td><td>在主窗口展示摘要</td></tr>
+          <tr><td>代码文件</td><td>语法分析 + 代码审查</td><td>在IDE中打开并标注</td></tr>
+          <tr><td>数据文件 (CSV/JSON)</td><td>统计分析 + 可视化建议</td><td>生成图表预览</td></tr>
+          <tr><td>其他文件</td><td>文件信息摘要 + 类型识别</td><td>弹窗显示文件信息</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ===== Chapter 16 ===== -->
+    <h2 id="ch16">16. 数据流与通信协议</h2>
+
+    <h3>16.1 系统数据流</h3>
+    <pre><code>用户说话
+  │
+  ▼
+[感知层] 音频采集 → VAD断句 → ASR识别
+  │     输出: { text: "帮我查一下明天的日程", modality: "voice" }
+  │
+  ▼ (消息总线: perception.input)
+[大脑层]
+  ├→ 上下文管理: 拼接系统提示+人格+历史+当前输入
+  ├→ 长期记忆检索: Mem0 查询"日程""明天"相关记忆
+  ├→ LangGraph 工作流: LLM推理 → 判断需要调用 calendar 工具
+  ├→ MCP 工具调用: calendar.query(date=tomorrow)
+  ├→ LLM推理: 基于工具结果生成自然语言回复
+  │
+  ▼ (消息总线: core.output)
+[输出层]
+  ├→ TTS合成: CosyVoice 3 文本 → 语音
+  └→ 播放音频
+  │
+  ▼
+[进化层] (异步)
+  ├→ Mem0 记录交互到情节记忆
+  ├→ 更新偏好模型
+  └→ 检查是否需要更新行为模式</code></pre>
+
+    <h3>16.2 内部通信协议</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>通信机制</th><th>用途</th><th>技术实现</th></tr></thead>
+        <tbody>
+          <tr><td>消息总线</td><td>层间异步消息传递</td><td>Redis Streams</td></tr>
+          <tr><td>事件总线</td><td>组件间事件通知</td><td>NATS JetStream</td></tr>
+          <tr><td>RPC</td><td>同步调用（如工具执行）</td><td>gRPC (本地UDS)</td></tr>
+          <tr><td>IPC</td><td>Tauri壳层 ↔ Python核心</td><td>Named Pipe / UDS</td></tr>
+          <tr><td>共享状态</td><td>会话状态、配置</td><td>Redis Hash + 本地JSON</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>16.3 外部 API 规范</h3>
+    <h4>16.3.1 RESTful API</h4>
+    <pre><code>POST /api/v1/chat
+Content-Type: application/json
+
+{
+  "session_id": "sess_a1b2c3",
+  "input": {"modality": "text", "content": "帮我分析今天的日程安排"},
+  "options": {"use_memory": true, "use_tools": true, "personality": "professional"}
+}
+
+Response 200:
+{
+  "session_id": "sess_a1b2c3",
+  "response": {"text": "今天您有三个会议...", "tools_used": ["calendar.query"]},
+  "metadata": {"model": "qwen2.5-72b", "latency_ms": 1200}
+}</code></pre>
+
+    <h4>16.3.2 WebSocket API（实时语音）</h4>
+    <pre><code>// 客户端 → 服务端
+{ "type": "audio_start", "format": "pcm_16khz" }
+{ "type": "audio_chunk", "data": "base64_encoded_pcm" }
+{ "type": "audio_end" }
+
+// 服务端 → 客户端
+{ "type": "asr_partial", "text": "帮我看..." }
+{ "type": "asr_final", "text": "帮我看一下明天的日程", "confidence": 0.97 }
+{ "type": "llm_thinking", "status": "processing" }
+{ "type": "response_text", "text": "明天您有两个会议..." }
+{ "type": "tts_start" }
+{ "type": "tts_chunk", "data": "base64_encoded_pcm" }
+{ "type": "tts_end" }</code></pre>
+
+    <!-- ===== Chapter 17 ===== -->
+    <h2 id="ch17">17. 技术选型清单</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>模块</th><th>技术选型</th><th>备选方案</th><th>选型理由</th></tr></thead>
+        <tbody>
+          <tr><td>ASR语音识别</td><td>SenseVoice / FunASR (Paraformer)</td><td>Whisper / Vosk</td><td>同生态配套，中文流式识别最优</td></tr>
+          <tr><td>VAD语音检测</td><td>Silero VAD v5</td><td>WebRTC VAD</td><td>模型小(~2MB)，准确率高</td></tr>
+          <tr><td>说话人识别</td><td>SpeechBrain (ECAPA-TDNN/ReDimNet)</td><td>3D-Speaker / Resemblyzer</td><td>统一API，多模型可选</td></tr>
+          <tr><td>OCR文字识别</td><td>PaddleOCR PP-OCRv4</td><td>Tesseract / EasyOCR</td><td>中文OCR SOTA</td></tr>
+          <tr><td>视觉理解</td><td>LLaVA-1.5 / Qwen2-VL</td><td>GLM-4V / InternVL</td><td>开源多模态</td></tr>
+          <tr><td>TTS语音合成</td><td><strong>CosyVoice 3</strong> (0.5B)</td><td>GPT-SoVITS V4</td><td>2026 SOTA，150ms首包，3秒克隆</td></tr>
+          <tr><td>LLM推理引擎</td><td>vLLM</td><td>TGI / Ollama</td><td>PagedAttention，Continuous Batching</td></tr>
+          <tr><td>Agent编排框架</td><td><strong>LangGraph</strong></td><td>CrewAI / Claude Agent SDK</td><td>图编排+检查点+模型无关</td></tr>
+          <tr><td>记忆管理层</td><td><strong>Mem0</strong> SDK 2.0</td><td>自研 MemoryContinuity</td><td>自动抽取事实，混合检索</td></tr>
+          <tr><td>跨重启记忆</td><td><strong>Letta MemFS</strong></td><td>自研文件序列化</td><td>类文件系统持久化，跨重启存活</td></tr>
+          <tr><td>向量数据库</td><td>ChromaDB（嵌入式）</td><td>Qdrant / Milvus</td><td>嵌入式无依赖，作为 Mem0 后端</td></tr>
+          <tr><td>嵌入模型</td><td>BGE-M3 (1024维)</td><td>bge-small-zh</td><td>中英多语言，Mem0 内部调用</td></tr>
+          <tr><td>工具调用协议</td><td><strong>MCP 2026-07-28</strong></td><td>自研 ToolBase</td><td>事实标准，无状态核心+Tasks扩展</td></tr>
+          <tr><td>浏览器自动化</td><td><strong>browser-use</strong> + Playwright</td><td>Selenium / 自研</td><td>95K stars，自然语言驱动</td></tr>
+          <tr><td>代码生成引擎</td><td><strong>Cline SDK</strong></td><td>Aider / Open Interpreter</td><td>可嵌入SDK，Plan/Act双模式</td></tr>
+          <tr><td>桌面壳</td><td><strong>Tauri 2.0</strong> + React + Rust</td><td>Electron</td><td>8MB/80MB，本地优先</td></tr>
+          <tr><td>消息总线</td><td>Redis Streams</td><td>NATS JetStream</td><td>轻量，支持消费者组</td></tr>
+          <tr><td>内部RPC</td><td>gRPC (本地UDS)</td><td>HTTP/REST</td><td>低延迟，类型安全</td></tr>
+          <tr><td>IPC通信</td><td>Named Pipe / UDS</td><td>stdio</td><td>Tauri壳层 ↔ Python核心</td></tr>
+          <tr><td>更新签名</td><td>Ed25519 + BLAKE3</td><td>RSA-2048 / ECDSA</td><td>签名快64B，无随机数陷阱</td></tr>
+          <tr><td>增量更新</td><td>bsdiff + zstd</td><td>全量替换</td><td>典型补丁 &lt;5MB</td></tr>
+          <tr><td>安全沙箱</td><td>Docker容器（代码执行）</td><td>nsjail / Firecracker</td><td>隔离不可信代码</td></tr>
+          <tr><td>链路追踪</td><td>OpenTelemetry</td><td>Jaeger / Zipkin</td><td>CNCF标准，LangGraph原生集成</td></tr>
+          <tr><td>指标采集</td><td>Prometheus + Grafana</td><td>Datadog</td><td>开源，本地部署</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout success">
+      <strong>选型原则</strong> — 全部选型遵循"开源复用优先"原则，优先选择 Apache-2.0 / MIT 许可证的成熟开源组件。32+ 个开源项目覆盖 7 大技术方向，预计减少约 60% 自研工作量，MVP 周期从 3 个月缩短至 6-8 周。
+    </div>
+
+    <!-- ===== Chapter 18 ===== -->
+    <h2 id="ch18">18. 部署与硬件规格</h2>
+
+    <h3>18.1 硬件需求</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>配置等级</th><th>GPU</th><th>内存</th><th>存储</th><th>适用场景</th></tr></thead>
+        <tbody>
+          <tr><td>最低配置</td><td>RTX 3060 12GB</td><td>32 GB</td><td>512 GB SSD</td><td>7B模型 + 基础功能</td></tr>
+          <tr><td>推荐配置</td><td>RTX 4070 Ti 16GB</td><td>64 GB</td><td>1 TB NVMe</td><td>14B模型 + 全功能</td></tr>
+          <tr><td>高性能配置</td><td>RTX 4090 24GB / 双卡</td><td>128 GB</td><td>2 TB NVMe</td><td>72B模型 + 多模态全开</td></tr>
+          <tr><td>云端补充</td><td>—</td><td>—</td><td>—</td><td>调用 Claude/GPT API 处理超长上下文/复杂推理</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>18.2 软件运行环境</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>组件</th><th>版本要求</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>操作系统</td><td>Windows 11 / macOS 13+ / Ubuntu 22.04+</td><td>三平台支持</td></tr>
+          <tr><td>Python</td><td>3.11+</td><td>AI核心引擎</td></tr>
+          <tr><td>Node.js</td><td>20 LTS+</td><td>前端构建工具链</td></tr>
+          <tr><td>Rust</td><td>1.75+</td><td>Tauri壳层编译</td></tr>
+          <tr><td>CUDA</td><td>12.1+</td><td>GPU推理加速</td></tr>
+          <tr><td>Docker</td><td>24.0+</td><td>代码执行沙箱</td></tr>
+          <tr><td>Redis</td><td>7.0+</td><td>消息总线 + 共享状态</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>18.3 目录结构</h3>
+    <pre><code>~/.aivyos/
+    aivyos.db                  # SQLite — LangGraph 检查点
+    memory_db/                 # ChromaDB — Mem0 向量存储
+    memfs/                     # Letta MemFS — Agent 记忆文件系统
+    checkpoints.sqlite         # LangGraph 工作流检查点
+    snapshots/latest.json      # 热交换状态快照
+    browser_state.json         # 浏览器登录态
+    persona.yaml               # 人格配置
+    versions/                  # 版本管理（保留3个版本）
+        current → v1.2.3/      # 符号链接指向当前版本
+        v1.2.3/
+        v1.2.2/
+    quarantine/                # 可疑更新包隔离区
+    logs/                      # 运行日志
+    security_audit.log         # 安全审计日志</code></pre>
+
+    <!-- ===== Chapter 19 ===== -->
+    <h2 id="ch19">19. 安全与隐私设计</h2>
+
+    <h3>19.1 数据安全策略</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>数据类别</th><th>存储位置</th><th>加密方式</th><th>是否上传云端</th></tr></thead>
+        <tbody>
+          <tr><td>对话历史</td><td>本地 SQLite + ChromaDB</td><td>AES-256 磁盘加密</td><td>否</td></tr>
+          <tr><td>声纹模板</td><td>本地加密存储</td><td>Ed25519 签名保护</td><td>否</td></tr>
+          <tr><td>面部特征</td><td>本地加密存储</td><td>AES-256</td><td>否</td></tr>
+          <tr><td>记忆向量</td><td>本地 ChromaDB</td><td>磁盘级加密</td><td>否</td></tr>
+          <tr><td>人格配置</td><td>本地 persona.yaml</td><td>明文（用户可读）</td><td>否</td></tr>
+          <tr><td>浏览器状态</td><td>本地 browser_state.json</td><td>用户决定</td><td>否</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>19.2 权限分级体系</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>权限级别</th><th>操作示例</th><th>确认机制</th></tr></thead>
+        <tbody>
+          <tr><td>L0 只读</td><td>文件读取、网页浏览、搜索</td><td>自动执行</td></tr>
+          <tr><td>L1 低危写</td><td>文件写入、代码生成、文档创建</td><td>自动执行，日志记录</td></tr>
+          <tr><td>L2 高危写</td><td>Shell命令、代码执行、系统设置</td><td>需用户确认（MCP MRTR）</td></tr>
+          <tr><td>L3 危险操作</td><td>删除文件、网络外发、安装软件</td><td>需用户确认 + 操作日志</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>19.3 安全审计</h3>
+    <ul>
+      <li><strong>操作日志</strong> — 所有 L2+ 操作写入安全审计日志，含时间戳、操作类型、参数、结果。</li>
+      <li><strong>行为漂移检测</strong> — 三层防护：统计异常检测（操作频率/类型分布偏离基线）+ 语义异常检测（LLM 审查操作意图）+ 人工审核（高危操作触发通知）。</li>
+      <li><strong>安全事件上报</strong> — 签名验证失败、证书撤销、降级攻击检测时，隔离可疑文件 + 写入审计日志 + 暂停自动更新 24 小时。</li>
+      <li><strong>代码执行沙箱</strong> — 不可信代码（AI 生成的脚本）在 Docker 容器中执行，限制网络访问、文件系统挂载和资源配额。</li>
+    </ul>
+
+    <h3>19.4 许可证合规</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>组件</th><th>许可证</th><th>合规状态</th></tr></thead>
+        <tbody>
+          <tr><td>Mem0 / Letta / LangGraph</td><td>Apache-2.0 / MIT</td><td>友好，无传染性风险</td></tr>
+          <tr><td>Cline SDK / Aider</td><td>Apache-2.0</td><td>友好</td></tr>
+          <tr><td>CosyVoice 3</td><td>Apache-2.0</td><td>友好</td></tr>
+          <tr><td>browser-use / Playwright</td><td>开源</td><td>友好</td></tr>
+          <tr><td>Open Interpreter</td><td>AGPL v3</td><td><strong>注意</strong> — 传染性较强，仅参考不深度集成</td></tr>
+          <tr><td>Tauri 2.0</td><td>MIT / Apache-2.0</td><td>友好</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ===== Chapter 20 ===== -->
+    <h2 id="ch20">20. 性能指标基准</h2>
+
+    <h3>20.1 延迟指标</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>链路</th><th>P50</th><th>P95</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>语音唤醒 → 认证完成</td><td>300ms</td><td>500ms</td><td>声纹+面部并行</td></tr>
+          <tr><td>ASR 识别（短句）</td><td>200ms</td><td>500ms</td><td>SenseVoice 流式</td></tr>
+          <tr><td>LLM 首 Token</td><td>150ms</td><td>500ms</td><td>vLLM + KV Cache</td></tr>
+          <tr><td>LLM 完整回复（100 Token）</td><td>1.2s</td><td>3s</td><td>14B 模型</td></tr>
+          <tr><td>TTS 首音频帧</td><td>150ms</td><td>300ms</td><td>CosyVoice 3</td></tr>
+          <tr><td>记忆检索</td><td>30ms</td><td>50ms</td><td>Mem0 + ChromaDB</td></tr>
+          <tr><td>MCP 工具调用（本地）</td><td>50ms</td><td>200ms</td><td>gRPC UDS</td></tr>
+          <tr><td>热交换完成</td><td>5s</td><td>15s</td><td>含 Drain 排空</td></tr>
+          <tr><td>冷启动 → 就绪</td><td>19s</td><td>30s</td><td>含模型加载</td></tr>
+          <tr><td>热启动 → 就绪</td><td>4s</td><td>6s</td><td>模型常驻+快照恢复</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>20.2 资源占用</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>组件</th><th>内存</th><th>显存</th><th>CPU</th></tr></thead>
+        <tbody>
+          <tr><td>Tauri 壳层（空闲）</td><td>~80 MB</td><td>—</td><td>&lt;1%</td></tr>
+          <tr><td>Python AI 核心（空闲）</td><td>~500 MB</td><td>—</td><td>&lt;5%</td></tr>
+          <tr><td>LLM 推理（14B）</td><td>~2 GB</td><td>~12 GB</td><td>推理时 30-80%</td></tr>
+          <tr><td>ASR（SenseVoice）</td><td>~300 MB</td><td>~1 GB</td><td>监听时 5-10%</td></tr>
+          <tr><td>TTS（CosyVoice 3）</td><td>~200 MB</td><td>~2 GB</td><td>合成时 10-20%</td></tr>
+          <tr><td>ChromaDB + Mem0</td><td>~200 MB</td><td>—</td><td>&lt;2%</td></tr>
+          <tr><td>Redis</td><td>~50 MB</td><td>—</td><td>&lt;1%</td></tr>
+          <tr><td><strong>总计（待机）</strong></td><td><strong>~1.3 GB</strong></td><td><strong>~15 GB</strong></td><td><strong>&lt;10%</strong></td></tr>
+          <tr><td><strong>总计（全负载）</strong></td><td><strong>~3.5 GB</strong></td><td><strong>~17 GB</strong></td><td><strong>30-80%</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ===== Chapter 21 ===== -->
+    <h2 id="ch21">21. 测试策略与可观测性</h2>
+
+    <h3>21.1 测试分层</h3>
+    <p>AivyOS 作为个人使用项目，测试策略以实用为先，聚焦核心链路稳定性，不追求企业级覆盖率。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>测试层</th><th>范围</th><th>工具</th><th>目标</th></tr></thead>
+        <tbody>
+          <tr><td>单元测试</td><td>记忆检索、记忆抽取、路由策略</td><td>pytest</td><td>核心逻辑无回归</td></tr>
+          <tr><td>集成测试</td><td>LangGraph 工作流端到端、MCP 工具调用链</td><td>pytest + LangGraph 检查点回放</td><td>节点串联正确</td></tr>
+          <tr><td>语音链路压测</td><td>ASR→LLM→TTS 全链路延迟</td><td>自定义 benchmark 脚本</td><td>P95 延迟达标</td></tr>
+          <tr><td>记忆连续性测试</td><td>重启后记忆恢复、MemFS 状态存活</td><td>模拟断电重启脚本</td><td>零记忆丢失</td></tr>
+          <tr><td>热交换验证</td><td>模块热重载后健康检查</td><td>HealthChecker 自动化</td><td>热交换成功率&gt;99%</td></tr>
+          <tr><td>签名验证测试</td><td>七步验签流程、防篡改、防降级</td><td>模拟篡改测试包</td><td>100% 拦截篡改</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>21.2 可观测性架构</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>工具</th><th>采集内容</th></tr></thead>
+        <tbody>
+          <tr><td>链路追踪</td><td>OpenTelemetry</td><td>每个请求的完整调用链：ASR→LLM→工具→TTS</td></tr>
+          <tr><td>指标采集</td><td>Prometheus + Grafana</td><td>延迟分布、Token吞吐、GPU利用率、记忆检索命中率</td></tr>
+          <tr><td>日志聚合</td><td>结构化JSON日志</td><td>运行日志、安全审计、MCP调用日志(JSONL)</td></tr>
+          <tr><td>工作流追踪</td><td>LangSmith（LangGraph原生）</td><td>LangGraph 图执行轨迹、检查点状态、节点耗时</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>21.3 关键监控指标</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>指标</th><th>阈值</th><th>告警动作</th></tr></thead>
+        <tbody>
+          <tr><td>LLM 首 Token 延迟 P95</td><td>&lt;500ms</td><td>&gt;1s 持续 5 分钟 → 降级到更小模型</td></tr>
+          <tr><td>记忆检索延迟 P95</td><td>&lt;50ms</td><td>&gt;100ms → 检查 ChromaDB 索引</td></tr>
+          <tr><td>GPU 显存占用</td><td>&lt;90%</td><td>&gt;95% → 触发模型卸载</td></tr>
+          <tr><td>热交换失败率</td><td>&lt;1%</td><td>&gt;3 次连续失败 → 熔断，改冷启动</td></tr>
+          <tr><td>签名验证失败次数</td><td>0</td><td>任意失败 → 安全告警 + 暂停更新</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ===== Chapter 22 ===== -->
+    <h2 id="ch22">22. 开源复用决策矩阵</h2>
+    <p>对 AivyOS 每个核心模块，明确"自研"还是"复用开源"，以及理由：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>模块</th><th>决策</th><th>复用对象</th><th>理由</th></tr></thead>
+        <tbody>
+          <tr><td>记忆抽取/检索/摘要</td><td><span class="badge reuse">复用</span></td><td>Mem0 + ChromaDB</td><td>61.6K stars，自研成本高且易错</td></tr>
+          <tr><td>跨重启记忆持久化</td><td><span class="badge reuse">复用</span></td><td>Letta MemFS</td><td>类文件系统记忆抽象直接解决"重启连续"</td></tr>
+          <tr><td>Agent 工作流编排</td><td><span class="badge reuse">复用</span></td><td>LangGraph</td><td>图编排+检查点+模型无关，生产验证</td></tr>
+          <tr><td>工具调用协议</td><td><span class="badge reuse">复用</span></td><td>MCP 2026-07-28</td><td>事实标准，一次封装处处可用</td></tr>
+          <tr><td>浏览器自动化</td><td><span class="badge reuse">复用</span></td><td>browser-use + Playwright</td><td>95K stars，自然语言驱动</td></tr>
+          <tr><td>代码生成/IDE 写入</td><td><span class="badge reuse">复用</span></td><td>Cline SDK</td><td>可嵌入 SDK，省去自研 8 阶段管线</td></tr>
+          <tr><td>TTS 语音合成</td><td><span class="badge reuse">复用</span></td><td>CosyVoice 3</td><td>2026 SOTA，Apache-2.0</td></tr>
+          <tr><td>ASR 语音识别</td><td><span class="badge reuse">复用</span></td><td>SenseVoice + FunASR</td><td>同生态配套，OpenAI 兼容 API</td></tr>
+          <tr><td>声纹认证</td><td><span class="badge reuse">复用</span></td><td>SpeechBrain（ECAPA-TDNN/ReDimNet）</td><td>统一 API，多模型可选</td></tr>
+          <tr><td>面部识别</td><td><span class="badge reuse">复用</span></td><td>InsightFace</td><td>文档已选，保持不变</td></tr>
+          <tr><td>桌面壳</td><td><span class="badge reuse">复用</span></td><td>Tauri 2 + React</td><td>8MB/80MB，本地优先</td></tr>
+          <tr><td>LLM 推理引擎</td><td><span class="badge reuse">复用</span></td><td>vLLM</td><td>PagedAttention，Continuous Batching</td></tr>
+          <tr><td>向量数据库</td><td><span class="badge reuse">复用</span></td><td>ChromaDB</td><td>作为 Mem0 后端</td></tr>
+          <tr><td>嵌入模型</td><td><span class="badge reuse">复用</span></td><td>BGE-M3</td><td>中英多语言</td></tr>
+          <tr><td>更新签名</td><td><span class="badge reuse">复用</span></td><td>PyNaCl (Ed25519) + BLAKE3</td><td>成熟密码学库</td></tr>
+          <tr><td>自进化引擎</td><td><span class="badge warn">部分复用</span></td><td>OpenJarvis spec 搜索 + LangMem</td><td>借鉴架构，AivyOS 个性化逻辑自研</td></tr>
+          <tr><td>人格系统</td><td><span class="badge exp">自研</span></td><td>—</td><td>差异化核心，Big Five + 自定义模板</td></tr>
+          <tr><td>主动调度器</td><td><span class="badge exp">自研</span></td><td>—</td><td>基于 LangGraph + Cron，触发逻辑个性化</td></tr>
+          <tr><td>认证状态机</td><td><span class="badge exp">自研</span></td><td>—</td><td>声纹/面部/活体融合逻辑是差异化体验</td></tr>
+          <tr><td>安全与权限分级</td><td><span class="badge exp">自研</span></td><td>—</td><td>本地隐私策略需定制</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout success">
+      <strong>预期收益</strong> — 若按上述矩阵复用开源组件，AivyOS 核心模块的自研工作量可减少约 <strong>60%</strong>，MVP 周期从 3 个月缩短至 6-8 周。最大红利来自 MCP（工具层）、Mem0+Letta（记忆层）、Cline SDK（代码生成）三个方向。
+    </div>
+
+    <!-- ===== Chapter 23 ===== -->
+    <h2 id="ch23">23. 开发计划与里程碑</h2>
+    <p>AivyOS 采用三阶段渐进式开发，每阶段聚焦核心能力闭环，确保每阶段结束时都有可演示的成果。</p>
+
+    <div class="phase-card">
+      <h4>Phase 1：核心对话闭环（第 1-4 周）</h4>
+      <div class="duration">4 周 · 目标：能听、能想、能说、能记</div>
+      <ul>
+        <li><strong>第 1 周</strong> — 搭建 Tauri 2.0 壳层 + Python 子进程 IPC；vLLM 本地部署 Qwen2.5-7B；基础文本对话链路</li>
+        <li><strong>第 2 周</strong> — SenseVoice/FunASR 流式 ASR 集成；Silero VAD 语音活动检测；CosyVoice 3 TTS 集成</li>
+        <li><strong>第 3 周</strong> — Mem0 + ChromaDB 记忆系统搭建；Letta MemFS 跨重启持久化；LangGraph 基础工作流</li>
+        <li><strong>第 4 周</strong> — SpeechBrain 声纹认证；InsightFace 面部认证；认证状态机；端到端语音对话联调</li>
+      </ul>
+      <p><strong>阶段成果</strong>：语音唤醒 → 认证 → 对话 → 记忆存储 → 重启恢复，完整闭环。</p>
+    </div>
+
+    <div class="phase-card">
+      <h4>Phase 2：Vibe Coding 闭环（第 5-8 周）</h4>
+      <div class="duration">4 周 · 目标：一句话做软件 + 自动预览</div>
+      <ul>
+        <li><strong>第 5 周</strong> — MCP 架构搭建（filesystem/shell/browser/code-exec Server）；MRTR 确认机制</li>
+        <li><strong>第 6 周</strong> — Cline SDK 集成；需求解析引擎；项目脚手架模板；代码生成→IDE写入链路</li>
+        <li><strong>第 7 周</strong> — browser-use 集成；自动预览控制器；开发服务器管理；截图验证</li>
+        <li><strong>第 8 周</strong> — LangGraph Vibe Coding 状态图编排；构建失败回环修复；端到端 Vibe Coding 联调</li>
+      </ul>
+      <p><strong>阶段成果</strong>：用户说"做一个计算器网页" → AI 生成代码 → 写入 IDE → 浏览器预览 → 截图验证。</p>
+    </div>
+
+    <div class="phase-card">
+      <h4>Phase 3：工程化与自进化（第 9-12 周）</h4>
+      <div class="duration">4 周 · 目标：桌面常驻 + 自动更新 + 自进化</div>
+      <ul>
+        <li><strong>第 9 周</strong> — 系统托盘 8 状态机；全局热键；后台常驻；开机自启；原生通知</li>
+        <li><strong>第 10 周</strong> — Ed25519 三层 PKI 签名体系；七步验签流程；增量更新；版本管理与回滚</li>
+        <li><strong>第 11 周</strong> — 热交换机制（读写锁 + Drain 排空 + 熔断降级）；状态快照；健康检查与回滚；快速启动</li>
+        <li><strong>第 12 周</strong> — OpenJarvis spec 搜索集成；自进化反馈闭环；OpenTelemetry 可观测性；最终联调与优化</li>
+      </ul>
+      <p><strong>阶段成果</strong>：始终在线的桌面贾维斯，自动更新零中断，越用越懂用户。</p>
+    </div>
+
+    <!-- ===== Chapter 24 ===== -->
+    <h2 id="ch24">24. 功能模块任务清单</h2>
+    <p>以下按模块拆分详细任务，每个任务标注优先级（P0 最高 / P1 高 / P2 中）和所属开发阶段。</p>
+
+    <div class="task-card">
+      <div class="ttitle">M1：感知输入层</div>
+      <div class="tmeta">Phase 1 · 第 1-2 周</div>
+      <ul>
+        <li>[P0] T1.1 — Tauri 2.0 壳层搭建，Python 子进程 IPC 通信（Named Pipe / UDS）</li>
+        <li>[P0] T1.2 — vLLM 本地部署 Qwen2.5-7B/14B，OpenAI 兼容 API 封装</li>
+        <li>[P0] T1.3 — SenseVoice/FunASR 流式 ASR 集成，VAD 端点检测</li>
+        <li>[P0] T1.4 — Silero VAD v5 集成，语音活动检测 + 唤醒词触发</li>
+        <li>[P1] T1.5 — 文本输入子系统（悬浮输入框 + WebSocket 实时通信）</li>
+        <li>[P1] T1.6 — PaddleOCR PP-OCRv4 集成，截图文字识别</li>
+        <li>[P2] T1.7 — LLaVA/Qwen2-VL 视觉理解集成，图片内容描述</li>
+        <li>[P2] T1.8 — 多模态融合策略（语音+文本+视觉权重分配）</li>
+      </ul>
+    </div>
+
+    <div class="task-card">
+      <div class="ttitle">M2：核心大脑层</div>
+      <div class="tmeta">Phase 1 · 第 3-4 周</div>
+      <ul>
+        <li>[P0] T2.1 — Mem0 SDK 2.0 集成，ChromaDB 后端配置，BGE-M3 嵌入模型</li>
+        <li>[P0] T2.2 — Mem0 记忆写入/检索 API 封装（add/search）</li>
+        <li>[P0] T2.3 — Letta MemFS 集成，Agent 记忆文件系统持久化</li>
+        <li>[P0] T2.4 — LangGraph 工作流框架搭建，SqliteSaver 检查点配置</li>
+        <li>[P0] T2.5 — LLM 路由策略实现（本地 vLLM ↔ 云端 Claude/GPT 动态切换）</li>
+        <li>[P1] T2.6 — 人格系统（Big Five 参数 + System Prompt 模板）</li>
+        <li>[P1] T2.7 — 上下文管理器（128K 窗口分配 + 滑动窗口 + 压缩策略）</li>
+        <li>[P1] T2.8 — 启动时上下文重建（Mem0 + MemFS + LangGraph 检查点三重恢复）</li>
+      </ul>
+    </div>
+
+    <div class="task-card">
+      <div class="ttitle">M3：能力扩展层</div>
+      <div class="tmeta">Phase 2 · 第 5-8 周</div>
+      <ul>
+        <li>[P0] T3.1 — MCP Server 框架搭建（2026-07-28 规范，无状态核心）</li>
+        <li>[P0] T3.2 — MCP filesystem Server（文件读写，路径白名单）</li>
+        <li>[P0] T3.3 — MCP shell Server（命令执行，MRTR 确认机制）</li>
+        <li>[P0] T3.4 — MCP browser Server（browser-use 驱动，Playwright 底层）</li>
+        <li>[P0] T3.5 — MCP code-exec Server（Docker 沙箱内 Python 执行）</li>
+        <li>[P1] T3.6 — MCP office Server（python-docx/openpyxl/pptx 封装）</li>
+        <li>[P1] T3.7 — MCP search Server（SearXNG 集成）</li>
+        <li>[P1] T3.8 — MCP screenshot Server（屏幕截图 + 区域截取）</li>
+        <li>[P2] T3.9 — 自进化引擎（OpenJarvis spec 搜索 + LangMem 提示词优化）</li>
+        <li>[P2] T3.10 — 主动调度器（Cron 定时任务 + 事件触发 + 条件监控）</li>
+      </ul>
+    </div>
+
+    <div class="task-card">
+      <div class="ttitle">M4：输出响应层</div>
+      <div class="tmeta">Phase 1-2 · 第 2、7 周</div>
+      <ul>
+        <li>[P0] T4.1 — CosyVoice 3 TTS 引擎集成，3 秒音色克隆</li>
+        <li>[P0] T4.2 — TTS 流式合成（首包 &lt;150ms，vLLM 加速）</li>
+        <li>[P1] T4.3 — 多模态输出策略（语音/文本/通知/文件 路由）</li>
+        <li>[P1] T4.4 — 原生系统通知（Tauri notification 插件）</li>
+        <li>[P2] T4.5 — 情感标签控制（14 种细粒度标签：[laughter][breath]等）</li>
+        <li>[P2] T4.6 — GPT-SoVITS 备选引擎可插拔切换</li>
+      </ul>
+    </div>
+
+    <div class="task-card">
+      <div class="ttitle">M5：Vibe Coding 闭环</div>
+      <div class="tmeta">Phase 2 · 第 6-8 周</div>
+      <ul>
+        <li>[P0] T5.1 — Cline SDK 集成（Plan/Act 双模式，多模型 BYOK）</li>
+        <li>[P0] T5.2 — 需求解析引擎（自然语言 → 结构化项目规格 JSON）</li>
+        <li>[P0] T5.3 — 项目脚手架模板（react-web-app / vue / nextjs / python-cli 等 7 种）</li>
+        <li>[P0] T5.4 — 代码生成 → IDE 写入链路（MCP filesystem Server）</li>
+        <li>[P0] T5.5 — 自动预览控制器（启动 dev server → 打开浏览器 → 截图验证）</li>
+        <li>[P1] T5.6 — LangGraph Vibe Coding 状态图（understand→plan→generate→deliver→build→preview→save_memory）</li>
+        <li>[P1] T5.7 — 构建失败条件边回环（build 失败 → 自动回到 generate 修复）</li>
+        <li>[P1] T5.8 — 浏览器控制台错误监控 + 网络请求失败检测</li>
+        <li>[P2] T5.9 — 多设备预览（桌面/手机/平板视口切换）</li>
+      </ul>
+    </div>
+
+    <div class="task-card">
+      <div class="ttitle">M6：专属认证</div>
+      <div class="tmeta">Phase 1 · 第 4 周</div>
+      <ul>
+        <li>[P0] T6.1 — SpeechBrain 声纹模型集成（ECAPA-TDNN，192 维嵌入）</li>
+        <li>[P0] T6.2 — 声纹注册流程（3-10 秒纯净语音样本，支持多模板）</li>
+        <li>[P0] T6.3 — 声纹比对（余弦相似度，阈值 0.75）</li>
+        <li>[P1] T6.4 — InsightFace 面部识别集成（Buffalo_L，512 维嵌入，阈值 0.6）</li>
+        <li>[P1] T6.5 — 活体检测（频谱反欺骗 + 视觉活体）</li>
+        <li>[P1] T6.6 — 认证状态机（dormant→listening→verifying→authenticated/rejected）</li>
+        <li>[P2] T6.7 — 多用户注册支持（不同用户不同人格配置）</li>
+      </ul>
+    </div>
+
+    <div class="task-card">
+      <div class="ttitle">M7：桌面端工程化</div>
+      <div class="tmeta">Phase 3 · 第 9 周</div>
+      <ul>
+        <li>[P0] T7.1 — Tauri 2.0 系统托盘（8 状态机：idle/listening/working/voice/updating/booting/error/paused）</li>
+        <li>[P0] T7.2 — 托盘图标设计（8 套状态图标 × 4 尺寸 16/24/32/48）</li>
+        <li>[P0] T7.3 — 托盘左键交互（单击切换窗口 + 状态感知行为）</li>
+        <li>[P0] T7.4 — 托盘右键菜单（主界面/语音/截屏/暂停/记忆管理/更新/设置/退出）</li>
+        <li>[P0] T7.5 — 托盘双击语音快捷入口（300ms 判定 + 语音模式切换）</li>
+        <li>[P1] T7.6 — 托盘拖拽文件交互（文件类型路由 + AI 自动分析）</li>
+        <li>[P0] T7.7 — 全局热键（Alt+Space 唤醒 / Alt+V 语音 / Alt+S 截屏 / Alt+Q 退出）</li>
+        <li>[P0] T7.8 — 后台常驻（窗口关闭 → 最小化到托盘 + Python 核心持续运行）</li>
+        <li>[P1] T7.9 — 开机自启（Tauri autostart 插件，三平台支持）</li>
+        <li>[P1] T7.10 — 原生通知（分级推送：紧急/重要/普通/静默 + 勿扰模式）</li>
+      </ul>
+    </div>
+
+    <div class="task-card">
+      <div class="ttitle">M8：自动更新与签名</div>
+      <div class="tmeta">Phase 3 · 第 10 周</div>
+      <ul>
+        <li>[P0] T8.1 — 三层 PKI 密钥体系搭建（Root CA / Intermediate / Leaf）</li>
+        <li>[P0] T8.2 — CI/CD 签名生成脚本（BLAKE3 哈希 + Ed25519 签名 + manifest.signed.json）</li>
+        <li>[P0] T8.3 — 客户端七步验签流程实现（证书链→有效期→CRL→签名→全包哈希→逐文件→防降级）</li>
+        <li>[P0] T8.4 — Tauri updater 插件集成，更新检测（每 6 小时检查）</li>
+        <li>[P1] T8.5 — 增量下载（bsdiff + zstd，典型补丁 &lt;5MB）</li>
+        <li>[P1] T8.6 — 版本管理（保留 3 个版本，符号链接切换，一键回滚）</li>
+        <li>[P1] T8.7 — 密钥轮换策略（Root 10 年 / Intermediate 1 年 / Leaf 每次发布）</li>
+        <li>[P2] T8.8 — 安全事件上报（篡改检测 → 隔离 + 审计日志 + 暂停更新 24h）</li>
+      </ul>
+    </div>
+
+    <div class="task-card">
+      <div class="ttitle">M9：热交换与热启动</div>
+      <div class="tmeta">Phase 3 · 第 11 周</div>
+      <ul>
+        <li>[P0] T9.1 — ModuleRWLock 模块级读写锁（读操作并发，写操作独占）</li>
+        <li>[P0] T9.2 — SafeModuleProxy 安全模块代理（所有调用经锁保护）</li>
+        <li>[P0] T9.3 — DrainManager 排空管理器（8 阶段：entering→queueing→draining→extracting→reloading→restoring→verifying→releasing）</li>
+        <li>[P0] T9.4 — 状态迁移兼容（schema 版本声明 + _migrate_state_ 迁移函数 + 快照兜底）</li>
+        <li>[P0] T9.5 — ModelHotSwapper 模型热交换（加载新模型→原子切换→Drain 旧请求→卸载旧模型）</li>
+        <li>[P1] T9.6 — HotSwapCircuitBreaker 熔断器（连续 3 次失败 → 熔断 1 小时 → 降级冷启动）</li>
+        <li>[P1] T9.7 — StateSnapshot 状态快照（会话/工具/调度器/浏览器 原子快照 + 恢复）</li>
+        <li>[P1] T9.8 — HealthChecker 健康检查（LLM/记忆/工具/语音/调度器/前端 6 项检查 + 自动回滚）</li>
+        <li>[P1] T9.9 — FastBoot 快速启动（模型常驻 + 快照恢复，冷启动 19s → 热启动 4s）</li>
+        <li>[P2] T9.10 — 前端热交换（Vite HMR + WebView 资源热替换）</li>
+      </ul>
+    </div>
+
+    <div class="task-card">
+      <div class="ttitle">M10：可观测性与测试</div>
+      <div class="tmeta">Phase 3 · 第 12 周</div>
+      <ul>
+        <li>[P1] T10.1 — OpenTelemetry 链路追踪集成（ASR→LLM→工具→TTS 全链路）</li>
+        <li>[P1] T10.2 — Prometheus 指标采集 + Grafana 仪表盘</li>
+        <li>[P1] T10.3 — LangSmith 工作流追踪（LangGraph 图执行轨迹）</li>
+        <li>[P1] T10.4 — 结构化 JSON 日志 + 安全审计日志</li>
+        <li>[P2] T10.5 — 单元测试（记忆检索/路由策略/签名验证）</li>
+        <li>[P2] T10.6 — 集成测试（LangGraph 工作流端到端 + MCP 工具调用链）</li>
+        <li>[P2] T10.7 — 语音链路压测（ASR→LLM→TTS 全链路延迟 benchmark）</li>
+        <li>[P2] T10.8 — 记忆连续性测试（模拟断电重启 → 零记忆丢失验证）</li>
+      </ul>
+    </div>
+
+    <!-- ===== Chapter 25 ===== -->
+    <h2 id="ch25">25. 风险评估与应对</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>风险</th><th>概率</th><th>影响</th><th>应对措施</th></tr></thead>
+        <tbody>
+          <tr><td>GPU 显存不足导致多模型无法同时加载</td><td>中</td><td>高</td><td>模型分时加载 + vLLM 显存利用率动态调整 + 云端 API 降级</td></tr>
+          <tr><td>热交换期间状态不一致导致数据损坏</td><td>低</td><td>高</td><td>读写锁 + Drain 排空 + 状态快照 + 熔断降级四层防护</td></tr>
+          <tr><td>签名密钥泄露导致更新包被伪造</td><td>极低</td><td>灾难</td><td>Root CA 离线 HSM + Leaf 密钥单次使用 + CRL 撤销机制</td></tr>
+          <tr><td>Mem0/Letta 记忆抽取质量不稳定</td><td>中</td><td>中</td><td>定期审查抽取结果 + 手动修正接口 + LangMem 提示词优化补充</td></tr>
+          <tr><td>Cline SDK 生成的代码质量不达标</td><td>中</td><td>中</td><td>构建验证 + 条件边回环修复 + LLM 自审查机制</td></tr>
+          <tr><td>browser-use 在复杂网页上定位失败</td><td>中</td><td>低</td><td>降级到 Playwright API 手动定位 + 视觉定位 fallback</td></tr>
+          <tr><td>声纹认证误识（家人声音相似）</td><td>低</td><td>中</td><td>提高阈值 + 面部双重认证 + 活体检测</td></tr>
+          <tr><td>开源组件许可证变更（如 AGPL 传染）</td><td>低</td><td>中</td><td>定期审查许可证 + 避免深度集成 AGPL 组件 + 替换方案预案</td></tr>
+          <tr><td>本地模型推理延迟过高影响体验</td><td>中</td><td>中</td><td>路由策略动态切换小模型 + KV Cache 优化 + 云端 API 辅助</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <strong>风险总结</strong> — AivyOS 作为个人使用项目，最大风险在于 GPU 硬件限制和开源组件质量。通过云端 API 降级、模型分时加载、多模型 BYOK 策略可缓解硬件风险；通过 Build vs Reuse 矩阵选择成熟开源组件、定期审查许可证可降低开源风险。热交换和签名机制的设计已充分考虑安全性，实际风险极低。
+    </div>
+
+    <footer>
+      <p><strong>AivyOS — 个人专属AI伴侣系统 · 完整技术工程文档</strong></p>
+      <p>文档编号 AIVY-TDD-2026-001 · 版本 V2.0 · 日期 2026-08-17</p>
+      <p>整合自 5 份独立文档：技术工程文档、核心特性规格、桌面端与热启动规格、签名/热交换/托盘深度规格、文档审查与开源复用建议。</p>
+      <div class="rev-history">
+        <p><strong>版本历史</strong></p>
+        <ul>
+          <li>V1.0 (2026-08-16) — 初版技术工程文档，含四层架构、五大特性、数据流协议</li>
+          <li>V1.1 (2026-08-16) — 新增核心特性规格书（FDD-002），补充五大特性技术细节</li>
+          <li>V1.2 (2026-08-17) — 新增桌面端与热启动规格（DDD-003），定义 Tauri 2.0 壳层</li>
+          <li>V1.3 (2026-08-17) — 新增签名/热交换/托盘深度规格（DDD-004），Ed25519 三层 PKI</li>
+          <li>V1.4 (2026-08-17) — 新增文档审查与开源复用建议（REV-003），32+ 开源项目调研</li>
+          <li><strong>V2.0 (2026-08-17) — 全文档整合：5 份文档合并为一份，修正全部不一致（TTS→CosyVoice 3、ASR→SenseVoice、记忆→Mem0+Letta、编排→LangGraph、工具→MCP、浏览器→browser-use、代码→Cline SDK、桌面→Tauri 2.0），新增功能模块任务清单（10 模块 80+ 任务）</strong></li>
+        </ul>
+      </div>
+    </footer>
+
+  </main>
+</div>
+</body>
+</html>
