@@ -171,11 +171,52 @@ async def _build(state: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
 async def _preview(state: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     workspace = ctx.get("workspace")
     if ctx.get("executor") == "local" and ctx.get("preview", True) and workspace is not None:
-        srv, port = _start_preview_server(Path(workspace))
-        state["preview_url"] = f"http://127.0.0.1:{port}/"
-        state["_preview_server"] = srv
-        state["preview_ok"] = True
-        state["note_preview"] = f"本地预览已启动: {state['preview_url']}"
+        controller = ctx.get("preview_controller")
+        if controller is not None:
+            # §11：PreviewController 管理 dev server + 浏览器监控 + AI 视觉验证
+            spec = state.get("spec") or {}
+            ptype = spec.get("type", "static-site")
+            state["preview_url"] = controller.start(Path(workspace), ptype)
+            state["_preview_controller"] = controller
+            state["preview_ok"] = False
+            # 控制台/网络监控（§11 控制台监控 + 网络监控，T5.8）
+            if controller.browser_server is not None:
+                try:
+                    mon = await controller.browser_server._monitor({"url": state["preview_url"], "hold_ms": 600})
+                    events = mon.data.get("events", {}) if mon.ok else {"console": [], "network": []}
+                    state["preview_monitor"] = events
+                    console_errors = [e for e in events.get("console", []) if e.get("type") == "error"]
+                    net_fails = [e for e in events.get("network", []) if e.get("kind") == "res" and e.get("status", 0) >= 400]
+                    if console_errors or net_fails:
+                        state["preview_failed"] = True
+                        state["retry_count"] = state.get("retry_count", 0) + 1
+                        state["errors"] = [f"预览错误 #{state['retry_count']}: console={console_errors[:2]} net={net_fails[:2]}"]
+                        state["note_preview"] = f"预览监控发现错误 → 回环 generate（{state['preview_url']}）"
+                        return state
+                except Exception as e:
+                    log.warning("预览监控失败（跳过验证）: %s", e)
+            # AI 视觉验证（§11 截图反馈，T5.5）
+            try:
+                vc = await controller.visual_check(state["preview_url"])
+                state["preview_visual"] = vc
+                if vc.get("verdict") == "abnormal":
+                    state["preview_failed"] = True
+                    state["retry_count"] = state.get("retry_count", 0) + 1
+                    state["errors"] = [f"预览视觉异常 #{state['retry_count']}: {vc.get('description', '')[:120]}"]
+                    state["note_preview"] = f"视觉验证异常 → 回环 generate（{state['preview_url']}）"
+                    return state
+            except Exception as e:
+                log.warning("视觉验证失败（跳过）: %s", e)
+            state["preview_ok"] = True
+            state["preview_failed"] = False
+            state["note_preview"] = f"预览已启动并通过验证: {state['preview_url']}"
+        else:
+            # 兼容旧 ctx（无 preview_controller）：直接 http.server
+            srv, port = _start_preview_server(Path(workspace))
+            state["preview_url"] = f"http://127.0.0.1:{port}/"
+            state["_preview_server"] = srv
+            state["preview_ok"] = True
+            state["note_preview"] = f"本地预览已启动: {state['preview_url']}"
     else:
         state["preview_url"] = "http://127.0.0.1:8080/preview"
         state["preview_ok"] = True
@@ -199,8 +240,19 @@ def _build_condition(state: Dict[str, Any]) -> str:
     return "give_up"
 
 
+def _preview_condition(state: Dict[str, Any]) -> str:
+    """预览验证回环（§10.1 阶段 6 扩展 / §11 控制台检查）：console 错误或视觉异常 → 回 generate 修复。"""
+    if not state.get("preview_failed"):
+        return "ok"
+    if state.get("retry_count", 0) < MAX_BUILD_RETRIES:
+        return "retry"
+    return "give_up"
+
+
 def build_vibe_coding_graph(checkpointer: Optional[SqliteCheckpointer] = None) -> StateGraph:
-    """§4.5.2 / §7.4 VibeCoding 状态图：understand→plan→generate→deliver→build→(retry?generate|ok:preview|give_up:END)→save_memory→END。"""
+    """§4.5.2 / §7.4 VibeCoding 状态图：
+    understand→plan→generate→deliver→build→(retry?generate|ok:preview|give_up:END)→
+    preview→(retry?generate 预览验证回环|ok:save_memory|give_up:END)→save_memory→END。"""
     g = StateGraph({"user_request": "", "retry_count": 0})
     g.add_node("understand", _understand)
     g.add_node("plan", _plan)
@@ -215,7 +267,8 @@ def build_vibe_coding_graph(checkpointer: Optional[SqliteCheckpointer] = None) -
     g.add_edge("generate", "deliver")
     g.add_edge("deliver", "build")
     g.add_conditional_edges("build", _build_condition, {"retry": "generate", "ok": "preview", "give_up": END})
-    g.add_edge("preview", "save_memory")
+    # §11 预览验证回环：console 错误/视觉异常 → 回 generate 修复（§10.1 阶段 6 扩展）
+    g.add_conditional_edges("preview", _preview_condition, {"retry": "generate", "ok": "save_memory", "give_up": END})
     g.add_edge("save_memory", END)
     return g
 
@@ -234,6 +287,12 @@ def _start_preview_server(workspace: Path):
 
 def stop_preview_server(state: Dict[str, Any]) -> None:
     """停止预览服务器（工作流结束后清理）。"""
+    controller = state.pop("_preview_controller", None)
+    if controller is not None:
+        try:
+            controller.stop()
+        except Exception:
+            pass
     srv = state.pop("_preview_server", None)
     if srv is not None:
         try:

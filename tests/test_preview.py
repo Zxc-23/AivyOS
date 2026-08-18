@@ -1,4 +1,4 @@
-"""自动预览控制器测试（§11 / T5.5、T5.9）：分类型 dev server + 多设备视口。"""
+"""自动预览控制器测试（§11 / T5.5、T5.9）：分类型 dev server + 生命周期管理 + AI 视觉验证 + 多设备视口。"""
 
 import asyncio
 import os
@@ -29,7 +29,17 @@ class TestPreviewController(AivyTestCase):
             self.assertIn("hello", body)
         finally:
             ctl.stop()
-        self.assertEqual(ctl.status()["active"], 0)
+        self.assertEqual(ctl.server_status()["active"], 0)
+
+    def test_list_servers(self):
+        ctl = PreviewController()
+        ctl.start(self.ws, "static-site")
+        servers = ctl.list_servers()
+        self.assertEqual(len(servers), 1)
+        self.assertEqual(servers[0]["type"], "static-site")
+        self.assertIn("http://127.0.0.1:", servers[0]["url"])
+        ctl.stop()
+        self.assertEqual(len(ctl.list_servers()), 0)
 
     def test_screenshot_mock_fallback(self):
         ctl = PreviewController()
@@ -48,7 +58,35 @@ class TestPreviewController(AivyTestCase):
         url2 = ctl.start(self.ws, "static-site")  # 已启动 → 复用
         self.assertEqual(url1, url2)
         ctl.stop()
-        self.assertEqual(ctl.status()["active"], 0)
+        self.assertEqual(ctl.server_status()["active"], 0)
+
+    def test_visual_check_without_browser_server(self):
+        # 无 browser server → no-screenshot（诚实失败，不伪造）
+        ctl = PreviewController()
+        r = asyncio.run(ctl.visual_check("http://127.0.0.1:1/"))
+        self.assertEqual(r["verdict"], "no-screenshot")
+
+    def test_visual_check_with_mock_understand(self):
+        # browser server 返回真实截图（1x1 PNG）+ understand mock → not-verified（honest，不伪造判定）
+        import base64
+
+        from aivyos_core.mcp.types import ToolResult
+        from aivyos_core.vision.understand import MockUnderstand
+
+        png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+
+        class _StubBrowser:
+            async def _screenshot(self, args):
+                return ToolResult(True, data={"image": png_b64, "backend": "stub"})
+
+        ctl = PreviewController(browser_server=_StubBrowser(), understand=MockUnderstand())
+        url = ctl.start(self.ws, "static-site")
+        try:
+            r = asyncio.run(ctl.visual_check(url))
+            self.assertEqual(r["verdict"], "not-verified")
+            self.assertEqual(r["backend"], "stub")
+        finally:
+            ctl.stop()
 
 
 if __name__ == "__main__":

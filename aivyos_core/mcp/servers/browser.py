@@ -1,7 +1,11 @@
 """MCP browser Server（文档 §5.1.2 / T3.4）：browser-use / Playwright 驱动 + mock 回退。
 
-- 真实后端：playwright（可选）——导航/截图/取文本（browser-use 为 Phase 2 后续升级）
-- mock 回退：明确标注，不伪装
+后端降级链（§2 代码优先 + 优雅降级）：
+- browser-use（可选）：自然语言驱动浏览器执行任务（§7.1，95K stars，底层 Playwright）
+- playwright（可选）：直接 API 驱动 —— 导航/截图/监控/视口
+- mock：明确标注，不伪装
+
+均不可用时 mock 回退，绝不假装真实浏览器结果。
 """
 
 from __future__ import annotations
@@ -13,15 +17,77 @@ from aivyos_core.mcp.types import PermissionLevel, Tool, ToolResult, make_tool
 
 
 class BrowserServer:
-    def __init__(self) -> None:
+    def __init__(self, llm=None) -> None:
+        """llm：可选 LLM 客户端（browser-use Agent 需要），缺省时 browser-use 不可用。"""
+        self.llm = llm
+        self._bu = None
         self._pw = None
+        try:
+            import browser_use  # noqa: F401
+
+            self._bu = "browser-use"
+        except ImportError:
+            pass
         try:
             import playwright  # noqa: F401
 
             self._pw = "playwright"
         except ImportError:
             pass
-        self.backend = self._pw or "mock"
+        self.backend = self._bu or self._pw or "mock"
+
+    # ---- browser-use 自然语言驱动（§7.1，可选）----
+
+    async def _task(self, args: Dict[str, Any]) -> ToolResult:
+        """自然语言任务驱动浏览器（browser-use Agent；缺 LLM/库时降级）。"""
+        task = args.get("task", "")
+        if not task:
+            return ToolResult(False, error="任务描述为空")
+        if self._bu == "browser-use" and self.llm is not None:
+            try:
+                from browser_use import Agent
+
+                agent = Agent(task=task, llm=self.llm)
+                history = await agent.run()
+                n_steps = len(getattr(history, "history", []) or [])
+                return ToolResult(
+                    True,
+                    content=f"browser-use 已完成任务: {task}",
+                    data={"steps": n_steps, "backend": "browser-use"},
+                )
+            except Exception as e:
+                return ToolResult(False, error=f"browser-use 失败: {e}")
+        if self._pw == "playwright":
+            # 降级：Playwright 直接导航（无法自然语言，仅打开首 URL 若含 http）
+            import re
+
+            m = re.search(r"https?://\S+", task)
+            if m:
+                return await self._navigate({"url": m.group(0)})
+            return ToolResult(
+                False,
+                error="browser-use 不可用（缺 browser_use 包或 LLM），且任务不含 URL，无法降级执行",
+            )
+        return ToolResult(True, content=f"（mock browser-use）任务: {task[:60]}…：接入 browser-use 后真实执行", data={"backend": "mock"})
+
+    async def _reload(self, args: Dict[str, Any]) -> ToolResult:
+        """页面热重载（§11 热重载：文件变化时刷新页面）。"""
+        url = args.get("url", "")
+        if self._pw == "playwright":
+            try:
+                from playwright.async_api import async_playwright
+
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch()
+                    page = await browser.new_page()
+                    if url:
+                        await page.goto(url, timeout=15000)
+                    await page.reload(wait_until="domcontentloaded")
+                    await browser.close()
+                return ToolResult(True, content=f"已热重载 {url or '当前页'}", data={"backend": "playwright"})
+            except Exception as e:
+                return ToolResult(False, error=f"playwright 热重载失败: {e}")
+        return ToolResult(True, content="（mock reload）已刷新页面：接入 playwright 后真实重载", data={"backend": "mock"})
 
     async def _navigate(self, args: Dict[str, Any]) -> ToolResult:
         url = args.get("url", "")
@@ -117,6 +183,16 @@ class BrowserServer:
 
     def tools(self) -> list[Tool]:
         return [
+            make_tool(
+                "browser_task", "自然语言浏览器任务（§7.1 browser-use）",
+                {"type": "object", "properties": {"task": {"type": "string"}}, "required": ["task"]},
+                self._task, PermissionLevel.L2, server="browser",
+            ),
+            make_tool(
+                "browser_reload", "页面热重载（§11）",
+                {"type": "object", "properties": {"url": {"type": "string"}}},
+                self._reload, PermissionLevel.L0, server="browser",
+            ),
             make_tool(
                 "browser_navigate", "打开网页（§7.1）",
                 {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]},

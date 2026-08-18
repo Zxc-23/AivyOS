@@ -176,6 +176,49 @@ class TestVibeCodingWorkflow(AivyTestCase):
         with self.assertRaises(WorkflowError):
             asyncio.run(app.resume("nope"))
 
+    def test_preview_console_error_retry_loop(self):
+        """§11 预览验证回环：console 错误 → 回 generate 修复 → 超限 give_up（不假成功）。"""
+        import shutil
+
+        from aivyos_core.codegen import CodeGenService
+        from aivyos_core.codegen.preview import PreviewController
+        from aivyos_core.mcp.types import ToolResult
+        from aivyos_core.workflow.workflows import stop_preview_server
+
+        class _ErrorBrowser:
+            """browser server：始终报告 console error（模拟预览发现问题）。"""
+
+            async def _monitor(self, args):
+                return ToolResult(True, data={"events": {"console": [{"type": "error", "text": "TypeError: x is not a function"}], "network": []}, "backend": "stub"})
+
+            async def _screenshot(self, args):
+                return ToolResult(True, data={"image": None, "backend": "stub"})
+
+        ws = os.path.join(_TMP, "ws_preview_retry")
+        shutil.rmtree(ws, ignore_errors=True)
+        state = None
+        try:
+            ck = _ckpt("ck_preview_retry.db")
+            app = build_vibe_coding_graph(ck).compile(checkpointer=ck)
+            ctx = {
+                "executor": "local",
+                "workspace": ws,
+                "codegen": CodeGenService(),
+                "preview_controller": PreviewController(browser_server=_ErrorBrowser()),
+                "preview": True,
+                "build_command": None,  # 跳过构建（先过 build）
+            }
+            state = asyncio.run(app.invoke({"user_request": "做一个静态网页"}, thread_id="wf_preview_retry", ctx=ctx))
+            # 预览验证持续失败 → 回环 generate 至上限后 give_up 终止
+            self.assertTrue(state["preview_failed"])
+            self.assertEqual(state["retry_count"], 2)  # MAX_BUILD_RETRIES
+            self.assertGreater(app.last_trace.count("generate"), 1)  # 回环触发
+            self.assertNotIn("save_memory", app.last_trace)  # 未假成功
+        finally:
+            if state is not None:
+                stop_preview_server(state)
+            shutil.rmtree(ws, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

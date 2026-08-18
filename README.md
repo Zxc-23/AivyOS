@@ -127,6 +127,12 @@ python scripts\smoke_codegen.py                              # 冒烟：规则+L
 | **自动预览控制器**（分类型 dev server + 截图 + 多设备视口） | §11 / T5.5 / T5.9 | ✅ Week 6 已实现（codegen/preview.py） |
 | **浏览器控制台/网络监控 + 多设备视口**（Playwright 可选 + mock 回退） | §11 / T5.8 / T5.9 | ✅ Week 6 已实现（browser_monitor/browser_viewport） |
 | **VibeCoding 升级**（understand 真实需求解析、generate 真实代码生成、deliver 经服务） | §10 / T5.6 / T5.7 | ✅ Week 6 已实现（workflow local 执行器） |
+| **browser-use 自然语言驱动**（可选，缺库/缺 LLM 降级 Playwright/mock） | §7.1 / T3.4 | ✅ Week 7 已实现（browser_task，§5.1.2） |
+| **页面热重载**（browser_reload，§11 热重载） | §11 | ✅ Week 7 已实现 |
+| **开发服务器生命周期管理**（start/stop/list/status/类型化端口） | §11 开发服务器 | ✅ Week 7 已实现（preview.py，npm 缺失降级静态） |
+| **截图 AI 视觉验证**（browser 截图 → vision Understand → 渲染判定，honest 不伪造） | §11 截图反馈 | ✅ Week 7 已实现（visual_check） |
+| **预览验证回环**（console 错误/视觉异常 → 回 generate 修复 → 超限 give_up） | §10.1 阶段6 扩展 / §11 控制台检查 | ✅ Week 7 已实现（preview 条件边） |
+| **端到端 Vibe Coding 联调**（一句话做软件全链路 + 记忆保存） | §10 / §11 / §23 | ✅ Week 7 已实现（test_e2e_vibe_coding + 冒烟） |
 | **端到端联调测试**（语音认证→ASR→LLM→TTS / 视觉融合 / 输出路由 / 记忆持久化） | §23 | ✅ 已实现（164 测试全通，Phase 1 收官） |
 | 会话持久化与快照 | §14.3 | ✅ 已实现（JSON 原子写） |
 | IPC（JSON-RPC + TCP/NamedPipe） | §16.2 | ✅ 已实现（TCP 全通，NamedPipe 需 pywin32） |
@@ -143,7 +149,7 @@ python scripts\smoke_codegen.py                              # 冒烟：规则+L
 - **零依赖可运行**：核心链路仅用 Python 标准库；PyYAML/pywin32/sounddevice/silero-vad/funasr/cosyvoice/mem0 均为可选增强
 - **四级降级**：真实后端失败 → mock（链路不断）；mem0 缺失 → JSON 记忆；NamedPipe 缺失 → TCP 回环；语音模型缺失 → 能量 VAD + 规则 ASR + 占位 TTS
 - **路由诚实报告**：`route.fallback=true` 明确标注降级，不伪装真实推理
-- **测试即文档**：238 个 unittest 覆盖配置/人格/上下文/路由(含真实探测)/引擎/记忆(含LLM抽取)/MemFS/工作流(含local执行器+真实代码生成)/恢复/摘要/IPC/唤醒/VAD/ASR/TTS/语音会话/认证（声纹/面部/活体/状态机/门控）/视觉/多模态融合/输出路由/通知/情感标签/悬浮输入/MCP（协议/MRTR/八 Server/客户端）/调度器/自进化/需求解析/脚手架模板/代码生成服务/预览控制器/浏览器监控 全链路
+- **测试即文档**：246 个 unittest 覆盖配置/人格/上下文/路由(含真实探测)/引擎/记忆(含LLM抽取)/MemFS/工作流(含local执行器+真实代码生成+预览验证回环)/恢复/摘要/IPC/唤醒/VAD/ASR/TTS/语音会话/认证（声纹/面部/活体/状态机/门控）/视觉/多模态融合/输出路由/通知/情感标签/悬浮输入/MCP（协议/MRTR/八 Server/客户端）/调度器/自进化/需求解析/脚手架模板/代码生成服务/预览控制器/浏览器监控/browser-use 任务/端到端 Vibe Coding 全链路
 
 ## Phase 1 里程碑状态 ✅ 完成（能听、能想、能说、能记、认主、能看）
 

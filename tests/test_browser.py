@@ -14,8 +14,21 @@ class TestBrowserServer(AivyTestCase):
         self.tools = {t.name: t for t in self.srv.tools()}
 
     def test_tool_names_registered(self):
-        for name in ("browser_navigate", "browser_screenshot", "browser_monitor", "browser_viewport"):
+        for name in (
+            "browser_navigate", "browser_screenshot", "browser_monitor",
+            "browser_viewport", "browser_task", "browser_reload",
+        ):
             self.assertIn(name, self.tools, name)
+
+    def test_task_mock_fallback(self):
+        r = asyncio.run(self.tools["browser_task"].handler({"task": "打开首页截图"}))
+        self.assertTrue(r.ok)
+        self.assertEqual(r.data["backend"], "mock")
+
+    def test_reload_mock_fallback(self):
+        r = asyncio.run(self.tools["browser_reload"].handler({"url": "http://127.0.0.1:1/"}))
+        self.assertTrue(r.ok)
+        self.assertEqual(r.data["backend"], "mock")
 
     def test_navigate_mock_fallback(self):
         r = asyncio.run(self.tools["browser_navigate"].handler({"url": "http://127.0.0.1:1/"}))
