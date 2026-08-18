@@ -172,6 +172,18 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "timezone": "local",
         "tick_s": 5,                 # 调度循环 tick
     },
+    # ---- Phase 2 Week 6：代码生成（§10 一句话做软件 / §11 预览）----
+    "codegen": {
+        "backend": "auto",           # auto | local | cline（Cline SDK 可选，§10.1 T5.1）
+        "model": "qwen2.5:3b",       # Cline 后端模型（可选）
+        "llm_enhance": False,        # local 后端生成后是否用 LLM 增强入口文件
+        "deliver_via_mcp": False,    # True 时经 MCP filesystem fs_write 交付（§10.1 阶段5）
+        "workspace": ".aivyos_workspace",  # 生成项目默认落盘目录
+        "preview": {
+            "enabled": True,         # 自动预览（§11）
+            "viewport": "desktop",   # desktop | mobile | tablet（§11 多设备）
+        },
+    },
     "logging": {"level": "INFO"},
 }
 

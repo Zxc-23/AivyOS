@@ -22,6 +22,8 @@ shell/src-tauri/target/
 # 运行时数据（默认存 ~/.aivyos，此处兜底）
 .aivyos_data/
 .aivyos_test/
+.aivyos_workspace/
+.aivyos_mcp_scratch/
 *.log
 
 # Rust 工具链（沙箱隔离安装到工作区，不入库）

@@ -44,12 +44,42 @@ def _real_skeleton(title: str) -> Dict[str, str]:
 
 async def _understand(state: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     request = state.get("user_request", "")
-    state["spec"] = {"type": "web_app", "title": request[:40], "source": ctx.get("executor", "demo")}
-    state["note_understand"] = f"已解析需求: {request[:40]}"
+    if ctx.get("executor") == "local":
+        # §10.1 阶段1：真实需求解析（规则 + LLM 可选）
+        svc = ctx.get("codegen")
+        parser = svc.parser if svc is not None else None
+        if parser is None:
+            from aivyos_core.requirement import RequirementParser
+
+            parser = RequirementParser(router=ctx.get("router"))
+        try:
+            spec = await parser.parse_enhanced(request)
+            state["spec"] = spec.to_dict()
+            state["_spec_obj"] = spec
+            state["note_understand"] = f"已解析需求（{spec.source}）: {spec.title} [{spec.type}]"
+        except Exception as e:
+            log.warning("需求解析失败，降级规则: %s", e)
+            from aivyos_core.requirement import RequirementParser
+
+            spec = RequirementParser().parse(request)
+            state["spec"] = spec.to_dict()
+            state["_spec_obj"] = spec
+            state["note_understand"] = f"已解析需求（rule 降级）: {spec.title} [{spec.type}]"
+    else:
+        state["spec"] = {"type": "web_app", "title": request[:40], "source": "demo"}
+        state["note_understand"] = f"已解析需求: {request[:40]}"
     return state
 
 
 async def _plan(state: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    if ctx.get("executor") == "local":
+        service = ctx.get("codegen")
+        if service is not None and state.get("_spec_obj") is not None:
+            plan = service.plan(state["_spec_obj"])
+            state["plan"] = plan.files
+            state["_plan_obj"] = plan
+            state["note_plan"] = f"已规划文件树（{len(plan.files)} 个文件）"
+            return state
     state["plan"] = [
         {"file": "index.html", "role": "页面结构"},
         {"file": "style.css", "role": "样式"},
@@ -60,6 +90,17 @@ async def _plan(state: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def _generate(state: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    if ctx.get("executor") == "local":
+        service = ctx.get("codegen")
+        if service is not None and state.get("_spec_obj") is not None:
+            plan = state.get("_plan_obj")
+            try:
+                files = service.generate(state["_spec_obj"], plan)
+                state["files"] = files
+                state["note_generate"] = f"已生成代码（{len(files)} 个文件，{service.backend.name}）"
+                return state
+            except Exception as e:
+                log.warning("代码生成失败，降级骨架: %s", e)
     state["files"] = _real_skeleton(state.get("user_request", "AivyOS App")) if ctx.get("executor") == "local" else dict(DEMO_FILES)
     state.setdefault("retry_count", 0)
     state["note_generate"] = f"已生成代码（第 {state['retry_count']} 轮，{ctx.get('executor', 'demo')} 执行器）"
@@ -70,6 +111,14 @@ async def _deliver(state: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]
     workspace = ctx.get("workspace")
     if ctx.get("executor") == "local" and workspace is not None:
         ws = Path(workspace)
+        service = ctx.get("codegen")
+        if service is not None and state.get("files"):
+            # §10.1 阶段5：经 CodeGenService 交付（fs_tool 存在时走 MCP filesystem）
+            delivered = await service.deliver(state["files"], ws)
+            state["delivered_to"] = str(ws)
+            state["delivery"] = delivered
+            state["note_deliver"] = f"已交付 {delivered['count']} 个文件（{delivered['via']}）→ {ws}"
+            return state
         ws.mkdir(parents=True, exist_ok=True)
         for name, content in (state.get("files") or {}).items():
             (ws / name).write_text(content, encoding="utf-8")

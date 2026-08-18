@@ -58,6 +58,63 @@ class BrowserServer:
                 return ToolResult(False, error=f"playwright 失败: {e}")
         return ToolResult(True, content="（mock browser）截图：接入 playwright 后返回真实图像", data={"backend": "mock"})
 
+    async def _monitor(self, args: Dict[str, Any]) -> ToolResult:
+        """浏览器控制台/网络监控（§11 / T5.8）：捕获 console 消息 + 网络请求/响应。"""
+        if self._pw == "playwright":
+            try:
+                from playwright.async_api import async_playwright
+
+                events: Dict[str, list] = {"console": [], "network": []}
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch()
+                    page = await browser.new_page()
+                    page.on("console", lambda msg: events["console"].append({"type": msg.type, "text": msg.text[:200]}))
+                    page.on(
+                        "request",
+                        lambda req: events["network"].append({"kind": "req", "url": req.url[:200], "method": req.method}),
+                    )
+                    page.on(
+                        "response",
+                        lambda res: events["network"].append(
+                            {"kind": "res", "url": res.url[:200], "status": res.status}
+                        ),
+                    )
+                    await page.goto(args.get("url", "about:blank"), timeout=15000)
+                    await page.wait_for_timeout(args.get("hold_ms", 800))
+                    await browser.close()
+                return ToolResult(True, data={"events": events, "backend": "playwright"})
+            except Exception as e:
+                return ToolResult(False, error=f"playwright 监控失败: {e}")
+        return ToolResult(True, content="（mock monitor）控制台/网络监控：接入 playwright 后捕获真实事件", data={"events": {"console": [], "network": []}, "backend": "mock"})
+
+    async def _viewport(self, args: Dict[str, Any]) -> ToolResult:
+        """多设备视口预览（§11 / T5.9）：desktop/mobile/tablet 截图。"""
+        viewports = {
+            "desktop": (1280, 800),
+            "mobile": (390, 844),
+            "tablet": (768, 1024),
+        }
+        device = args.get("device", "desktop")
+        vp = viewports.get(device)
+        if vp is None:
+            return ToolResult(False, error=f"未知设备: {device}（可选 {list(viewports)}）")
+        if self._pw == "playwright":
+            try:
+                from playwright.async_api import async_playwright
+
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch()
+                    page = await browser.new_page(viewport={"width": vp[0], "height": vp[1]})
+                    await page.goto(args.get("url", "about:blank"), timeout=15000)
+                    png = await page.screenshot()
+                    await browser.close()
+                return ToolResult(
+                    True, data={"device": device, "viewport": vp, "image": base64.b64encode(png).decode(), "backend": "playwright"}
+                )
+            except Exception as e:
+                return ToolResult(False, error=f"playwright 视口截图失败: {e}")
+        return ToolResult(True, content=f"（mock viewport）{device} {vp}：接入 playwright 后返回真实截图", data={"device": device, "viewport": vp, "backend": "mock"})
+
     def tools(self) -> list[Tool]:
         return [
             make_tool(
@@ -69,5 +126,15 @@ class BrowserServer:
                 "browser_screenshot", "网页截图",
                 {"type": "object", "properties": {"url": {"type": "string"}}},
                 self._screenshot, PermissionLevel.L0, server="browser",
+            ),
+            make_tool(
+                "browser_monitor", "控制台/网络监控（§11）",
+                {"type": "object", "properties": {"url": {"type": "string"}, "hold_ms": {"type": "integer"}}, "required": ["url"]},
+                self._monitor, PermissionLevel.L1, server="browser",
+            ),
+            make_tool(
+                "browser_viewport", "多设备视口预览（§11）",
+                {"type": "object", "properties": {"url": {"type": "string"}, "device": {"type": "string"}}, "required": ["url"]},
+                self._viewport, PermissionLevel.L0, server="browser",
             ),
         ]
