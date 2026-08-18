@@ -68,6 +68,10 @@ def _clean_extract(out: str) -> Optional[str]:
     return fact
 
 
+class _LLMUnavailable(Exception):
+    """真实 LLM 调用降级到 mock → 无法判断，允许回退规则。"""
+
+
 class MemoryManager:
     """统一记忆入口：add / search / get_all / try_extract / backend_name。"""
 
@@ -116,14 +120,22 @@ class MemoryManager:
         return await self.backend.get_all()
 
     async def try_extract(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
-        """抽取值得长期记忆的事实（A2：LLM 优先，规则回退）。返回记忆 id 或 None。"""
+        """抽取值得长期记忆的事实（A2：LLM 优先，规则回退）。返回记忆 id 或 None。
+
+        规则回退仅发生在：真实 LLM 不可用，或 LLM 调用降级到 mock。
+        LLM 明确判定"无值得记住"时不再走规则（避免误抽取闲聊）。
+        """
         if not self.cfg.get("auto_extract", True):
             return None
         backend = self.cfg.get("extract_backend", "auto")
         if backend in ("llm", "auto") and self.router is not None and self._real_llm():
-            fact = await self._llm_extract(text)
+            try:
+                fact = await self._llm_extract(text)
+            except _LLMUnavailable:
+                return await self._rules_extract(text, metadata)  # mock 降级 → 规则兜底
             if fact:
                 return await self.add(f"[LLM抽取] {fact}", metadata)
+            return None  # LLM 判定无需记住 → 不误抽
         return await self._rules_extract(text, metadata)
 
     def _real_llm(self) -> bool:
@@ -150,7 +162,7 @@ class MemoryManager:
         )
         resp = await self.router.complete(request, decision)
         if "mock" in resp.model.lower():
-            return None  # 降级到 mock → 视为无真实 LLM，走规则
+            raise _LLMUnavailable("LLM 调用降级到 mock")
         return _clean_extract(resp.text)
 
     async def _rules_extract(self, text: str, metadata: Optional[Dict[str, Any]]) -> Optional[str]:
