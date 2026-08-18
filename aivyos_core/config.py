@@ -213,6 +213,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "max_timestamp_drift_s": 86400, # §1.6.2 时间戳新鲜度 ±24h
         "security_log": "security_events.jsonl",
     },
+    # ---- Phase 3 Week 11：热交换与热启动（§3 / 深度规格 §2）----
+    "hotswap": {
+        "enabled": True,
+        "drain_timeout_s": 30,          # §2.3 排空/请求超时
+        "breaker_threshold": 3,         # §2.6 熔断阈值（连续失败次数）
+        "breaker_cooldown_s": 3600,     # §2.6 熔断冷却
+        "snapshots_dir": ".aivyos_snapshots",  # §3.2 状态快照目录
+        "health_timeouts_s": {"llm": 10, "memory": 5, "tools": 10, "voice": 5, "scheduler": 3, "frontend": 5},
+    },
     "logging": {"level": "INFO"},
 }
 
