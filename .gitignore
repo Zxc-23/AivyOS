@@ -16,11 +16,18 @@ htmlcov/
 node_modules/
 shell/dist/
 shell/src-tauri/target/
+.npm_cache/
+.npmrc
 
 # 运行时数据（默认存 ~/.aivyos，此处兜底）
 .aivyos_data/
 .aivyos_test/
 *.log
+
+# Rust 工具链（沙箱隔离安装到工作区，不入库）
+.rustup/
+.cargo/
+target/
 
 # IDE
 .idea/
