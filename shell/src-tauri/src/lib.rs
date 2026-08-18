@@ -1,8 +1,10 @@
 // AivyOS 壳层 Rust 侧（Tauri 2.0）— 对齐 §12-15 桌面端设计
 //
-// 已接入：全局热键（§12.3）、原生通知（§12.6）、开机自启（§12.5）、自动更新（§13）
-// 待接入（Phase 3，需图标资源）：托盘 8 状态机（§12.2/§15）、热键 → 语音/截屏（§12.3）
+// 已接入：全局热键（§12.3）、原生通知（§12.6）、开机自启（§12.5）、自动更新（§13）、
+//         系统托盘 8 状态机（§12.2/§15，tray.rs：图标切换/左键双击/右键菜单/拖拽文件）
 // 桥接：bridge 命令将前端调用转发 Python 核心（§12.1 IPC，Named Pipe/TCP）
+
+mod tray;
 
 use serde_json::{json, Value};
 
@@ -35,7 +37,12 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // §13 自动更新（端点见 tauri.conf.json plugins.updater.endpoints）
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![bridge, ping])
+        // §12.2 系统托盘（setup 中创建 TrayIcon；状态切换经 set_tray_state 命令）
+        .setup(|app| {
+            tray::setup_tray(app)?;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![bridge, ping, tray::set_tray_state])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

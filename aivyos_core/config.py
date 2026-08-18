@@ -184,6 +184,21 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "viewport": "desktop",   # desktop | mobile | tablet（§11 多设备）
         },
     },
+    # ---- Phase 3 Week 9：桌面端工程化（§12-15 托盘/热键/通知）----
+    "tray": {
+        "initial_state": "booting",     # 托盘状态机初始状态（§3.1）
+        "double_click_ms": 300,         # 双击判定窗口（§3.4）
+        "dnd": False,                   # 勿扰模式（§3.6）
+        "notify_levels": ["urgent", "important", "normal", "silent"],
+        "hotkeys": {
+            "wake": "Alt+Space",        # 唤醒 AI（§1.3）
+            "voice": "Alt+V",           # 语音输入开关
+            "screenshot": "Alt+S",      # 截屏分析
+            "quit": "Alt+Q",            # 快速退出/最小化
+        },
+        "autostart": True,              # 首次安装自动开启自启（§1.5）
+        "close_to_tray": True,          # 关闭窗口 → 最小化到托盘（§1.4）
+    },
     "logging": {"level": "INFO"},
 }
 
