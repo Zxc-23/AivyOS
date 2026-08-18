@@ -1,7 +1,8 @@
 # AivyOS — 个人专属 AI 伴侣系统
 
 > 技术规格见同级目录 `AivyOS_Technical_Engineering_Document.md`（V2.1）。
-> 本仓库为 **Phase 1 · Week 1：核心对话闭环基础** 的可运行代码。
+> **用户联调清单**（需在真实机器完成的事项：Tauri 运行/真实语音/可选重依赖/凭据安全）见 `docs/用户联调清单.md`。
+> 本仓库为 **12 周三阶段全部完成** 的可运行代码（342 个 unittest）。
 
 ## 仓库结构
 
