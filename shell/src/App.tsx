@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatReply, StatusInfo, fetchStatus, sendChat } from "./chat";
+import { inTauri } from "./chat";
 
 interface Msg {
   role: "user" | "assistant";
@@ -16,11 +17,42 @@ export default function App() {
   const [status, setStatus] = useState<StatusInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchStatus()
       .then(setStatus)
       .catch(() => setStatus(null)); // 浏览器演示模式：无状态
+  }, []);
+
+  // §12.3 全局热键：Alt+Space 唤醒（聚焦输入框）
+  useEffect(() => {
+    if (!inTauri) return;
+    let cleanup: (() => void) | undefined;
+    (async () => {
+      const gs = await import("@tauri-apps/plugin-global-shortcut");
+      await gs.register("Alt+Space", () => {
+        inputRef.current?.focus();
+      });
+      cleanup = () => {
+        void gs.unregister("Alt+Space");
+      };
+    })();
+    return () => cleanup?.();
+  }, []);
+
+  // §12.6 原生通知：核心未连接时提示
+  useEffect(() => {
+    if (!inTauri) return;
+    (async () => {
+      const { isPermissionGranted, requestPermission, sendNotification } =
+        await import("@tauri-apps/plugin-notification");
+      let granted = await isPermissionGranted();
+      if (!granted) granted = (await requestPermission()) === "granted";
+      if (granted) {
+        sendNotification({ title: "AivyOS", body: "我还在后台运行，随时呼叫我。" });
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -85,10 +117,11 @@ export default function App() {
 
       <footer className="inputbar">
         <input
+          ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSend()}
-          placeholder="输入消息，回车发送…"
+          placeholder="输入消息，回车发送…（Alt+Space 随时唤醒）"
           disabled={busy}
         />
         <button onClick={handleSend} disabled={busy || !input.trim()}>

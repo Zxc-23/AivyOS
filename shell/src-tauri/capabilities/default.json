@@ -1,12 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "AivyOS 主窗口默认能力（Week 1 最小集；托盘/热键等 §12 能力随 Phase 3 扩展）",
+  "description": "AivyOS 主窗口能力（§12 桌面端：窗口/热键/通知/自启/更新）",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "core:window:allow-show",
     "core:window:allow-hide",
-    "core:window:allow-close"
+    "core:window:allow-close",
+    "global-shortcut:default",
+    "notification:default",
+    "autostart:default",
+    "updater:default"
   ]
 }
