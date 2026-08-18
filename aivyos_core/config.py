@@ -157,6 +157,21 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "emotion": {
         "tags_enabled": True,        # §6.1 14 种细粒度情感标签 [laughter][breath]...
     },
+    # ---- Phase 2 Week 5：MCP 工具层（§5）----
+    "mcp": {
+        "enabled_servers": ["filesystem", "shell", "code_exec", "office", "search", "screenshot", "memory", "browser"],
+        "allowed_dirs": [],          # filesystem 白名单（相对 home 解析；空=仅 home）
+        "scratch_dir": ".aivyos_mcp_scratch",  # code-exec/office 工作目录
+        "shell_timeout_s": 30,
+        "shell_max_output": 8192,
+        "mrtr_ttl_s": 60,            # MRTR 确认有效期（§5.1.2）
+        "mrtr_auto_approve": False,  # True 跳过确认（演示/测试）
+        "docker_image": "python:3.11-slim",  # code-exec Docker 沙箱（可选）
+    },
+    "scheduler": {
+        "timezone": "local",
+        "tick_s": 5,                 # 调度循环 tick
+    },
     "logging": {"level": "INFO"},
 }
 

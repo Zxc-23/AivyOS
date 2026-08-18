@@ -101,6 +101,9 @@ python -m aivyos_core.auth verify --wav test.wav             # 真实音频认�
 | 面部认证（阈值 0.6）+ 活体检测 | §9.2 | ✅ Week 4 已实现（InsightFace 可选 + mock 回退；频谱反重放） |
 | 认证状态机（dormant→listening→verifying→auth/reject） | §9.1 / T6.6 | ✅ Week 4 已实现（静默拒绝 + 自动重置） |
 | 多用户认证（每人人格） | T6.7 | ✅ Week 4 已实现 |
+| **MCP 工具层**（框架+MRTR+八大 Server） | §5 | ✅ Week 5 已实现（filesystem 白名单/shell/code-exec/browser/office/search/screenshot/memory，L0-L3 权限 + MRTR 确认） |
+| **自进化引擎**（SpecSearch gate 容差） | §5.2.2 | ✅ Week 5 已实现（T3.9） |
+| **主动调度器**（Cron/事件/条件） | §5.3 | ✅ Week 5 已实现（T3.10） |
 | 语音会话认证门控 | §9 | ✅ Week 4 已实现（未认证 → 静默忽略） |
 | 视觉输入（OCR/图像理解/截图，全部可降级） | §3.3 | ✅ 已实现（T1.6/T1.7，PaddleOCR/Qwen2-VL 可选） |
 | 多模态晚期融合（文本+语音+视觉 → 统一上下文） | §3.4 | ✅ 已实现（T1.8） |
@@ -130,7 +133,7 @@ python -m aivyos_core.auth verify --wav test.wav             # 真实音频认�
 - **零依赖可运行**：核心链路仅用 Python 标准库；PyYAML/pywin32/sounddevice/silero-vad/funasr/cosyvoice/mem0 均为可选增强
 - **四级降级**：真实后端失败 → mock（链路不断）；mem0 缺失 → JSON 记忆；NamedPipe 缺失 → TCP 回环；语音模型缺失 → 能量 VAD + 规则 ASR + 占位 TTS
 - **路由诚实报告**：`route.fallback=true` 明确标注降级，不伪装真实推理
-- **测试即文档**：164 个 unittest 覆盖配置/人格/上下文/路由(含真实探测)/引擎/记忆(含LLM抽取)/MemFS/工作流(含local执行器)/恢复/摘要/IPC/唤醒/VAD/ASR/TTS/语音会话/认证（声纹/面部/活体/状态机/门控）/视觉/多模态融合/输出路由/通知/情感标签/悬浮输入/端到端联调 全链路
+- **测试即文档**：204 个 unittest 覆盖配置/人格/上下文/路由(含真实探测)/引擎/记忆(含LLM抽取)/MemFS/工作流(含local执行器)/恢复/摘要/IPC/唤醒/VAD/ASR/TTS/语音会话/认证（声纹/面部/活体/状态机/门控）/视觉/多模态融合/输出路由/通知/情感标签/悬浮输入/MCP（协议/MRTR/八 Server/客户端）/调度器/自进化/端到端联调 全链路
 
 ## Phase 1 里程碑状态 ✅ 完成（能听、能想、能说、能记、认主、能看）
 
