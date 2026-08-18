@@ -137,6 +137,12 @@ python scripts\smoke_codegen.py                              # 冒烟：规则+L
 | **分级通知管理器**（urgent/important/normal/silent + 勿扰排队/刷新） | AIVY-DDD-004 §3.6 / T7.10 | ✅ Week 9 已实现（tray/notify.py） |
 | **拖拽文件路由**（六类分析器 + 文件头推断） | AIVY-DDD-004 §3.5 / T7.6 | ✅ Week 9 已实现（tray/file_router.py） |
 | **托盘壳层**（8 状态图标切换/左键双击 300ms/右键菜单/窗口关闭隐藏/自启/热键） | §12-15 / T7.2-T7.9 | ✅ Week 9 已实现（shell tray.rs + tray.ts + App.tsx，`cargo check`+`tsc` 通过；图标 8×4 尺寸） |
+| **Ed25519 纯 stdlib 实现**（RFC 8032，官方向量验证，确定性签名） | §1.2 / T8.1 | ✅ Week 10 已实现（update/ed25519.py，零依赖） |
+| **三层 PKI 密钥体系**（Root 离线/Intermediate 1 年/Leaf 单次发布 + 证书签发与链验证） | §1.1 / T8.1 | ✅ Week 10 已实现（update/pki.py） |
+| **CI/CD 签名生成**（BLAKE3 分块哈希 + Ed25519 签名 + manifest.signed.json） | §1.3 / T8.2 | ✅ Week 10 已实现（update/manifest.py + scripts/sign_update.py） |
+| **客户端七步验签**（链→有效期→CRL→签名→全包哈希→逐文件→防降级+时间戳+白名单，篡改隔离+安全日志+告警） | §1.4-1.6 / T8.3 | ✅ Week 10 已实现（update/verifier.py） |
+| **版本管理与回滚**（保留 3 版 + current 切换 + 一键回滚，沙箱降级指针文件） | §2.3 / T8.6 | ✅ Week 10 已实现（update/version.py） |
+| **增量下载**（chunk 级差异，仅取变更分块；bsdiff/zstd 可选降级） | §2.2 / T8.5 | ✅ Week 10 已实现（update/delta.py） |
 | **端到端联调测试**（语音认证→ASR→LLM→TTS / 视觉融合 / 输出路由 / 记忆持久化） | §23 | ✅ 已实现（164 测试全通，Phase 1 收官） |
 | 会话持久化与快照 | §14.3 | ✅ 已实现（JSON 原子写） |
 | IPC（JSON-RPC + TCP/NamedPipe） | §16.2 | ✅ 已实现（TCP 全通，NamedPipe 需 pywin32） |
@@ -153,7 +159,7 @@ python scripts\smoke_codegen.py                              # 冒烟：规则+L
 - **零依赖可运行**：核心链路仅用 Python 标准库；PyYAML/pywin32/sounddevice/silero-vad/funasr/cosyvoice/mem0 均为可选增强
 - **四级降级**：真实后端失败 → mock（链路不断）；mem0 缺失 → JSON 记忆；NamedPipe 缺失 → TCP 回环；语音模型缺失 → 能量 VAD + 规则 ASR + 占位 TTS
 - **路由诚实报告**：`route.fallback=true` 明确标注降级，不伪装真实推理
-- **测试即文档**：275 个 unittest 覆盖配置/人格/上下文/路由(含真实探测)/引擎/记忆(含LLM抽取)/MemFS/工作流(含local执行器+真实代码生成+预览验证回环)/恢复/摘要/IPC/唤醒/VAD/ASR/TTS/语音会话/认证（声纹/面部/活体/状态机/门控）/视觉/多模态融合/输出路由/通知/情感标签/悬浮输入/MCP（协议/MRTR/八 Server/客户端）/调度器/自进化/需求解析/脚手架模板/代码生成服务/预览控制器/浏览器监控/browser-use 任务/端到端 Vibe Coding 全链路/托盘（状态机/分级通知/文件路由）
+- **测试即文档**：298 个 unittest 覆盖配置/人格/上下文/路由(含真实探测)/引擎/记忆(含LLM抽取)/MemFS/工作流(含local执行器+真实代码生成+预览验证回环)/恢复/摘要/IPC/唤醒/VAD/ASR/TTS/语音会话/认证（声纹/面部/活体/状态机/门控）/视觉/多模态融合/输出路由/通知/情感标签/悬浮输入/MCP（协议/MRTR/八 Server/客户端）/调度器/自进化/需求解析/脚手架模板/代码生成服务/预览控制器/浏览器监控/browser-use 任务/端到端 Vibe Coding 全链路/托盘（状态机/分级通知/文件路由）/更新签名（Ed25519 RFC 向量/三层 PKI/七步验签/防降级·篡改·过期·撤销/版本回滚/chunk 增量）
 
 ## Phase 1 里程碑状态 ✅ 完成（能听、能想、能说、能记、认主、能看）
 

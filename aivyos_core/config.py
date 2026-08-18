@@ -199,6 +199,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "autostart": True,              # 首次安装自动开启自启（§1.5）
         "close_to_tray": True,          # 关闭窗口 → 最小化到托盘（§1.4）
     },
+    # ---- Phase 3 Week 10：自动更新与签名（§13 / T8.x）----
+    "update": {
+        "enabled": True,
+        "check_interval_h": 6,          # §2.1 检测频率：每 6 小时
+        "endpoint": "https://api.aivyos.local/update/{target}/{arch}/{current_version}",
+        "current_version": "0.1.0",
+        "min_required_version": "0.0.0",
+        "keep_versions": 3,             # §2.3 保留 3 个版本
+        "versions_dir": ".aivyos_versions",
+        "quarantine_dir": ".aivyos_quarantine",
+        "chunk_size_mb": 4,             # §1.3 分块 4MB（断点续传/增量基础）
+        "max_timestamp_drift_s": 86400, # §1.6.2 时间戳新鲜度 ±24h
+        "security_log": "security_events.jsonl",
+    },
     "logging": {"level": "INFO"},
 }
 
