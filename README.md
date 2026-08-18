@@ -150,6 +150,13 @@ python scripts\smoke_codegen.py                              # 冒烟：规则+L
 | **状态快照**（原子 tmp+rename，session/tools/scheduler/browser） | 桌面端规格 §3.2 | ✅ Week 11 已实现（hotswap/snapshot.py） |
 | **健康检查器**（LLM/记忆/工具/语音/调度器/前端六项，失败回滚） | §3.3 | ✅ Week 11 已实现（hotswap/health.py） |
 | **快速启动器**（分阶段关键路径优先 + 快照恢复） | §3.4 | ✅ Week 11 已实现（hotswap/boot.py） |
+| **链路追踪**（OpenTelemetry 风格 Span 嵌套/耗时/JSONL 导出，OTLP 可选降级） | §21.2 / T10.1 | ✅ Week 12 已实现（telemetry/trace.py） |
+| **指标采集**（Counter/Gauge/Histogram + Prometheus 文本导出 + P95） | §21.2-21.3 / T10.2 | ✅ Week 12 已实现（telemetry/metrics.py） |
+| **结构化 JSON 日志 + 安全审计**（JSONL Handler + SecurityAuditLog） | §21.2 / T10.4 | ✅ Week 12 已实现（telemetry/logs.py） |
+| **自进化反馈闭环**（用户负反馈 → 失败簇 → SpecSearchEngine 进化） | §5.2.2 / T3.9 | ✅ Week 12 已实现（telemetry/feedback.py） |
+| **工作流追踪**（节点耗时 span + 检查点回放 + Mermaid 可视化） | §21.2 / T10.3 | ✅ Week 12 已实现（telemetry/workflow_trace.py + mini_graph 节点计时） |
+| **语音链路压测**（ASR→LLM→TTS benchmark） | §21.3 / T10.7 | ✅ Week 12 已实现（scripts/benchmark_voice.py） |
+| **记忆连续性测试**（断电重启零丢失） | §21.3 / T10.8 | ✅ Week 12 已实现（tests/test_memory_continuity.py） |
 | **端到端联调测试**（语音认证→ASR→LLM→TTS / 视觉融合 / 输出路由 / 记忆持久化） | §23 | ✅ 已实现（164 测试全通，Phase 1 收官） |
 | 会话持久化与快照 | §14.3 | ✅ 已实现（JSON 原子写） |
 | IPC（JSON-RPC + TCP/NamedPipe） | §16.2 | ✅ 已实现（TCP 全通，NamedPipe 需 pywin32） |
@@ -166,7 +173,7 @@ python scripts\smoke_codegen.py                              # 冒烟：规则+L
 - **零依赖可运行**：核心链路仅用 Python 标准库；PyYAML/pywin32/sounddevice/silero-vad/funasr/cosyvoice/mem0 均为可选增强
 - **四级降级**：真实后端失败 → mock（链路不断）；mem0 缺失 → JSON 记忆；NamedPipe 缺失 → TCP 回环；语音模型缺失 → 能量 VAD + 规则 ASR + 占位 TTS
 - **路由诚实报告**：`route.fallback=true` 明确标注降级，不伪装真实推理
-- **测试即文档**：323 个 unittest 覆盖配置/人格/上下文/路由(含真实探测)/引擎/记忆(含LLM抽取)/MemFS/工作流(含local执行器+真实代码生成+预览验证回环)/恢复/摘要/IPC/唤醒/VAD/ASR/TTS/语音会话/认证（声纹/面部/活体/状态机/门控）/视觉/多模态融合/输出路由/通知/情感标签/悬浮输入/MCP（协议/MRTR/八 Server/客户端）/调度器/自进化/需求解析/脚手架模板/代码生成服务/预览控制器/浏览器监控/browser-use 任务/端到端 Vibe Coding 全链路/托盘（状态机/分级通知/文件路由）/更新签名（Ed25519 RFC 向量/三层 PKI/七步验签/防降级·篡改·过期·撤销/版本回滚/chunk 增量）/热交换（读写锁并发与写独占/热交换迁移/排空八阶段/熔断状态机/快照原子性/健康检查回滚/快速启动分阶段）
+- **测试即文档**：342 个 unittest 覆盖配置/人格/上下文/路由(含真实探测)/引擎/记忆(含LLM抽取)/MemFS/工作流(含local执行器+真实代码生成+预览验证回环)/恢复/摘要/IPC/唤醒/VAD/ASR/TTS/语音会话/认证（声纹/面部/活体/状态机/门控）/视觉/多模态融合/输出路由/通知/情感标签/悬浮输入/MCP（协议/MRTR/八 Server/客户端）/调度器/自进化/需求解析/脚手架模板/代码生成服务/预览控制器/浏览器监控/browser-use 任务/端到端 Vibe Coding 全链路/托盘（状态机/分级通知/文件路由）/更新签名（Ed25519 RFC 向量/三层 PKI/七步验签/防降级·篡改·过期·撤销/版本回滚/chunk 增量）/热交换（读写锁并发与写独占/热交换迁移/排空八阶段/熔断状态机/快照原子性/健康检查回滚/快速启动分阶段）/可观测性（Span 嵌套与导出/指标累加·直方图·P95/JSON 日志·安全审计/反馈闭环触发进化/工作流追踪·检查点回放/断电重启记忆连续性）
 
 ## Phase 1 里程碑状态 ✅ 完成（能听、能想、能说、能记、认主、能看）
 

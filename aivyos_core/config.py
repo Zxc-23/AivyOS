@@ -222,6 +222,16 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "snapshots_dir": ".aivyos_snapshots",  # §3.2 状态快照目录
         "health_timeouts_s": {"llm": 10, "memory": 5, "tools": 10, "voice": 5, "scheduler": 3, "frontend": 5},
     },
+    # ---- Phase 3 Week 12：可观测性与自进化反馈（§21 / T10.x）----
+    "telemetry": {
+        "enabled": True,
+        "trace_export": ".aivyos_logs/traces.jsonl",   # §21.2 链路追踪 JSONL
+        "log_json": ".aivyos_logs/app.jsonl",          # §21.2 结构化 JSON 日志
+        "security_log": ".aivyos_logs/security.jsonl", # §21.2 安全审计
+        "metrics_export_path": None,                    # Prometheus 文本导出文件（None=内存）
+        "feedback_threshold": 3,                        # §5.2.2 负反馈触发进化阈值
+        "feedback_history": ".aivyos_logs/feedback.jsonl",
+    },
     "logging": {"level": "INFO"},
 }
 

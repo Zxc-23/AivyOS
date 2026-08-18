@@ -69,6 +69,7 @@ class CompiledGraph:
         self._schema = graph.state_schema
         self.checkpointer = checkpointer
         self.last_trace: List[str] = []
+        self.node_timings_ms: Dict[str, float] = {}  # §21.2 工作流追踪：节点耗时
 
     # ---- 工具 ----
 
@@ -93,9 +94,13 @@ class CompiledGraph:
         return result
 
     async def _loop(self, start: str, state: Dict[str, Any], thread_id: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
+        import time
+
         current = start
         while current != END:
+            t0 = time.monotonic()
             state = await self._run_node(current, state, ctx)
+            self.node_timings_ms[current] = round((time.monotonic() - t0) * 1000, 2)
             self.last_trace.append(current)
             if self.checkpointer is not None:
                 # 剥离内部瞬态键（如 _preview_server），避免不可序列化对象入库
