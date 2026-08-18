@@ -121,7 +121,7 @@ python -m aivyos_core.auth verify --wav test.wav             # 真实音频认�
 | 唤醒词检测（Aivy/贾维斯 可配置） | §3.1 | ✅ Week 2 已实现 |
 | WebSocket 实时通道 | §16.3.2 | ✅ Week 2 已实现（RFC6455 零依赖，T1.5） |
 | CLI 文本输入 | §3.2 | ✅ 已实现 |
-| Tauri 2.0 壳层 | §12 | 🚧 骨架就绪（Rust 未安装，待 `cargo check`） |
+| Tauri 2.0 壳层 | §12 | ✅ 已验证（Rust 1.97 GNU + mingw，`cargo check`/`cargo build` 通过，313MB debug 二进制；插件：热键/通知/自启/更新；GUI 运行需本机 WebView2） |
 | 声纹/面部认证 | §9 | ✅ Week 4 已实现（见上表，Phase 1 完成） |
 | 托盘 / 热键 / 更新 / 热交换 | §12-15 | ⏳ Phase 3 |
 
