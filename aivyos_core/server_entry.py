@@ -348,6 +348,16 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         n = get_knowledge().clear()
         return {"ok": True, "cleared": n}
 
+    @server.method("knowledge.graph")
+    async def knowledge_graph(params):
+        """知识图谱数据（节点+边，供可视化）。"""
+        return get_knowledge().graph()
+
+    @server.method("knowledge.export")
+    async def knowledge_export(params):
+        """导出单卡（markdown/json）。"""
+        return get_knowledge().export_card(params.get("id", ""), params.get("format", "markdown"))
+
     # ================================================================
     #  Voice
     # ================================================================

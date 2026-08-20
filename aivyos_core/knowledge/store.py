@@ -220,6 +220,56 @@ class KnowledgeStore:
             "tags": self.all_tags(),
         }
 
+    # ---- 知识图谱（可视化）----
+
+    def graph(self) -> Dict[str, Any]:
+        """知识图谱：节点（卡片）+ 边（关联）。供前端力导向图渲染。"""
+        nodes = []
+        for c in self._cards.values():
+            nodes.append({
+                "id": c.id, "title": c.title, "category": c.category,
+                "favorite": c.favorite, "usage": c.usage,
+            })
+        edges = []
+        seen = set()
+        for c in self._cards.values():
+            for lid in c.links:
+                if lid not in self._cards:
+                    continue
+                key = tuple(sorted((c.id, lid)))
+                if key in seen:
+                    continue
+                seen.add(key)
+                edges.append({"source": c.id, "target": lid})
+        return {"nodes": nodes, "edges": edges}
+
+    # ---- 导出/分享 ----
+
+    def export_card(self, card_id: str, fmt: str = "markdown") -> Dict[str, Any]:
+        """导出单卡为 Markdown/JSON（分享用）。"""
+        c = self._cards.get(card_id)
+        if c is None:
+            return {"error": "卡片不存在"}
+        d = c.to_dict()
+        if fmt == "json":
+            import json
+
+            return {"format": "json", "text": json.dumps(d, ensure_ascii=False, indent=2)}
+        # markdown
+        lines = [
+            f"# {c.title}",
+            "",
+            f"> 分类：{c.category} ｜ 标签：{', '.join(c.tags) or '无'} ｜ 版本 v{c.version}",
+            "",
+            f"**摘要**：{c.summary or '（无）'}",
+            "",
+            f"**内容**：",
+            c.content or "（无）",
+            "",
+            f"*创建 {c.created_at} ｜ 更新 {c.updated_at} ｜ 调用 {c.usage} 次*",
+        ]
+        return {"format": "markdown", "text": "\n".join(lines)}
+
     def export_backup(self, out_path: Path) -> Path:
         """导出全部卡片为 JSON 备份。"""
         out_path = Path(out_path)

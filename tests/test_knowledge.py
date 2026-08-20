@@ -152,6 +152,15 @@ class TestKnowledgeExtractor(AivyTestCase):
         r2 = asyncio.run(ex.extract("嗯"))
         self.assertIsNone(r2)
 
+    def test_rule_extract_remember(self):
+        """'记得'句式（习惯/日程）应沉淀（修复漏抓）。"""
+        ex = KnowledgeExtractor()
+        r = ex._rule_extract("记得每周五下午三点开项目周会")
+        self.assertIsNotNone(r)
+        self.assertIn("每周五", r["content"])
+        r2 = ex._rule_extract("记住要检查邮箱")
+        self.assertIsNotNone(r2)
+
     def test_summarize(self):
         s = KnowledgeExtractor.summarize("这是第一句。这是第二句很长很长的内容需要被截断处理")
         self.assertLessEqual(len(s), 40)
@@ -185,6 +194,26 @@ class TestKnowledgeService(AivyTestCase):
         self.svc.create(title="项目管理", content="敏捷开发方法管理项目进度")
         hits = self.svc.recall("项目进度如何管理", limit=2)
         self.assertTrue(hits)
+
+    def test_graph(self):
+        a = self.svc.create(title="a", content="x")
+        b = self.svc.create(title="b", content="y")
+        self.svc.link(a.id, b.id)
+        g = self.svc.graph()
+        self.assertEqual(len(g["nodes"]), 2)
+        self.assertEqual(len(g["edges"]), 1)
+        self.assertEqual(g["edges"][0]["source"], a.id)
+
+    def test_export_card(self):
+        c = self.svc.create(title="导出测试", content="内容", category="要点", tags=["t1"])
+        md = self.svc.export_card(c.id, "markdown")
+        self.assertEqual(md["format"], "markdown")
+        self.assertIn("# 导出测试", md["text"])
+        js = self.svc.export_card(c.id, "json")
+        self.assertEqual(js["format"], "json")
+        self.assertIn('"title"', js["text"])
+        bad = self.svc.export_card("nonexistent", "markdown")
+        self.assertIn("error", bad)
 
 
 if __name__ == "__main__":

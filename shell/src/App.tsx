@@ -15,6 +15,7 @@ import {
   listKnowledge, getKnowledge, createKnowledge, updateKnowledge,
   deleteKnowledge, toggleKnowledgeFavorite, searchKnowledge,
   recallKnowledge, getKnowledgeStats, linkKnowledge, backupKnowledge, restoreKnowledge,
+  getKnowledgeGraph, exportKnowledge,
   KnowledgeCard as KnowledgeCardType, KnowledgeHit,
   VoiceStatus, VoiceTurnResult,
   TaskInfo, SchedulerJob,
@@ -56,6 +57,64 @@ interface Msg { role: "user" | "assistant"; text: string; }
 interface Notif {
   id: number; title: string; body: string;
   type: "success" | "warning" | "danger"; removing?: boolean;
+}
+
+/** 知识图谱力导向图（轻量实现：SVG + 简单斥力/弹簧布局）。 */
+function KnowledgeGraphView(props: {
+  nodes: { id: string; title: string; category: string; favorite: boolean; usage: number }[];
+  edges: { source: string; target: string }[];
+  onNodeClick: (id: string) => void;
+}) {
+  const { nodes, edges, onNodeClick } = props;
+  const W = 720, H = 320;
+  const CX = W / 2, CY = H / 2;
+  const R = 14;
+  // 简单圆周布局（避免重叠）：按序分布在圆上；有边相连的尽量靠近（弹簧迭代 2 轮）
+  const pos = new Map<string, { x: number; y: number }>();
+  const n = nodes.length;
+  nodes.forEach((node, i) => {
+    const angle = (i / Math.max(1, n)) * Math.PI * 2 - Math.PI / 2;
+    const r = Math.min(W, H) * 0.36;
+    pos.set(node.id, { x: CX + r * Math.cos(angle), y: CY + r * Math.sin(angle) });
+  });
+  // 弹簧松弛：相连节点互相拉近（2 轮）
+  for (let iter = 0; iter < 2; iter++) {
+    for (const e of edges) {
+      const a = pos.get(e.source), b = pos.get(e.target);
+      if (!a || !b) continue;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      const pull = 0.08 * (d - 90);
+      a.x += (dx / d) * pull * 0.5; a.y += (dy / d) * pull * 0.5;
+      b.x -= (dx / d) * pull * 0.5; b.y -= (dy / d) * pull * 0.5;
+    }
+  }
+  const catColors: Record<string, string> = {
+    "个人偏好": "#f59e0b", "概念定义": "#3b82f6", "个人信息": "#10b981",
+    "要点": "#8b5cf6", "知识总结": "#ec4899", "习惯日程": "#14b8a6", "其他": "#6b7280",
+  };
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", maxHeight: 320 }} onClick={(e) => { if (e.target === e.currentTarget) onNodeClick(""); }}>
+      {edges.map((e, i) => {
+        const a = pos.get(e.source), b = pos.get(e.target);
+        if (!a || !b) return null;
+        return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="rgba(255,255,255,0.25)" strokeWidth={1.5} />;
+      })}
+      {nodes.map((node) => {
+        const p = pos.get(node.id);
+        if (!p) return null;
+        const color = catColors[node.category] || "#6b7280";
+        return (
+          <g key={node.id} transform={`translate(${p.x},${p.y})`} style={{ cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNodeClick(node.id); }}>
+            <circle r={R} fill={color} opacity={0.85} stroke={node.favorite ? "#f59e0b" : "#fff"} strokeWidth={node.favorite ? 2.5 : 1} />
+            <text textAnchor="middle" dominantBaseline="central" style={{ fontSize: 10, fill: "#fff", fontWeight: 600, pointerEvents: "none" }}>
+              {node.title.length > 6 ? node.title.slice(0, 6) + "…" : node.title}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
 }
 
 /* ---- 演示模式降级数据（bridge 未就绪时使用） ---- */
@@ -284,6 +343,11 @@ export default function App() {
   const [kShowNew, setKShowNew] = useState(false);
   const [kRelated, setKRelated] = useState<Record<string, KnowledgeCardType[]>>({});
   const [kKnowledgeHits, setKKnowledgeHits] = useState<KnowledgeHit[]>([]); // 对话中自动调用的卡片
+  // 图谱 / 导出 / 关联管理
+  const [kShowGraph, setKShowGraph] = useState(false);
+  const [kGraph, setKGraph] = useState<{ nodes: { id: string; title: string; category: string; favorite: boolean; usage: number }[]; edges: { source: string; target: string }[] }>({ nodes: [], edges: [] });
+  const [kLinkTarget, setKLinkTarget] = useState<string>(""); // 当前展开卡片要关联的目标
+  const [kExportText, setKExportText] = useState<string | null>(null);
 
   /* ---- Boot/Self-check state ---- */
   const [bootResult, setBootResult] = useState<BootCheckResult | null>(null);
@@ -1381,6 +1445,49 @@ export default function App() {
     } catch (e) { showNotification("备份失败", e instanceof Error ? e.message : String(e), "danger"); }
   }, [bridgeReady, showNotification]);
 
+  // 知识图谱
+  const handleKGraph = useCallback(async () => {
+    try {
+      if (!bridgeReady) { showNotification("演示模式", "连接核心后查看图谱", "warning"); return; }
+      const g = await getKnowledgeGraph();
+      setKGraph(g);
+      setKShowGraph(true);
+    } catch (e) { showNotification("图谱加载失败", e instanceof Error ? e.message : String(e), "danger"); }
+  }, [bridgeReady, showNotification]);
+
+  // 手动建立关联
+  const handleKLink = useCallback(async (cardId: string, targetId: string) => {
+    if (!targetId || targetId === cardId) { showNotification("提示", "请选择要关联的卡片", "warning"); return; }
+    try {
+      if (!bridgeReady) return;
+      await linkKnowledge(cardId, targetId);
+      setKLinkTarget("");
+      showNotification("已建立关联", "卡片已互相关联", "success");
+      await loadKnowledge();
+      // 刷新当前展开卡片的关联列表
+      const card = kCards.find(c => c.id === cardId);
+      if (card) await handleKExpand(card);
+    } catch (e) { showNotification("关联失败", e instanceof Error ? e.message : String(e), "danger"); }
+  }, [bridgeReady, loadKnowledge, kCards, handleKExpand, showNotification]);
+
+  // 导出/分享
+  const handleKExport = useCallback(async (card: KnowledgeCardType, fmt: "markdown" | "json") => {
+    try {
+      if (!bridgeReady) { showNotification("演示模式", "连接核心后导出", "warning"); return; }
+      const r = await exportKnowledge(card.id, fmt);
+      setKExportText(r.text);
+    } catch (e) { showNotification("导出失败", e instanceof Error ? e.message : String(e), "danger"); }
+  }, [bridgeReady, showNotification]);
+
+  const handleKCopy = useCallback((text: string) => {
+    try {
+      navigator.clipboard?.writeText(text);
+      showNotification("已复制", "分享文本已复制到剪贴板", "success");
+    } catch {
+      showNotification("复制失败", "请手动选择文本复制", "warning");
+    }
+  }, [showNotification]);
+
   /* ================================================================
    *  Screen navigation → trigger data loading
    * ================================================================ */
@@ -2007,10 +2114,43 @@ export default function App() {
                   <div style={{ fontSize: 18, fontWeight: 700 }}>🧠 知识卡片</div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "var(--muted2)" }}>
                     <span>共 {kStats.total} 张 · 收藏 {kStats.favorites}</span>
+                    <button className="btn btn-skip" style={{ padding: "4px 10px", fontSize: 11 }} onClick={handleKGraph} title="知识图谱可视化">🕸️ 图谱</button>
                     <button className="btn btn-skip" style={{ padding: "4px 10px", fontSize: 11 }} onClick={handleKBackup} title="备份全部卡片">💾 备份</button>
                     <button className="btn btn-approve" style={{ padding: "4px 12px", fontSize: 12 }} onClick={() => { setKShowNew(true); setKEditForm({ title: "", summary: "", content: "", category: "其他", tags: "" }); }}>＋ 新建卡片</button>
                   </div>
                 </div>
+
+                {/* 知识图谱视图 */}
+                {kShowGraph && (
+                  <div className="glass-card" style={{ padding: 14, marginBottom: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--accent)" }}>🕸️ 知识图谱（{kGraph.nodes.length} 节点 · {kGraph.edges.length} 关联）</div>
+                      <button className="kcard-btn" onClick={() => setKShowGraph(false)}>✕ 关闭</button>
+                    </div>
+                    {kGraph.nodes.length === 0 ? (
+                      <div style={{ fontSize: 12, color: "var(--muted)", padding: 20, textAlign: "center" }}>暂无节点，创建卡片或建立关联后显示</div>
+                    ) : (
+                      <KnowledgeGraphView nodes={kGraph.nodes} edges={kGraph.edges} onNodeClick={(id) => {
+                        const card = kCards.find(c => c.id === id);
+                        if (card) handleKExpand(card);
+                      }} />
+                    )}
+                  </div>
+                )}
+
+                {/* 导出/分享模态 */}
+                {kExportText && (
+                  <div className="glass-card" style={{ padding: 14, marginBottom: 14, border: "1px solid var(--accent)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--accent)" }}>📤 卡片分享</div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button className="btn btn-approve" style={{ padding: "4px 10px", fontSize: 11 }} onClick={() => handleKCopy(kExportText)}>📋 复制</button>
+                        <button className="kcard-btn" onClick={() => setKExportText(null)}>✕ 关闭</button>
+                      </div>
+                    </div>
+                    <textarea className="chat-input" readOnly style={{ width: "100%", minHeight: 160, fontSize: 12, fontFamily: "monospace" }} value={kExportText} />
+                  </div>
+                )}
 
                 {/* 筛选与搜索栏 */}
                 <div className="glass-card" style={{ padding: 12, marginBottom: 14 }}>
@@ -2049,7 +2189,7 @@ export default function App() {
                       <textarea className="chat-input" style={{ minHeight: 70, resize: "vertical" }} placeholder="详细内容" value={kEditForm.content} onChange={e => setKEditForm(p => ({ ...p, content: e.target.value }))} />
                       <div style={{ display: "flex", gap: 8 }}>
                         <select className="chat-input" style={{ height: 34, flex: 1 }} value={kEditForm.category} onChange={e => setKEditForm(p => ({ ...p, category: e.target.value }))}>
-                          {["其他", "个人偏好", "概念定义", "个人信息", "要点", "知识总结"].map(c => <option key={c} value={c}>{c}</option>)}
+                          {["其他", "个人偏好", "概念定义", "个人信息", "要点", "知识总结", "习惯日程"].map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                         <input className="chat-input" style={{ height: 34, flex: 2 }} placeholder="标签（逗号分隔）" value={kEditForm.tags} onChange={e => setKEditForm(p => ({ ...p, tags: e.target.value }))} />
                       </div>
@@ -2074,7 +2214,7 @@ export default function App() {
                         <textarea className="chat-input" style={{ minHeight: 70 }} value={kEditForm.content} onChange={e => setKEditForm(p => ({ ...p, content: e.target.value }))} />
                         <div style={{ display: "flex", gap: 8 }}>
                           <select className="chat-input" style={{ height: 34, flex: 1 }} value={kEditForm.category} onChange={e => setKEditForm(p => ({ ...p, category: e.target.value }))}>
-                            {["其他", "个人偏好", "概念定义", "个人信息", "要点", "知识总结"].map(c => <option key={c} value={c}>{c}</option>)}
+                            {["其他", "个人偏好", "概念定义", "个人信息", "要点", "知识总结", "习惯日程"].map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                           <input className="chat-input" style={{ height: 34, flex: 2 }} value={kEditForm.tags} onChange={e => setKEditForm(p => ({ ...p, tags: e.target.value }))} />
                         </div>
@@ -2125,6 +2265,23 @@ export default function App() {
                                   🔗 关联：{related.map(r => (
                                     <span key={r.id} style={{ color: "var(--accent)", cursor: "pointer", marginRight: 8 }} onClick={() => handleKExpand(r)}>{r.title}</span>
                                   ))}
+                                </div>
+                              )}
+                              {/* 手动建立关联 + 分享 */}
+                              <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                <button className="btn btn-skip" style={{ padding: "3px 10px", fontSize: 11 }} onClick={() => setKLinkTarget(kLinkTarget === card.id ? "" : card.id)}>
+                                  {kLinkTarget === card.id ? "✕ 取消关联" : "🔗 建立关联"}
+                                </button>
+                                <button className="btn btn-skip" style={{ padding: "3px 10px", fontSize: 11 }} onClick={() => handleKExport(card, "markdown")}>📤 分享</button>
+                              </div>
+                              {kLinkTarget === card.id && (
+                                <div style={{ marginTop: 8, display: "flex", gap: 6, alignItems: "center" }}>
+                                  <select className="chat-input" style={{ height: 28, flex: 1, fontSize: 11 }} value="" onChange={e => handleKLink(card.id, e.target.value)}>
+                                    <option value="">选择要关联的卡片...</option>
+                                    {kCards.filter(c => c.id !== card.id && !card.links.includes(c.id)).map(c => (
+                                      <option key={c.id} value={c.id}>{c.title}</option>
+                                    ))}
+                                  </select>
                                 </div>
                               )}
                               {card.versions.length > 0 && (

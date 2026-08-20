@@ -521,6 +521,19 @@ export async function restoreKnowledge(path: string, merge = false): Promise<{ o
   return bridgeCall("knowledge.restore", { path, merge });
 }
 
+/** 知识图谱数据（节点+边，供力导向图渲染）。 */
+export async function getKnowledgeGraph(): Promise<{
+  nodes: { id: string; title: string; category: string; favorite: boolean; usage: number }[];
+  edges: { source: string; target: string }[];
+}> {
+  return bridgeCall("knowledge.graph", {});
+}
+
+/** 导出单卡（markdown/json）。 */
+export async function exportKnowledge(id: string, format = "markdown"): Promise<{ format: string; text: string }> {
+  return bridgeCall("knowledge.export", { id, format });
+}
+
 // ================================================================
 //  Autonomous Tasks
 // ================================================================
