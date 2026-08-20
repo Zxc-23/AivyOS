@@ -328,10 +328,17 @@ def load_config(user_path: str | Path | None = None) -> Dict[str, Any]:
     if user_path is not None:
         candidates.append(Path(user_path))
     else:
-        home = Path(os.environ.get("AIVYOS_HOME", DEFAULT_HOME))
-        for base in (home, DEFAULT_HOME):
+        home_env = os.environ.get("AIVYOS_HOME")
+        if home_env:
+            # 显式指定 AIVYOS_HOME：完全接管配置目录，不再回落 ~/.aivyos
+            # （避免测试/多实例被用户真实配置污染；§18.3 数据目录语义）
+            base = Path(home_env)
             for name in ("config.yaml", "config.yml", "config.json"):
                 candidates.append(base / name)
+        else:
+            for base in (DEFAULT_HOME,):
+                for name in ("config.yaml", "config.yml", "config.json"):
+                    candidates.append(base / name)
 
     for path in candidates:
         if path.exists():

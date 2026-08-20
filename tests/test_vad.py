@@ -37,10 +37,17 @@ class TestCreateVad(AivyTestCase):
         vad = create_vad({"vad_backend": "energy", "sample_rate": 16000, "frame_ms": 30})
         self.assertIsInstance(vad, EnergyVAD)
 
-    def test_auto_falls_back_to_energy(self):
-        # 沙箱环境无 silero-vad → auto 应降级到 EnergyVAD
+    def test_auto_uses_silero_if_available_else_energy(self):
+        # auto：Silero 可用则用（真机已装 torch/silero），否则降级 EnergyVAD
+        import importlib.util
+
         vad = create_vad({"vad_backend": "auto", "sample_rate": 16000, "frame_ms": 30})
-        self.assertIsInstance(vad, EnergyVAD)
+        if importlib.util.find_spec("silero_vad") and importlib.util.find_spec("torch"):
+            from aivyos_core.audio.vad import SileroVAD
+
+            self.assertIsInstance(vad, SileroVAD)
+        else:
+            self.assertIsInstance(vad, EnergyVAD)
 
 
 if __name__ == "__main__":

@@ -33,13 +33,26 @@ class TestMockTTS(AivyTestCase):
 
 
 class TestCosyVoiceGuard(AivyTestCase):
+    @staticmethod
+    def _tts_installed() -> bool:
+        import importlib.util
+
+        return importlib.util.find_spec("edge_tts") is not None
+
     def test_missing_cosyvoice_raises(self):
+        # 未装 cosyvoice 且未装 edge-tts → 实例化抛 TTSUnavailable
+        if self._tts_installed():
+            self.skipTest("edge-tts 已安装（真机走真实 TTS），跳过降级断言")
         with self.assertRaises(TTSUnavailable):
             CosyVoiceBackend()
 
     def test_create_tts_auto_falls_back_to_mock(self):
+        # auto：真实后端可用则真实，否则降级 MockTTS
         tts = create_tts({"backend": "auto"})
-        self.assertIsInstance(tts, MockTTS)
+        if self._tts_installed():
+            self.assertNotIsInstance(tts, MockTTS)
+        else:
+            self.assertIsInstance(tts, MockTTS)
 
     def test_create_tts_mock_forced(self):
         tts = create_tts({"backend": "mock"})

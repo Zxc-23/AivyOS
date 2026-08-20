@@ -108,7 +108,7 @@ class SileroVAD(VADEngine):
         if len(frame) != self._target_bytes:
             frame_data = frame[:self._target_bytes].ljust(self._target_bytes, b"\x00")
 
-        tensor = torch.frombuffer(frame_data, dtype=torch.int16).clone().float() / 32768.0
+        tensor = torch.tensor(bytes(frame_data), dtype=torch.int16).float() / 32768.0
         prob = self.model(tensor, self.sample_rate).item()
         return prob >= self.threshold
 

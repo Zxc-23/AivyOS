@@ -31,14 +31,26 @@ class TestMockASR(AivyTestCase):
 
 
 class TestFunASRGuard(AivyTestCase):
+    @staticmethod
+    def _funasr_installed() -> bool:
+        import importlib.util
+
+        return importlib.util.find_spec("funasr") is not None and importlib.util.find_spec("torch") is not None
+
     def test_missing_funasr_raises(self):
-        # 未安装 funasr → 实例化抛 ASRUnavailable
+        # 未安装 funasr → 实例化抛 ASRUnavailable（已安装则跳过，真机走真实后端）
+        if self._funasr_installed():
+            self.skipTest("funasr 已安装（真机走真实 ASR），跳过降级断言")
         with self.assertRaises(ASRUnavailable):
             FunASRBackend()
 
     def test_create_asr_auto_falls_back_to_mock(self):
+        # auto：funasr 可用则真实，否则降级 MockASR
         asr = create_asr({"backend": "auto"})
-        self.assertIsInstance(asr, MockASR)
+        if self._funasr_installed():
+            self.assertNotIsInstance(asr, MockASR)
+        else:
+            self.assertIsInstance(asr, MockASR)
 
     def test_create_asr_mock_forced(self):
         asr = create_asr({"backend": "mock"})
