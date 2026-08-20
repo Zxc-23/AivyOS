@@ -173,13 +173,19 @@ class EdgeTTSBackend(CloudTTSBackend):
         self._available = True
 
     def _synthesize_cloud(self, text: str) -> TTSResult:
-        """调用 edge-tts 合成。"""
+        """调用 edge-tts 合成。
+
+        edge-tts 输出为 MP3（非 WAV）—— 直接截断头当 PCM 会播放刺耳噪音。
+        使用 soundfile（libsndfile）解码为 int16 PCM（@24kHz）。
+        """
         try:
             import edge_tts  # type: ignore
         except ImportError:
             raise RuntimeError("edge-tts 未安装: pip install edge-tts")
 
         import asyncio
+        import io
+
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -187,29 +193,37 @@ class EdgeTTSBackend(CloudTTSBackend):
             asyncio.set_event_loop(loop)
 
         communicate = edge_tts.Communicate(text, self._voice)
-        # edge-tts 直接保存到文件，我们需要获取 PCM 数据
-        # 简化实现：生成 WAV 文件并读取
-        import tempfile
-        import os as _os
 
-        tmp_file = _os.path.join(tempfile.gettempdir(), f"aivyos_tts_{int(time.time())}.wav")
+        # 流式收集 MP3 音频块（edge-tts 7.x 默认输出 MP3）
+        mp3_data = bytearray()
+
+        async def _collect():
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    mp3_data.extend(chunk["data"])
+
+        loop.run_until_complete(_collect())
+
+        if not mp3_data:
+            raise RuntimeError("edge-tts 未返回音频数据")
+
+        # 解码 MP3 → int16 PCM（soundfile 可选依赖；缺失时降级 mock 提示）
         try:
-            loop.run_until_complete(communicate.save(tmp_file))
-            with open(tmp_file, "rb") as f:
-                wav_data = f.read()
-            # 跳过 WAV 头（44 字节）获取原始 PCM
-            pcm_data = wav_data[44:] if len(wav_data) > 44 else wav_data
-        finally:
-            if _os.path.exists(tmp_file):
-                _os.remove(tmp_file)
+            import soundfile as sf  # type: ignore
+
+            pcm_data, sample_rate = sf.read(io.BytesIO(bytes(mp3_data)), dtype="int16")
+        except ImportError:
+            raise RuntimeError("edge-tts 解码需要 soundfile: pip install soundfile")
+        except Exception as e:
+            raise RuntimeError(f"edge-tts 音频解码失败: {e}") from e
 
         return TTSResult(
-            pcm=pcm_data,
-            sample_rate=24000,
+            pcm=bytes(pcm_data.tobytes()),
+            sample_rate=int(sample_rate),
             text=text,
             backend=self.name,
             latency_ms=0.0,
-            meta={"voice": self._voice},
+            meta={"voice": self._voice, "format": "mp3-decoded"},
         )
 
 
