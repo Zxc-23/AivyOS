@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChatReply, StatusInfo, fetchStatus, sendChat, inTauri,
   getVoiceStatus, runVoiceTurn, listenVoice, pttStart, pttStop,
@@ -59,42 +59,88 @@ interface Notif {
   type: "success" | "warning" | "danger"; removing?: boolean;
 }
 
-/** 知识图谱力导向图（轻量实现：SVG + 简单斥力/弹簧布局）。 */
+/** 知识图谱力导向图（轻量实现：SVG + 简单斥力/弹簧布局 + 拖拽 + 双击编辑）。 */
 function KnowledgeGraphView(props: {
   nodes: { id: string; title: string; category: string; favorite: boolean; usage: number }[];
   edges: { source: string; target: string }[];
   onNodeClick: (id: string) => void;
+  onNodeDoubleClick?: (id: string) => void;
 }) {
-  const { nodes, edges, onNodeClick } = props;
+  const { nodes, edges, onNodeClick, onNodeDoubleClick } = props;
   const W = 720, H = 320;
   const CX = W / 2, CY = H / 2;
   const R = 14;
-  // 简单圆周布局（避免重叠）：按序分布在圆上；有边相连的尽量靠近（弹簧迭代 2 轮）
-  const pos = new Map<string, { x: number; y: number }>();
-  const n = nodes.length;
-  nodes.forEach((node, i) => {
-    const angle = (i / Math.max(1, n)) * Math.PI * 2 - Math.PI / 2;
-    const r = Math.min(W, H) * 0.36;
-    pos.set(node.id, { x: CX + r * Math.cos(angle), y: CY + r * Math.sin(angle) });
-  });
-  // 弹簧松弛：相连节点互相拉近（2 轮）
-  for (let iter = 0; iter < 2; iter++) {
-    for (const e of edges) {
-      const a = pos.get(e.source), b = pos.get(e.target);
-      if (!a || !b) continue;
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const d = Math.sqrt(dx * dx + dy * dy) || 1;
-      const pull = 0.08 * (d - 90);
-      a.x += (dx / d) * pull * 0.5; a.y += (dy / d) * pull * 0.5;
-      b.x -= (dx / d) * pull * 0.5; b.y -= (dy / d) * pull * 0.5;
+  // 圆周布局 + 弹簧松弛
+  const posRef = React.useRef(new Map<string, { x: number; y: number }>());
+  const [pos, setPos] = React.useState<Map<string, { x: number; y: number }>>(new Map());
+  const draggingRef = React.useRef<{ id: string; dx: number; dy: number } | null>(null);
+  const svgRef = React.useRef<SVGSVGElement | null>(null);
+
+  React.useEffect(() => {
+    const posMap = new Map<string, { x: number; y: number }>();
+    const n = nodes.length;
+    nodes.forEach((node, i) => {
+      const angle = (i / Math.max(1, n)) * Math.PI * 2 - Math.PI / 2;
+      const r = Math.min(W, H) * 0.36;
+      posMap.set(node.id, { x: CX + r * Math.cos(angle), y: CY + r * Math.sin(angle) });
+    });
+    // 弹簧松弛：相连节点互相拉近（3 轮）
+    for (let iter = 0; iter < 3; iter++) {
+      for (const e of edges) {
+        const a = posMap.get(e.source), b = posMap.get(e.target);
+        if (!a || !b) continue;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1;
+        const pull = 0.1 * (d - 90);
+        a.x += (dx / d) * pull * 0.5; a.y += (dy / d) * pull * 0.5;
+        b.x -= (dx / d) * pull * 0.5; b.y -= (dy / d) * pull * 0.5;
+      }
     }
-  }
+    posRef.current = posMap;
+    setPos(posMap);
+  }, [nodes, edges]);
+
+  const onMouseDown = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const p = pos.get(id);
+    if (!p) return;
+    const scaleX = W / rect.width, scaleY = H / rect.height;
+    draggingRef.current = { id, dx: (e.clientX - rect.left) * scaleX - p.x, dy: (e.clientY - rect.top) * scaleY - p.y };
+  };
+
+  const onMouseMove = (e: React.MouseEvent) => {
+    const drag = draggingRef.current;
+    const svg = svgRef.current;
+    if (!drag || !svg) return;
+    const rect = svg.getBoundingClientRect();
+    const scaleX = W / rect.width, scaleY = H / rect.height;
+    const nx = (e.clientX - rect.left) * scaleX - drag.dx;
+    const ny = (e.clientY - rect.top) * scaleY - drag.dy;
+    setPos(prev => {
+      const next = new Map(prev);
+      next.set(drag.id, { x: Math.max(R, Math.min(W - R, nx)), y: Math.max(R, Math.min(H - R, ny)) });
+      return next;
+    });
+  };
+
+  const onMouseUp = () => { draggingRef.current = null; };
+
   const catColors: Record<string, string> = {
     "个人偏好": "#f59e0b", "概念定义": "#3b82f6", "个人信息": "#10b981",
     "要点": "#8b5cf6", "知识总结": "#ec4899", "习惯日程": "#14b8a6", "其他": "#6b7280",
   };
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", maxHeight: 320 }} onClick={(e) => { if (e.target === e.currentTarget) onNodeClick(""); }}>
+    <svg
+      ref={svgRef}
+      viewBox={`0 0 ${W} ${H}`}
+      style={{ width: "100%", height: "auto", maxHeight: 340, touchAction: "none", cursor: draggingRef.current ? "grabbing" : "grab" }}
+      onMouseMove={onMouseMove}
+      onMouseUp={onMouseUp}
+      onMouseLeave={onMouseUp}
+    >
       {edges.map((e, i) => {
         const a = pos.get(e.source), b = pos.get(e.target);
         if (!a || !b) return null;
@@ -105,7 +151,12 @@ function KnowledgeGraphView(props: {
         if (!p) return null;
         const color = catColors[node.category] || "#6b7280";
         return (
-          <g key={node.id} transform={`translate(${p.x},${p.y})`} style={{ cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); onNodeClick(node.id); }}>
+          <g key={node.id} transform={`translate(${p.x},${p.y})`}
+            style={{ cursor: "pointer" }}
+            onMouseDown={(e) => onMouseDown(e, node.id)}
+            onClick={(e) => { e.stopPropagation(); onNodeClick(node.id); }}
+            onDoubleClick={(e) => { e.stopPropagation(); onNodeDoubleClick?.(node.id); }}
+          >
             <circle r={R} fill={color} opacity={0.85} stroke={node.favorite ? "#f59e0b" : "#fff"} strokeWidth={node.favorite ? 2.5 : 1} />
             <text textAnchor="middle" dominantBaseline="central" style={{ fontSize: 10, fill: "#fff", fontWeight: 600, pointerEvents: "none" }}>
               {node.title.length > 6 ? node.title.slice(0, 6) + "…" : node.title}
@@ -113,6 +164,11 @@ function KnowledgeGraphView(props: {
           </g>
         );
       })}
+      {draggingRef.current && (
+        <text x={W / 2} y={H - 8} textAnchor="middle" style={{ fontSize: 10, fill: "rgba(255,255,255,0.5)" }}>
+          拖动调整布局 · 双击节点编辑
+        </text>
+      )}
     </svg>
   );
 }
@@ -2130,10 +2186,16 @@ export default function App() {
                     {kGraph.nodes.length === 0 ? (
                       <div style={{ fontSize: 12, color: "var(--muted)", padding: 20, textAlign: "center" }}>暂无节点，创建卡片或建立关联后显示</div>
                     ) : (
-                      <KnowledgeGraphView nodes={kGraph.nodes} edges={kGraph.edges} onNodeClick={(id) => {
-                        const card = kCards.find(c => c.id === id);
-                        if (card) handleKExpand(card);
-                      }} />
+                      <KnowledgeGraphView nodes={kGraph.nodes} edges={kGraph.edges}
+                        onNodeClick={(id) => {
+                          const card = kCards.find(c => c.id === id);
+                          if (card) handleKExpand(card);
+                        }}
+                        onNodeDoubleClick={(id) => {
+                          const card = kCards.find(c => c.id === id);
+                          if (card) handleKEdit(card);
+                        }}
+                      />
                     )}
                   </div>
                 )}
