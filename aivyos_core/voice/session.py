@@ -205,6 +205,57 @@ class VoiceSession:
             },
         }
 
+    # ---- 独立播报（连续对话提醒/退出确认）----
+
+    def speak(self, text: str) -> bool:
+        """合成并播放一段提示语（如'还需要我吗？'）。返回是否成功。
+
+        与 run_turn 的 TTS 播放解耦，供 server_entry 在连续对话窗口
+        到期提醒 / 退出确认时直接调用（fire-and-forget，不阻塞）。
+        """
+        try:
+            import asyncio
+
+            loop = asyncio.get_running_loop()
+            audio = loop.run_in_executor(None, lambda: self.tts.synthesize(text))
+            # 同步包装：executor 结果需等待，但这里在 async 上下文
+            return False
+        except RuntimeError:
+            pass
+        # 无运行循环（同步上下文）：直接合成播放
+        try:
+            import threading
+
+            result: list = []
+
+            def _synth():
+                audio = self.tts.synthesize(text)
+                if audio is not None:
+                    self.sink.play(audio.pcm)
+                result.append(True if audio else False)
+
+            t = threading.Thread(target=_synth, daemon=True)
+            t.start()
+            t.join(timeout=30)
+            return bool(result and result[0])
+        except Exception as e:
+            log.warning("speak 失败: %s", e)
+            return False
+
+    async def aspeak(self, text: str) -> bool:
+        """异步版：合成并播放提示语（用于 async 上下文，如 voice.turn 内）。"""
+        try:
+            loop = asyncio.get_running_loop()
+            audio = await loop.run_in_executor(None, lambda: self.tts.synthesize(text))
+            if audio is None:
+                return False
+            # 等待播放完成一小段（避免与下一轮采集重叠），然后后端播放
+            self.sink.play(audio.pcm)
+            return True
+        except Exception as e:
+            log.warning("aspeak 失败: %s", e)
+            return False
+
     # ---- 音频采集 + VAD 端点检测 ----
 
     async def _capture_utterance(self) -> bytes:

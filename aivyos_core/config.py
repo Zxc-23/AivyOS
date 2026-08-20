@@ -131,6 +131,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "max_turn_s": 20.0,          # 单轮最长录音
         "continuous_window_s": 60.0, # 连续对话：唤醒后窗口期（秒）内免唤醒词
         "continuous_max_turns": 10,  # 连续对话：窗口期内最大轮次
+        "continuous_remind_before_s": 15.0,  # 窗口到期前提前提醒（秒）
+        "continuous_remind_turns_left": 2,   # 剩余轮次 ≤ 该值提醒
+        "continuous_exit_words": ["再见", "退出", "结束", "拜拜", "不说了"],  # 退出命令词
     },
     "ws": {
         "port": 31702,               # WebSocket 实时通道（§16.3.2 风格）

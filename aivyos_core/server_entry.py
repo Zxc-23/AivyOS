@@ -53,6 +53,31 @@ from aivyos_core import __version__
 log = logging.getLogger(__name__)
 
 
+DEFAULT_EXIT_WORDS = ("再见", "退出", "结束", "拜拜", "不说了", "bye", "stop")
+
+
+def _is_exit_command(text: str, exit_words=DEFAULT_EXIT_WORDS) -> bool:
+    """检测是否为连续对话退出命令词（纯函数，便于测试）。
+
+    规则：
+    - 词前必须独立：开头 / 空白 / 标点（避免"请退出说明"这类中缀误判）
+    - 词后自由：可跟"吧/了/对话"等（"再见吧""退出对话"都是合理退出语）
+    - 排除词后接"的/地/得"（"退出的原因""结束的方式"不是退出语）
+    """
+    import re
+
+    clean = (text or "").strip()
+    if not clean:
+        return False
+    for w in exit_words:
+        pat = re.compile(
+            r"(?:^|[\s，。！？,.!?：:])" + re.escape(w) + r"(?!的|地|得)"
+        )
+        if pat.search(clean):
+            return True
+    return False
+
+
 def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
     ipc_cfg = cfg.get("ipc", {})
     server = AivyIpcServer(
@@ -89,6 +114,11 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
     _conv_session = {"active": False, "expires_at": 0.0, "turns": 0}
     _conv_window_s = float(cfg.get("voice", {}).get("continuous_window_s", 60.0))
     _conv_max_turns = int(cfg.get("voice", {}).get("continuous_max_turns", 10))
+    # 窗口到期提醒：剩余 ≤15s 或剩余 ≤2 轮时语音询问"还需要我吗？"
+    _conv_remind_before_s = float(cfg.get("voice", {}).get("continuous_remind_before_s", 15.0))
+    _conv_remind_turns_left = int(cfg.get("voice", {}).get("continuous_remind_turns_left", 2))
+    # 退出命令词：说"再见/退出/结束"等结束连续对话
+    _EXIT_WORDS = tuple(cfg.get("voice", {}).get("continuous_exit_words", DEFAULT_EXIT_WORDS))
 
     def get_voice():
         nonlocal _voice_session
@@ -264,6 +294,32 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
                     "turns_left": max(0, _conv_max_turns - _conv_session["turns"]),
                     "window_left_s": max(0, round(_conv_session["expires_at"] - time.monotonic(), 1)),
                 }
+                # ---- 连续对话增强：退出命令词 + 窗口到期提醒 ----
+                # 1) 退出命令词（说"再见/退出/结束"结束会话）
+                clean = (result.get("text_clean") or result.get("text") or "").strip()
+                if _conv_session["active"] and _is_exit_command(clean, _EXIT_WORDS):
+                    _conv_session["active"] = False
+                    _conv_session["turns"] = 0
+                    result["continuous"]["active"] = False
+                    result["continuous"]["ended_by"] = "exit_word"
+                    # 语音确认（fire-and-forget 异步播放）
+                    try:
+                        await get_voice().aspeak("好的，随时叫我。")
+                    except Exception:
+                        pass
+                    log.info("连续对话：退出命令词 %r 结束会话", clean)
+                # 2) 窗口将到期提醒（剩 ≤ 15s 或下一轮将超限 → 语音询问是否继续）
+                elif _conv_session["active"]:
+                    window_left = _conv_session["expires_at"] - time.monotonic()
+                    turns_left = _conv_max_turns - _conv_session["turns"]
+                    remind = window_left <= _conv_remind_before_s or turns_left <= _conv_remind_turns_left
+                    if remind:
+                        try:
+                            await get_voice().aspeak("还需要我吗？")
+                        except Exception:
+                            pass
+                        result["continuous"]["reminded"] = True
+                        log.info("连续对话：窗口即将到期，已提醒（剩 %.0fs / %d 轮）", window_left, turns_left)
             return {"ok": True, **result}
         except Exception as e:
             log.exception("voice.turn 异常")
