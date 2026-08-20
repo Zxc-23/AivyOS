@@ -64,6 +64,11 @@ export interface VoiceTurnResult {
   error_detail?: string;
   source?: string;
   wake?: boolean;
+  continuous?: {
+    active: boolean;
+    turns_left: number;
+    window_left_s: number;
+  };
   breakdown_ms?: {
     asr: number;
     llm: number;
@@ -335,12 +340,25 @@ export async function getVoiceStatus(): Promise<VoiceStatus> {
   return bridgeCall<VoiceStatus>("voice.status", {});
 }
 
-export async function runVoiceTurn(text?: string): Promise<VoiceTurnResult> {
-  return bridgeCall<VoiceTurnResult>("voice.turn", { text: text ?? null });
+export async function runVoiceTurn(text?: string, continuous = false): Promise<VoiceTurnResult> {
+  return bridgeCall<VoiceTurnResult>("voice.turn", { text: text ?? null, continuous });
 }
 
-export async function listenVoice(): Promise<VoiceTurnResult> {
-  return bridgeCall<VoiceTurnResult>("voice.turn", {});
+export async function listenVoice(continuous = false): Promise<VoiceTurnResult> {
+  return bridgeCall<VoiceTurnResult>("voice.turn", { continuous });
+}
+
+/** 查询连续对话会话状态（唤醒后窗口期内免唤醒词）。 */
+export async function getContinuousStatus(): Promise<{
+  ok: boolean; active: boolean; turns: number; turns_left: number;
+  window_left_s: number; window_s: number; max_turns: number;
+}> {
+  return bridgeCall("voice.continuous.status", {});
+}
+
+/** 手动结束连续对话会话。 */
+export async function resetContinuous(): Promise<{ ok: boolean; active: boolean }> {
+  return bridgeCall("voice.continuous.reset", {});
 }
 
 // ================================================================
@@ -386,7 +404,7 @@ export async function listenWakeEvents(
     return () => {};
   }
   const { listen } = await import("@tauri-apps/api/event");
-  const unlisten = await listen<WakeEvent>("ipc:wake.detected", (event) => {
+  const unlisten = await listen<WakeEvent>("ipc:wake-detected", (event) => {
     onWake(event.payload as WakeEvent);
   });
   return unlisten;

@@ -68,10 +68,11 @@ class VoiceSession:
 
     # ---- 一轮对话 ----
 
-    async def run_turn(self, text_override: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    async def run_turn(self, text_override: Optional[str] = None, skip_wake: bool = False) -> Optional[Dict[str, Any]]:
         """执行一轮语音对话，返回 {text, reply, wav_len, latency_ms, ...} 或 None。
 
         text_override：跳过真实音频链路（测试/文本模拟模式）。
+        skip_wake：跳过唤醒词检查（连续对话模式：唤醒后窗口内无需重复唤醒词）。
         认证门控（§9）：真实音频路径下未通过认证 → 静默拒绝（不暴露系统存在）。
         耗时细分：asr_ms / llm_ms / tts_ms / playback_ms，用于诊断瓶颈。
         """
@@ -85,8 +86,8 @@ class VoiceSession:
             transcript = text_override
             asr_backend = "text-override"
             auth_result = {"bypassed": True, "reason": "文本模拟模式"}
-            # 唤醒词门控：即使在文本覆盖模式下，若 wake_required=True 仍需检查
-            wake_passed = not self.wake_required or self.wake.detect(transcript)
+            # 唤醒词门控：文本覆盖模式下，wake_required 且非连续对话窗口时仍需检查
+            wake_passed = (not self.wake_required) or skip_wake or self.wake.detect(transcript)
             if not wake_passed:
                 log.info("唤醒词未命中 (text_override): %r", transcript[:30])
                 return {"text": transcript, "reply": None, "wake": False, "auth": auth_result}
@@ -119,7 +120,7 @@ class VoiceSession:
             asr_ms = (time.perf_counter() - asr_t0) * 1000
             transcript = result.text
             asr_backend = result.backend
-            wake_passed = not self.wake_required or self.wake.detect(transcript)
+            wake_passed = (not self.wake_required) or skip_wake or self.wake.detect(transcript)
             if not wake_passed:
                 log.info("唤醒词未命中: %r", transcript[:30])
                 return {"text": transcript, "reply": None, "wake": False, "auth": auth_result}

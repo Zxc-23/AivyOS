@@ -658,8 +658,15 @@ export default function App() {
         showNotification("演示模式", "连接核心后即可使用真实语音", "warning");
         return;
       }
-      const result = await listenVoice();
+      const result = await listenVoice(vsetContinuous);
       setVoiceTurnResult(result);
+      if (result.continuous) {
+        showNotification(
+          "连续对话",
+          `已进入连续对话（剩 ${result.continuous.turns_left} 轮 / ${result.continuous.window_left_s}s），无需重复唤醒词`,
+          "success",
+        );
+      }
       if (result.error_type === "no_speech_detected") {
         showNotification("未检测到语音", "请靠近麦克风并重新点击说话", "warning");
         return;

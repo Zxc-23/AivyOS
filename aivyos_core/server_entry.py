@@ -84,6 +84,12 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
     # ---- VoiceSession (lazily created) ----
     _voice_session = None
 
+    # 连续对话会话状态：唤醒一次后，窗口期内后续轮次无需再喊唤醒词
+    # {"active": bool, "expires_at": float(monotonic), "turns": int}
+    _conv_session = {"active": False, "expires_at": 0.0, "turns": 0}
+    _conv_window_s = float(cfg.get("voice", {}).get("continuous_window_s", 60.0))
+    _conv_max_turns = int(cfg.get("voice", {}).get("continuous_max_turns", 10))
+
     def get_voice():
         nonlocal _voice_session
         if _voice_session is None:
@@ -184,8 +190,18 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         - 传 text：跳过真实音频采集，直接用文本走完整链路（text_override 模式）
         - 不传 text：真实麦克风采集 → VAD → ASR → LLM → TTS（listen 模式）
         - 互斥：真实采集期间暂停后台 WakeLoop，避免多 MicSource 抢占麦克风产生噪音
+        - 连续对话：params.continuous=true 时，唤醒一次后窗口期内（默认 60s/10 轮）
+          后续轮次自动跳过唤醒词检查（用户无需反复说唤醒词）
         """
         text_override = params.get("text")
+        continuous = bool(params.get("continuous", False))
+        # 连续对话会话：窗口未过期且轮次未超限 → 本轮免唤醒词
+        conv_active = (
+            continuous
+            and _conv_session["active"]
+            and time.monotonic() < _conv_session["expires_at"]
+            and _conv_session["turns"] < _conv_max_turns
+        )
         wake_loop = _wake_loop_ref["loop"]
         wake_was_running = bool(wake_loop and wake_loop.running)
         try:
@@ -195,12 +211,23 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
                 await wake_loop.stop()
             try:
                 vs = get_voice()
-                result = await vs.run_turn(text_override=text_override)
+                result = await vs.run_turn(text_override=text_override, skip_wake=conv_active)
             finally:
                 # 采集结束恢复唤醒循环
                 if text_override is None and wake_was_running:
                     await wake_loop.start()
                     log.info("voice.turn 结束，WakeLoop 已恢复")
+            # 更新连续对话会话状态
+            if continuous:
+                if result is not None and result.get("wake") is not False and result.get("error") not in ("empty_command", "no_speech_detected"):
+                    # 成功一轮：开启/续期会话窗口
+                    _conv_session["active"] = True
+                    _conv_session["expires_at"] = time.monotonic() + _conv_window_s
+                    _conv_session["turns"] += 1
+                else:
+                    # 失败轮（唤醒未命中/空指令）：重置会话
+                    _conv_session["active"] = False
+                    _conv_session["turns"] = 0
             if result is None:
                 return {"ok": False, "error": "语音对话执行失败（未识别到有效语音）", "error_type": "no_result", "asr_text": text_override}
             # 处理无语音检测等预期内的失败
@@ -230,6 +257,13 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
                     "text": result.get("text", ""),
                     "asr_text": text_override,
                 }
+            # 连续对话元数据（前端提示剩余轮次/窗口）
+            if continuous and result.get("reply"):
+                result["continuous"] = {
+                    "active": _conv_session["active"],
+                    "turns_left": max(0, _conv_max_turns - _conv_session["turns"]),
+                    "window_left_s": max(0, round(_conv_session["expires_at"] - time.monotonic(), 1)),
+                }
             return {"ok": True, **result}
         except Exception as e:
             log.exception("voice.turn 异常")
@@ -248,6 +282,28 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
                     "error_detail": str(e),
                 }
             return {"ok": False, "error": str(e), "error_type": type(e).__name__}
+
+    @server.method("voice.continuous.status")
+    async def voice_continuous_status(params):
+        """查询连续对话会话状态。"""
+        return {
+            "ok": True,
+            "active": _conv_session["active"],
+            "turns": _conv_session["turns"],
+            "turns_left": max(0, _conv_max_turns - _conv_session["turns"]),
+            "window_left_s": max(
+                0, round(_conv_session["expires_at"] - time.monotonic(), 1)
+            ) if _conv_session["active"] else 0,
+            "window_s": _conv_window_s,
+            "max_turns": _conv_max_turns,
+        }
+
+    @server.method("voice.continuous.reset")
+    async def voice_continuous_reset(params):
+        """手动结束连续对话会话。"""
+        _conv_session["active"] = False
+        _conv_session["turns"] = 0
+        return {"ok": True, "active": False}
 
     @server.method("voice.listen")
     async def voice_listen(params):

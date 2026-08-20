@@ -129,6 +129,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "wake_required": False,      # True 时需唤醒词后才进入对话
         "silence_timeout_s": 3.0,    # 无语音超时退出
         "max_turn_s": 20.0,          # 单轮最长录音
+        "continuous_window_s": 60.0, # 连续对话：唤醒后窗口期（秒）内免唤醒词
+        "continuous_max_turns": 10,  # 连续对话：窗口期内最大轮次
     },
     "ws": {
         "port": 31702,               # WebSocket 实时通道（§16.3.2 风格）
