@@ -190,7 +190,7 @@ function getMemoryColor(category?: string): { color: string; bg: string } {
 }
 
 export default function App() {
-  const [nav, setNav] = useState<NavId>("chat");
+  const [nav, setNav] = useState<NavId>("boot"); // 启动先进入系统自检
   const [messages, setMessages] = useState<Msg[]>([
     { role: "assistant", text: "早上好！我是 Aivy，您的私人 AI 助理。有什么可以帮您？" },
   ]);
@@ -933,6 +933,26 @@ export default function App() {
     } finally { setBootLoading(false); updateTrayState("idle"); }
   }, [bridgeReady, updateTrayState, showNotification]);
 
+  // 启动就绪后自动执行系统自检（首次进入 boot 页）
+  const bootAutoRanRef = useRef(false);
+  useEffect(() => {
+    if (!bridgeReady || bootAutoRanRef.current) return;
+    bootAutoRanRef.current = true;
+    setNav("boot"); // 确保停留在自检页
+    void runBoot();
+  }, [bridgeReady, runBoot]);
+
+  // 自检完成且全部通过 → 自动进入主界面；未全通过则停留展示结果（用户可手动进入）
+  useEffect(() => {
+    if (!bootLoading && bootResult && nav === "boot") {
+      if (bootResult.passed === bootResult.total && bootResult.total > 0) {
+        const t = setTimeout(() => setNav("chat"), 1200); // 展示 1.2s 后进入
+        return () => clearTimeout(t);
+      }
+      // 有失败项：停留，用户查看后点"进入主界面"或"重新自检"
+    }
+  }, [bootLoading, bootResult, nav]);
+
   // ---- Voice settings ----
   const loadVoiceSettings = useCallback(async () => {
     setVsetLoading(true);
@@ -1251,6 +1271,11 @@ export default function App() {
   }, [nav, bridgeReady]);
 
   const handleNav = (id: NavId) => {
+    // 自检进行中：仅允许停留自检页或查看结果后手动进入（跳过其它导航）
+    if (bootLoading && id !== "boot") {
+      showNotification("系统自检中", "请等待自检完成", "warning");
+      return;
+    }
     // 离开语音页时打断播报
     if (id !== "voice") stopVoicePlayback();
     setNav(id);
