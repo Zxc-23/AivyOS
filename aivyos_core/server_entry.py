@@ -938,20 +938,21 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
 
         Params:
             text: 要合成的文本（默认 "你好，这是一段语音测试"）
-            provider: TTS 服务商 (doubao-tts / edge-tts / cosyvoice / mock)
+            provider: TTS 服务商 (auto / doubao-tts / edge-tts / cosyvoice / mock)
             voice: 音色 ID
             speed: 语速倍率 (0.5-2.0)
-            api_key: 云端 API Key（可选）
+            api_key: 云端 API Key（可选，留空时自动从环境变量/持久化存储读取）
             resource_id: 资源 ID（火山引擎/豆包）
 
         Returns:
             {ok, wav_b64, sample_rate, text, backend, latency_ms, error?}
         """
         import base64
+        import os as _os
         import time as _time
 
         text = params.get("text", "你好，这是一段语音测试")
-        provider = params.get("provider", "mock")
+        provider = params.get("provider", "auto")
         voice = params.get("voice", "")
         speed = float(params.get("speed", 1.0))
         api_key = params.get("api_key", "")
@@ -959,68 +960,30 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
 
         try:
             from aivyos_core.audio.wav import pcm_to_wav_bytes
-            from aivyos_core.tts.mock_backend import MockTTS
+            from aivyos_core.tts.manager import create_tts
 
-            # 云端服务商必须配置 API Key
-            cloud_providers_need_key = {"doubao-tts", "doubao"}
-            if provider in cloud_providers_need_key and not api_key:
-                return {
-                    "ok": False,
-                    "error": f"服务商 {provider} 需要配置 API Key，请先在上方填写后再试听",
-                    "backend": provider,
-                }
+            # ── 若前端未传 API Key，尝试从环境变量读取（ApiKeyStore.load() 已注入）──
+            if not api_key:
+                if provider in ("auto", "doubao-tts", "doubao", "bytedance", "volcengine"):
+                    stored = _os.environ.get("VOLCENGINE_API_KEY", "")
+                    if stored:
+                        api_key = stored
+                if not api_key and provider in ("auto", "elevenlabs"):
+                    stored = _os.environ.get("ELEVENLABS_API_KEY", "")
+                    if stored:
+                        api_key = stored
 
-            # 根据 provider 选择后端
-            backend = None
-            cfg_override = {}
+            # ── 构建统一 TTS 配置 ──
+            tts_cfg = {
+                "backend": provider,
+                "voice": voice,
+                "speed": speed,
+                "resource_id": resource_id,
+                "api_key": api_key,
+            }
 
-            if provider in ("doubao-tts", "doubao"):
-                try:
-                    from aivyos_core.tts.doubao_backend import DoubaoTTSBackend
-                    cfg_override = {
-                        "api_key": api_key,
-                        "resource_id": resource_id or "seed-tts-2.0",
-                        "voice_type": voice or "zh_female_xiaohe_uranus_bigtts",
-                        "speed_ratio": speed,
-                    }
-                    backend = DoubaoTTSBackend(config=cfg_override)
-                    if not backend.available:
-                        return {
-                            "ok": False,
-                            "error": "豆包 TTS 未配置 API Key，请在前端语音设置中填写豆包 API Key",
-                            "backend": provider,
-                        }
-                except ImportError as e:
-                    return {
-                        "ok": False,
-                        "error": f"豆包 TTS 模块导入失败: {e}",
-                        "backend": provider,
-                    }
-                except Exception as e:
-                    return {
-                        "ok": False,
-                        "error": f"豆包 TTS 初始化失败: {e}",
-                        "backend": provider,
-                    }
-
-            if backend is None and provider in ("edge-tts", "edge"):
-                try:
-                    from aivyos_core.voice.cloud_engines import EdgeTTSBackend
-                    edge_cfg = {"voice": voice or "zh-CN-XiaoxiaoNeural", "rate": f"+{int((speed - 1) * 100)}%"}
-                    backend = EdgeTTSBackend(config=edge_cfg)
-                except Exception:
-                    pass
-
-            if backend is None and provider in ("cosyvoice",):
-                try:
-                    from aivyos_core.tts.cosyvoice_backend import CosyVoiceBackend
-                    backend = CosyVoiceBackend()
-                except Exception:
-                    pass
-
-            # Fallback to mock
-            if backend is None:
-                backend = MockTTS(sample_rate=24000, tone_hz=523.25, duration_s=min(len(text) * 0.15, 3.0))
+            # ── 通过 manager.create_tts() 选择后端（统一逻辑） ──
+            backend = create_tts(tts_cfg)
 
             start = _time.perf_counter()
             result = backend.synthesize(text)
