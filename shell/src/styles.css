@@ -420,6 +420,19 @@ body {
 .memory-card-content { font-size: 13px; line-height: 1.6; color: var(--ink); }
 .memory-card-time { font-size: 10px; color: var(--muted); margin-top: 8px; }
 
+/* ============================== 知识卡片 ============================== */
+.kcard { cursor: default; display: flex; flex-direction: column; gap: 6px; min-height: 120px; }
+.kcard.fav { border-color: rgba(245,158,11,0.4); }
+.kcard-btn { background: transparent; border: none; font-size: 13px; cursor: pointer; opacity: 0.7; padding: 2px 4px; border-radius: 4px; }
+.kcard-btn:hover { opacity: 1; background: rgba(255,255,255,0.08); }
+.kcard-title { font-size: 15px; font-weight: 600; color: var(--ink); line-height: 1.4; }
+.kcard-title:hover { color: var(--accent); }
+.kcard-summary { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.kcard-body { font-size: 12.5px; color: var(--ink); line-height: 1.6; }
+.kcard-content { white-space: pre-wrap; word-break: break-word; }
+.kcard-tag { font-size: 10px; padding: 2px 8px; border-radius: 999px; background: rgba(59,130,246,0.12); color: var(--accent); }
+.kcard-meta { display: flex; gap: 8px; font-size: 10px; color: var(--muted); margin-top: 8px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.05); flex-wrap: wrap; }
+
 /* ============================== 主动通知卡片 ============================== */
 .notif-stack { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column-reverse; gap: 8px; }
 .notif-card {

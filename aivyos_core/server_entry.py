@@ -147,6 +147,25 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             _scheduler = Scheduler(tick_s=float(cfg.get("scheduler", {}).get("tick_s", 5)))
         return _scheduler
 
+    # ---- 知识卡片系统（记忆管理升级）----
+    _knowledge = None
+
+    def get_knowledge():
+        nonlocal _knowledge
+        if _knowledge is None:
+            from pathlib import Path
+
+            from aivyos_core.knowledge.service import KnowledgeService
+            from aivyos_core.knowledge.store import KnowledgeStore
+
+            k_cfg = cfg.get("knowledge", {})
+            home = Path(cfg.get("home", "."))
+            store = KnowledgeStore(home / k_cfg.get("store_path", "knowledge.jsonl"))
+            _knowledge = KnowledgeService(store, __import__(
+                "aivyos_core.knowledge.extract", fromlist=["KnowledgeExtractor"]
+            ).KnowledgeExtractor(router=engine.router))
+        return _knowledge
+
     # ---- Task registry (in-memory, demo-grade) ----
     _tasks: Dict[str, Dict[str, Any]] = {}
     _task_counter = 0
@@ -161,7 +180,25 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
 
     @server.method("chat.send")
     async def chat_send(params):
-        reply = await engine.send(params["text"], session_id=params.get("session_id"))
+        text = params["text"]
+        # 相似知识自动调用（对话中呈现相关卡片，不阻塞主回复）
+        recalled = []
+        if cfg.get("knowledge", {}).get("recall_in_chat", True):
+            try:
+                recalled = get_knowledge().recall(text, limit=2, min_score=float(
+                    cfg.get("knowledge", {}).get("recall_min_score", 0.05)
+                ))
+            except Exception as e:
+                log.debug("知识调用失败: %s", e)
+        reply = await engine.send(text, session_id=params.get("session_id"))
+        # 对话知识沉淀（后台任务，不阻塞响应）
+        if cfg.get("knowledge", {}).get("auto_extract", True):
+            async def _ingest():
+                try:
+                    await get_knowledge().ingest(text)
+                except Exception as e:
+                    log.debug("知识沉淀失败: %s", e)
+            asyncio.get_running_loop().create_task(_ingest())
         return {
             "text": reply.text,
             "session_id": reply.session_id,
@@ -169,6 +206,7 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             "route": reply.route.to_dict(),
             "latency_ms": reply.latency_ms,
             "memory_hits": reply.memory_hits,
+            "knowledge_hits": [{"card": h["card"], "score": h["score"]} for h in recalled],
         }
 
     @server.method("session.list")
@@ -210,6 +248,105 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
     async def memory_list(params):
         all_memories = await engine.memory.get_all()
         return [m if isinstance(m, dict) else {"text": str(m), "created_at": None} for m in all_memories]
+
+    # ================================================================
+    #  知识卡片系统（记忆管理升级）
+    # ================================================================
+
+    @server.method("knowledge.list")
+    async def knowledge_list(params):
+        """列出知识卡片。params: {sort: updated|created|favorite|usage, category, tag, favorite_only}"""
+        ks = get_knowledge()
+        if params.get("category") or params.get("tag") or params.get("favorite_only"):
+            cards = ks.filter(
+                category=params.get("category", ""),
+                tag=params.get("tag", ""),
+                favorite_only=bool(params.get("favorite_only", False)),
+            )
+        else:
+            cards = ks.list_all(sort=params.get("sort", "updated"))
+        return [c.to_dict() for c in cards]
+
+    @server.method("knowledge.get")
+    async def knowledge_get(params):
+        card = get_knowledge().get(params.get("id", ""))
+        return card.to_dict() if card else {"error": "卡片不存在"}
+
+    @server.method("knowledge.create")
+    async def knowledge_create(params):
+        """手动创建知识卡片。"""
+        card = get_knowledge().create(**params)
+        return card.to_dict()
+
+    @server.method("knowledge.update")
+    async def knowledge_update(params):
+        card = get_knowledge().update(params.get("id", ""), **params.get("changes", {}))
+        return card.to_dict() if card else {"error": "卡片不存在"}
+
+    @server.method("knowledge.delete")
+    async def knowledge_delete(params):
+        ok = get_knowledge().delete(params.get("id", ""))
+        return {"ok": ok}
+
+    @server.method("knowledge.favorite")
+    async def knowledge_favorite(params):
+        card = get_knowledge().toggle_favorite(params.get("id", ""))
+        return card.to_dict() if card else {"error": "卡片不存在"}
+
+    @server.method("knowledge.search")
+    async def knowledge_search(params):
+        cards = get_knowledge().search(params.get("query", ""), limit=int(params.get("limit", 20)))
+        return [c.to_dict() for c in cards]
+
+    @server.method("knowledge.recall")
+    async def knowledge_recall(params):
+        """相似内容识别（对话中自动调用知识卡片）。"""
+        hits = get_knowledge().recall(
+            params.get("text", ""),
+            limit=int(params.get("limit", 3)),
+            min_score=float(params.get("min_score", 0.05)),
+        )
+        return hits
+
+    @server.method("knowledge.ingest")
+    async def knowledge_ingest(params):
+        """从对话文本沉淀知识（自动提取 → 建卡/更新）。"""
+        result = await get_knowledge().ingest(params.get("text", ""))
+        return result or {"action": "skip"}
+
+    @server.method("knowledge.stats")
+    async def knowledge_stats(params):
+        return get_knowledge().stats()
+
+    @server.method("knowledge.link")
+    async def knowledge_link(params):
+        ok = get_knowledge().link(params.get("id", ""), params.get("other_id", ""))
+        return {"ok": ok}
+
+    @server.method("knowledge.backup")
+    async def knowledge_backup(params):
+        """备份全部卡片。params: {path?} 返回备份文件路径。"""
+        from pathlib import Path
+
+        k_cfg = cfg.get("knowledge", {})
+        home = Path(cfg.get("home", "."))
+        backup_dir = home / k_cfg.get("backup_dir", "knowledge_backups")
+        import time as _t
+
+        path = params.get("path") or str(backup_dir / f"knowledge_{_t.strftime('%Y%m%d_%H%M%S')}.json")
+        out = get_knowledge().export_backup(path)
+        return {"ok": True, "path": str(out)}
+
+    @server.method("knowledge.restore")
+    async def knowledge_restore(params):
+        """从备份恢复。params: {path, merge?}"""
+        count = get_knowledge().import_backup(params.get("path", ""), merge=bool(params.get("merge", False)))
+        return {"ok": True, "imported": count}
+
+    @server.method("knowledge.clear")
+    async def knowledge_clear(params):
+        n = get_knowledge().clear()
+        return {"ok": True, "cleared": n}
 
     # ================================================================
     #  Voice

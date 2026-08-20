@@ -15,6 +15,7 @@ export interface ChatReply {
   route: RouteDecision;
   latency_ms: number;
   memory_hits: unknown[];
+  knowledge_hits?: { card: KnowledgeCard; score: number }[];
 }
 
 export interface SessionInfo {
@@ -436,6 +437,88 @@ export async function addMemory(text: string): Promise<{ id: string }> {
 
 export async function listMemory(): Promise<MemoryEntry[]> {
   return bridgeCall<MemoryEntry[]>("memory.list", {});
+}
+
+// ================================================================
+//  Knowledge Cards（知识卡片系统）
+// ================================================================
+
+export interface KnowledgeCard {
+  id: string;
+  title: string;
+  summary: string;
+  content: string;
+  category: string;
+  tags: string[];
+  favorite: boolean;
+  source: string;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  versions: { title: string; summary: string; content: string; version: number; ts: string }[];
+  links: string[];
+  usage: number;
+}
+
+export interface KnowledgeHit {
+  card: KnowledgeCard;
+  score: number;
+}
+
+export async function listKnowledge(params: {
+  sort?: string; category?: string; tag?: string; favorite_only?: boolean;
+} = {}): Promise<KnowledgeCard[]> {
+  return bridgeCall<KnowledgeCard[]>("knowledge.list", params);
+}
+
+export async function getKnowledge(id: string): Promise<KnowledgeCard> {
+  return bridgeCall<KnowledgeCard>("knowledge.get", { id });
+}
+
+export async function createKnowledge(fields: Partial<KnowledgeCard>): Promise<KnowledgeCard> {
+  return bridgeCall<KnowledgeCard>("knowledge.create", fields);
+}
+
+export async function updateKnowledge(id: string, changes: Record<string, unknown>): Promise<KnowledgeCard> {
+  return bridgeCall<KnowledgeCard>("knowledge.update", { id, changes });
+}
+
+export async function deleteKnowledge(id: string): Promise<{ ok: boolean }> {
+  return bridgeCall("knowledge.delete", { id });
+}
+
+export async function toggleKnowledgeFavorite(id: string): Promise<KnowledgeCard> {
+  return bridgeCall<KnowledgeCard>("knowledge.favorite", { id });
+}
+
+export async function searchKnowledge(query: string, limit = 20): Promise<KnowledgeCard[]> {
+  return bridgeCall<KnowledgeCard[]>("knowledge.search", { query, limit });
+}
+
+export async function recallKnowledge(text: string, limit = 3, minScore = 0.05): Promise<KnowledgeHit[]> {
+  return bridgeCall<KnowledgeHit[]>("knowledge.recall", { text, limit, min_score: minScore });
+}
+
+export async function ingestKnowledge(text: string): Promise<{ action: string; card?: KnowledgeCard }> {
+  return bridgeCall("knowledge.ingest", { text });
+}
+
+export async function getKnowledgeStats(): Promise<{
+  total: number; favorites: number; categories: string[]; tags: string[];
+}> {
+  return bridgeCall("knowledge.stats", {});
+}
+
+export async function linkKnowledge(id: string, otherId: string): Promise<{ ok: boolean }> {
+  return bridgeCall("knowledge.link", { id, other_id: otherId });
+}
+
+export async function backupKnowledge(path?: string): Promise<{ ok: boolean; path: string }> {
+  return bridgeCall("knowledge.backup", { path: path ?? "" });
+}
+
+export async function restoreKnowledge(path: string, merge = false): Promise<{ ok: boolean; imported: number }> {
+  return bridgeCall("knowledge.restore", { path, merge });
 }
 
 // ================================================================

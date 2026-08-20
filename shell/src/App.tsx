@@ -12,6 +12,10 @@ import {
   listMcpTools, callMcpTool,
   executeFallbackChain,
   listMemory, searchMemory, addMemory,
+  listKnowledge, getKnowledge, createKnowledge, updateKnowledge,
+  deleteKnowledge, toggleKnowledgeFavorite, searchKnowledge,
+  recallKnowledge, getKnowledgeStats, linkKnowledge, backupKnowledge, restoreKnowledge,
+  KnowledgeCard as KnowledgeCardType, KnowledgeHit,
   VoiceStatus, VoiceTurnResult,
   TaskInfo, SchedulerJob,
   BootCheckResult, MemoryEntry,
@@ -264,6 +268,22 @@ export default function App() {
   const [memorySearchQuery, setMemorySearchQuery] = useState("");
   const [memoryNewText, setMemoryNewText] = useState("");
   const [memoryLoading, setMemoryLoading] = useState(false);
+
+  /* ---- Knowledge Cards state ---- */
+  const [kCards, setKCards] = useState<KnowledgeCardType[]>([]);
+  const [kLoading, setKLoading] = useState(false);
+  const [kSearch, setKSearch] = useState("");
+  const [kCategory, setKCategory] = useState("");
+  const [kTag, setKTag] = useState("");
+  const [kSort, setKSort] = useState("updated");
+  const [kFavOnly, setKFavOnly] = useState(false);
+  const [kStats, setKStats] = useState<{ total: number; favorites: number; categories: string[]; tags: string[] }>({ total: 0, favorites: 0, categories: [], tags: [] });
+  const [kExpanded, setKExpanded] = useState<Record<string, boolean>>({});
+  const [kEditId, setKEditId] = useState<string | null>(null);
+  const [kEditForm, setKEditForm] = useState<{ title: string; summary: string; content: string; category: string; tags: string }>({ title: "", summary: "", content: "", category: "其他", tags: "" });
+  const [kShowNew, setKShowNew] = useState(false);
+  const [kRelated, setKRelated] = useState<Record<string, KnowledgeCardType[]>>({});
+  const [kKnowledgeHits, setKKnowledgeHits] = useState<KnowledgeHit[]>([]); // 对话中自动调用的卡片
 
   /* ---- Boot/Self-check state ---- */
   const [bootResult, setBootResult] = useState<BootCheckResult | null>(null);
@@ -574,6 +594,10 @@ export default function App() {
     try {
       const reply: ChatReply = await sendChat(text);
       setMessages(prev => [...prev, { role: "assistant", text: reply.text }]);
+      // 知识卡片自动调用：对话中呈现相关卡片
+      if (reply.knowledge_hits && reply.knowledge_hits.length > 0) {
+        setKKnowledgeHits(reply.knowledge_hits);
+      }
       updateTrayState("idle");
     } catch (e) {
       setMessages(prev => [...prev, { role: "assistant", text: "抱歉，出现了错误：" + (e instanceof Error ? e.message : String(e)) }]);
@@ -1249,6 +1273,115 @@ export default function App() {
   }, [memoryNewText, bridgeReady, loadMemory, showNotification]);
 
   /* ================================================================
+   *  Knowledge Cards handlers
+   * ================================================================ */
+  const loadKnowledge = useCallback(async () => {
+    setKLoading(true);
+    try {
+      if (!bridgeReady) { setKCards([]); return; }
+      const params: Record<string, unknown> = { sort: kSort };
+      if (kCategory) params.category = kCategory;
+      if (kTag) params.tag = kTag;
+      if (kFavOnly) params.favorite_only = true;
+      const cards = await listKnowledge(params as any);
+      setKCards(cards);
+      const stats = await getKnowledgeStats();
+      setKStats(stats);
+    } catch { setKCards([]); }
+    finally { setKLoading(false); }
+  }, [bridgeReady, kSort, kCategory, kTag, kFavOnly]);
+
+  const handleKSearch = useCallback(async () => {
+    const q = kSearch.trim();
+    setKLoading(true);
+    try {
+      if (!bridgeReady) { setKCards([]); return; }
+      if (!q) { await loadKnowledge(); return; }
+      const cards = await searchKnowledge(q, 30);
+      setKCards(cards);
+    } catch (e) { showNotification("搜索失败", e instanceof Error ? e.message : String(e), "danger"); }
+    finally { setKLoading(false); }
+  }, [kSearch, bridgeReady, loadKnowledge, showNotification]);
+
+  const handleKCreate = useCallback(async () => {
+    const title = kEditForm.title.trim();
+    if (!title) { showNotification("提示", "请输入卡片标题", "warning"); return; }
+    try {
+      if (!bridgeReady) { showNotification("演示模式", "连接核心后创建", "warning"); return; }
+      await createKnowledge({
+        title, summary: kEditForm.summary.trim(), content: kEditForm.content.trim(),
+        category: kEditForm.category || "其他",
+        tags: kEditForm.tags.split(/[,，\s]+/).filter(Boolean),
+      } as any);
+      setKShowNew(false);
+      setKEditForm({ title: "", summary: "", content: "", category: "其他", tags: "" });
+      showNotification("知识卡片已创建", title, "success");
+      await loadKnowledge();
+    } catch (e) { showNotification("创建失败", e instanceof Error ? e.message : String(e), "danger"); }
+  }, [kEditForm, bridgeReady, loadKnowledge, showNotification]);
+
+  const handleKUpdate = useCallback(async (id: string) => {
+    try {
+      if (!bridgeReady) return;
+      await updateKnowledge(id, {
+        title: kEditForm.title, summary: kEditForm.summary, content: kEditForm.content,
+        category: kEditForm.category, tags: kEditForm.tags.split(/[,，\s]+/).filter(Boolean),
+      } as any);
+      setKEditId(null);
+      showNotification("卡片已更新", kEditForm.title, "success");
+      await loadKnowledge();
+    } catch (e) { showNotification("更新失败", e instanceof Error ? e.message : String(e), "danger"); }
+  }, [kEditForm, bridgeReady, loadKnowledge, showNotification]);
+
+  const handleKDelete = useCallback(async (id: string, title: string) => {
+    try {
+      if (!bridgeReady) return;
+      await deleteKnowledge(id);
+      showNotification("卡片已删除", title, "success");
+      await loadKnowledge();
+    } catch (e) { showNotification("删除失败", e instanceof Error ? e.message : String(e), "danger"); }
+  }, [bridgeReady, loadKnowledge, showNotification]);
+
+  const handleKFav = useCallback(async (id: string) => {
+    try {
+      if (!bridgeReady) return;
+      await toggleKnowledgeFavorite(id);
+      await loadKnowledge();
+    } catch (e) { showNotification("操作失败", e instanceof Error ? e.message : String(e), "danger"); }
+  }, [bridgeReady, loadKnowledge, showNotification]);
+
+  const handleKExpand = useCallback(async (card: KnowledgeCardType) => {
+    setKExpanded(prev => ({ ...prev, [card.id]: !prev[card.id] }));
+    // 展开时加载关联卡片
+    if (!kRelated[card.id] && card.links.length > 0 && bridgeReady) {
+      try {
+        const related: KnowledgeCardType[] = [];
+        for (const lid of card.links.slice(0, 5)) {
+          const c = await getKnowledge(lid);
+          if (c && !("error" in c)) related.push(c);
+        }
+        setKRelated(prev => ({ ...prev, [card.id]: related }));
+      } catch { /* ignore */ }
+    }
+  }, [kRelated, bridgeReady]);
+
+  const handleKEdit = useCallback((card: KnowledgeCardType) => {
+    setKEditId(card.id);
+    setKEditForm({
+      title: card.title, summary: card.summary || "", content: card.content || "",
+      category: card.category, tags: card.tags.join(", "),
+    });
+  }, []);
+
+  const handleKBackup = useCallback(async () => {
+    try {
+      if (!bridgeReady) { showNotification("演示模式", "连接核心后备份", "warning"); return; }
+      const r = await backupKnowledge();
+      showNotification("备份完成", r.path, "success");
+    } catch (e) { showNotification("备份失败", e instanceof Error ? e.message : String(e), "danger"); }
+  }, [bridgeReady, showNotification]);
+
+  /* ================================================================
    *  Screen navigation → trigger data loading
    * ================================================================ */
   useEffect(() => {
@@ -1259,10 +1392,10 @@ export default function App() {
       case "boot": runBoot(); break;
       case "voiceset": loadVoiceSettings(); break;
       case "models": loadModels(); break;
-      case "memory": loadMemory(); break;
+      case "memory": loadMemory(); loadKnowledge(); break;
       default: break;
     }
-  }, [nav, loadVoiceStatus, loadTasks, loadSchedules, runBoot, loadVoiceSettings, loadModels, loadMemory]);
+  }, [nav, loadVoiceStatus, loadTasks, loadSchedules, runBoot, loadVoiceSettings, loadModels, loadMemory, loadKnowledge]);
 
   useEffect(() => {
     if (nav !== "voice" || bridgeReady) return;
@@ -1283,7 +1416,7 @@ export default function App() {
 
   const currentTitle: Record<NavId, string> = {
     chat: "对话", voice: "语音模式", task: "自主任务", sched: "定时任务",
-    vibe: "Vibe Coding", memory: "记忆管理", boot: "系统自检",
+    vibe: "Vibe Coding", memory: "知识卡片", boot: "系统自检",
     voiceset: "语音设置", models: "模型管理", settings: "设置",
   };
 
@@ -1309,7 +1442,7 @@ export default function App() {
     { id: "task" as NavId, label: "自主任务", desc: "AI 自动执行复杂任务", icon: "⚡" },
     { id: "sched" as NavId, label: "定时任务", desc: "周期定时与触发器配置", icon: "⏰" },
     { id: "vibe" as NavId, label: "Vibe Coding", desc: "AI 辅助代码生成与预览", icon: "💻" },
-    { id: "memory" as NavId, label: "记忆管理", desc: "查看 AI 学习到的偏好与上下文", icon: "🧠" },
+    { id: "memory" as NavId, label: "知识卡片", desc: "知识自动沉淀、管理与调用", icon: "🧠" },
     { id: "boot" as NavId, label: "系统自检", desc: "启动时自动检测各模块状态", icon: "🔒" },
     { id: "voiceset" as NavId, label: "语音设置", desc: "TTS 音色选择与 ASR 引擎", icon: "🎛️" },
     { id: "models" as NavId, label: "模型管理", desc: "模型部署、路由与切换策略", icon: "🧩" },
@@ -1375,6 +1508,20 @@ export default function App() {
             <div className={`screen ${nav === "chat" ? "active" : ""}`}>
               <div className="chat-layout">
                 <div className="chat-messages">
+                  {/* 对话中自动调用的知识卡片 */}
+                  {kKnowledgeHits.length > 0 && (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                      <span style={{ fontSize: 11, color: "var(--muted2)", alignSelf: "center" }}>🧠 相关知识：</span>
+                      {kKnowledgeHits.map((hit, idx) => (
+                        <div key={idx} className="kcard" style={{ minWidth: 200, maxWidth: 260, padding: 10, cursor: "pointer" }}
+                          onClick={() => handleNav("memory")} title="点击查看知识卡片">
+                          <div className="kcard-title" style={{ fontSize: 13 }}>{hit.card.title}</div>
+                          <div className="kcard-summary" style={{ fontSize: 11 }}>{hit.card.summary || hit.card.content?.slice(0, 40)}</div>
+                          <div className="kcard-meta" style={{ fontSize: 9 }}>相似度 {(hit.score * 100).toFixed(0)}% · {hit.card.category}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {messages.map((m, i) => (
                     <div key={i} className={`msg-row ${m.role === "user" ? "user" : ""}`}>
                       {m.role === "assistant" && <div className="msg-avatar">薇</div>}
@@ -1853,37 +2000,145 @@ export default function App() {
               </div>
             </div>
 
-            {/* ============ 6. 记忆 (memory) ============ */}
+            {/* ============ 6. 知识卡片 (memory) ============ */}
             <div className={`screen ${nav === "memory" ? "active" : ""}`}>
               <div className="memory-layout">
-                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>记忆管理 — 艾薇记得的事情</div>
-                <div className="glass-card" style={{ padding: 14, marginBottom: 16 }}>
-                  <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-                    <input className="chat-input" style={{ flex: 1, height: 34 }} placeholder="搜索记忆..."
-                      value={memorySearchQuery} onChange={e => setMemorySearchQuery(e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter") handleSearchMemory(); }} />
-                    <button className="btn btn-approve" style={{ height: 34, padding: "0 14px" }} onClick={handleSearchMemory}>🔍 搜索</button>
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <input className="chat-input" style={{ flex: 1, height: 34 }} placeholder="添加新记忆..."
-                      value={memoryNewText} onChange={e => setMemoryNewText(e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter") handleAddMemory(); }} />
-                    <button className="btn btn-approve" style={{ height: 34, padding: "0 14px" }} onClick={handleAddMemory}>➕ 添加</button>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>🧠 知识卡片</div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "var(--muted2)" }}>
+                    <span>共 {kStats.total} 张 · 收藏 {kStats.favorites}</span>
+                    <button className="btn btn-skip" style={{ padding: "4px 10px", fontSize: 11 }} onClick={handleKBackup} title="备份全部卡片">💾 备份</button>
+                    <button className="btn btn-approve" style={{ padding: "4px 12px", fontSize: 12 }} onClick={() => { setKShowNew(true); setKEditForm({ title: "", summary: "", content: "", category: "其他", tags: "" }); }}>＋ 新建卡片</button>
                   </div>
                 </div>
-                {memoryLoading && <div style={{ fontSize: 12, color: "var(--muted)", padding: 20, textAlign: "center" }}>加载中...</div>}
-                {!memoryLoading && memories.length === 0 && <div style={{ fontSize: 12, color: "var(--muted)", padding: 20, textAlign: "center" }}>暂无记忆</div>}
-                {!memoryLoading && (
+
+                {/* 筛选与搜索栏 */}
+                <div className="glass-card" style={{ padding: 12, marginBottom: 14 }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <input className="chat-input" style={{ flex: 1, minWidth: 180, height: 34 }} placeholder="搜索知识卡片（标题/内容/标签）..."
+                      value={kSearch} onChange={e => setKSearch(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") handleKSearch(); }} />
+                    <button className="btn btn-approve" style={{ height: 34, padding: "0 14px" }} onClick={handleKSearch}>🔍 搜索</button>
+                    <select className="chat-input" style={{ height: 34, width: 130 }} value={kCategory} onChange={e => { setKCategory(e.target.value); }}>
+                      <option value="">全部分类</option>
+                      {kStats.categories.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <select className="chat-input" style={{ height: 34, width: 130 }} value={kTag} onChange={e => { setKTag(e.target.value); }}>
+                      <option value="">全部标签</option>
+                      {kStats.tags.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                    <select className="chat-input" style={{ height: 34, width: 120 }} value={kSort} onChange={e => { setKSort(e.target.value); }}>
+                      <option value="updated">按更新时间</option>
+                      <option value="created">按创建时间</option>
+                      <option value="favorite">按收藏优先</option>
+                      <option value="usage">按使用频率</option>
+                    </select>
+                    <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--muted2)", cursor: "pointer" }}>
+                      <input type="checkbox" checked={kFavOnly} onChange={e => setKFavOnly(e.target.checked)} /> 仅收藏
+                    </label>
+                  </div>
+                </div>
+
+                {/* 新建卡片表单 */}
+                {kShowNew && (
+                  <div className="glass-card" style={{ padding: 14, marginBottom: 14, border: "1px solid var(--accent)" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: "var(--accent)" }}>新建知识卡片</div>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <input className="chat-input" style={{ height: 34 }} placeholder="标题 *" value={kEditForm.title} onChange={e => setKEditForm(p => ({ ...p, title: e.target.value }))} />
+                      <input className="chat-input" style={{ height: 34 }} placeholder="摘要（一句话）" value={kEditForm.summary} onChange={e => setKEditForm(p => ({ ...p, summary: e.target.value }))} />
+                      <textarea className="chat-input" style={{ minHeight: 70, resize: "vertical" }} placeholder="详细内容" value={kEditForm.content} onChange={e => setKEditForm(p => ({ ...p, content: e.target.value }))} />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <select className="chat-input" style={{ height: 34, flex: 1 }} value={kEditForm.category} onChange={e => setKEditForm(p => ({ ...p, category: e.target.value }))}>
+                          {["其他", "个人偏好", "概念定义", "个人信息", "要点", "知识总结"].map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <input className="chat-input" style={{ height: 34, flex: 2 }} placeholder="标签（逗号分隔）" value={kEditForm.tags} onChange={e => setKEditForm(p => ({ ...p, tags: e.target.value }))} />
+                      </div>
+                      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                        <button className="btn btn-skip" style={{ padding: "6px 14px" }} onClick={() => setKShowNew(false)}>取消</button>
+                        <button className="btn btn-approve" style={{ padding: "6px 14px" }} onClick={handleKCreate}>创建</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 编辑卡片表单 */}
+                {kEditId && (() => {
+                  const card = kCards.find(c => c.id === kEditId);
+                  if (!card) return null;
+                  return (
+                    <div className="glass-card" style={{ padding: 14, marginBottom: 14, border: "1px solid var(--accent)" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: "var(--accent)" }}>编辑卡片（v{card.version}）</div>
+                      <div style={{ display: "grid", gap: 8 }}>
+                        <input className="chat-input" style={{ height: 34 }} value={kEditForm.title} onChange={e => setKEditForm(p => ({ ...p, title: e.target.value }))} />
+                        <input className="chat-input" style={{ height: 34 }} value={kEditForm.summary} onChange={e => setKEditForm(p => ({ ...p, summary: e.target.value }))} />
+                        <textarea className="chat-input" style={{ minHeight: 70 }} value={kEditForm.content} onChange={e => setKEditForm(p => ({ ...p, content: e.target.value }))} />
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <select className="chat-input" style={{ height: 34, flex: 1 }} value={kEditForm.category} onChange={e => setKEditForm(p => ({ ...p, category: e.target.value }))}>
+                            {["其他", "个人偏好", "概念定义", "个人信息", "要点", "知识总结"].map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                          <input className="chat-input" style={{ height: 34, flex: 2 }} value={kEditForm.tags} onChange={e => setKEditForm(p => ({ ...p, tags: e.target.value }))} />
+                        </div>
+                        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                          <button className="btn btn-skip" style={{ padding: "6px 14px" }} onClick={() => setKEditId(null)}>取消</button>
+                          <button className="btn btn-approve" style={{ padding: "6px 14px" }} onClick={() => handleKUpdate(card.id)}>保存</button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {kLoading && <div style={{ fontSize: 12, color: "var(--muted)", padding: 20, textAlign: "center" }}>加载知识卡片...</div>}
+                {!kLoading && kCards.length === 0 && (
+                  <div style={{ fontSize: 13, color: "var(--muted)", padding: 30, textAlign: "center" }}>
+                    暂无知识卡片。对话中会自动沉淀知识，或点击「＋ 新建卡片」手动创建。
+                  </div>
+                )}
+                {!kLoading && kCards.length > 0 && (
                   <div className="memory-grid stagger">
-                    {memories.map((m, i) => {
-                      const colors = getMemoryColor(m.category);
+                    {kCards.map(card => {
+                      const colors = getMemoryColor(card.category);
+                      const expanded = !!kExpanded[card.id];
+                      const related = kRelated[card.id] || [];
                       return (
-                        <div key={m.id || i} className="memory-card">
-                          <span className="memory-card-type" style={{ background: colors.bg, color: colors.color }}>{m.category || "未分类"}</span>
-                          <div className="memory-card-content">{m.text}</div>
-                          <div className="memory-card-time">
-                            {m.created_at || "未知时间"}
-                            {m.score !== undefined && <span style={{ marginLeft: 8, color: "var(--accent)" }}>相似度: {(m.score * 100).toFixed(0)}%</span>}
+                        <div key={card.id} className={`memory-card kcard ${card.favorite ? "fav" : ""}`} style={{ borderTop: `3px solid ${colors.color}` }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
+                            <span className="memory-card-type" style={{ background: colors.bg, color: colors.color }}>{card.category}</span>
+                            <div style={{ display: "flex", gap: 4 }}>
+                              <button className="kcard-btn" onClick={() => handleKFav(card.id)} title={card.favorite ? "取消收藏" : "收藏"}>{card.favorite ? "⭐" : "☆"}</button>
+                              <button className="kcard-btn" onClick={() => handleKEdit(card)} title="编辑">✏️</button>
+                              <button className="kcard-btn" onClick={() => handleKDelete(card.id, card.title)} title="删除">🗑️</button>
+                            </div>
+                          </div>
+                          <div className="kcard-title" onClick={() => handleKExpand(card)} style={{ cursor: "pointer" }}>{card.title}</div>
+                          {!expanded ? (
+                            <div className="kcard-summary">{card.summary || card.content?.slice(0, 60) || "（无摘要）"}</div>
+                          ) : (
+                            <div className="kcard-body">
+                              <div className="kcard-content">{card.content || "（无详细内容）"}</div>
+                              {card.tags.length > 0 && (
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
+                                  {card.tags.map(t => <span key={t} className="kcard-tag">{t}</span>)}
+                                </div>
+                              )}
+                              {related.length > 0 && (
+                                <div style={{ marginTop: 10, fontSize: 11, color: "var(--muted2)" }}>
+                                  🔗 关联：{related.map(r => (
+                                    <span key={r.id} style={{ color: "var(--accent)", cursor: "pointer", marginRight: 8 }} onClick={() => handleKExpand(r)}>{r.title}</span>
+                                  ))}
+                                </div>
+                              )}
+                              {card.versions.length > 0 && (
+                                <div style={{ marginTop: 10, fontSize: 11, color: "var(--muted2)" }}>
+                                  📜 历史 {card.versions.length} 个版本（当前 v{card.version}）
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          <div className="kcard-meta">
+                            <span>创建 {card.created_at?.slice(0, 16).replace("T", " ")}</span>
+                            <span>更新 {card.updated_at?.slice(0, 16).replace("T", " ")}</span>
+                            {card.usage > 0 && <span>调用 {card.usage} 次</span>}
+                            <span style={{ marginLeft: "auto" }}>{expanded ? "▾ 收起" : "▸ 展开"}</span>
                           </div>
                         </div>
                       );

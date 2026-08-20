@@ -84,6 +84,16 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "mem0_llm_model": "qwen2.5:7b",
         "auto_extract": True,        # 会话中自动抽取"记住"类事实
     },
+    # ---- 知识卡片系统（记忆管理升级）----
+    "knowledge": {
+        "enabled": True,
+        "store_path": "knowledge.jsonl",   # 卡片存储（相对 home）
+        "backup_dir": "knowledge_backups", # 备份目录
+        "auto_extract": True,              # 对话中自动沉淀知识（不阻塞）
+        "recall_in_chat": True,            # 对话中自动调用相似卡片
+        "recall_min_score": 0.05,          # 相似度下限
+        "dedup_threshold": 0.35,           # 相似即更新（去重）
+    },
     "ipc": {
         "transport": "auto",         # auto | tcp | named_pipe
         "host": "127.0.0.1",
