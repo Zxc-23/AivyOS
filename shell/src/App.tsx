@@ -712,6 +712,22 @@ export default function App() {
     }
   }, [bridgeReady, updateTrayState, showNotification]);
 
+  // 空格键 = 麦克风说话（push-to-talk 快捷键）
+  // 排除输入框/文本域聚焦时（避免打字时空格误触发语音）
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      const t = e.target as HTMLElement;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      e.preventDefault(); // 阻止页面滚动/按钮默认行为
+      if (!voiceLoading) {
+        void handleVoiceListen();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [handleVoiceListen, voiceLoading]);
+
   // ---- Task screen ----
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
@@ -1328,7 +1344,7 @@ export default function App() {
                   <button
                     onClick={handleVoiceListen}
                     disabled={voiceLoading}
-                    title="点击说话（按 Alt+V 快捷）"
+                    title="点击或按空格键说话（Alt+V 快捷）"
                     style={{
                       width: 80, height: 80,
                       borderRadius: "50%",
@@ -1355,7 +1371,7 @@ export default function App() {
                     {voiceListening ? "⏺" : (voiceLoading ? "⏳" : "🎙️")}
                   </button>
                   <div style={{ fontSize: 12, color: "var(--muted2)" }}>
-                    {voiceListening ? "正在聆听...请说话" : (voiceLoading ? "处理中..." : "点击麦克风说话")}
+                    {voiceListening ? "正在聆听...请说话" : (voiceLoading ? "处理中..." : "点击或按空格键说话")}
                   </div>
                 </div>
 
@@ -1372,7 +1388,7 @@ export default function App() {
                 )}
                 <div className="voice-hint">
                   {bridgeReady
-                    ? "点击麦克风 → 说话 → 自动识别并回复（唤醒词已启用：" + (voiceStatus?.wake_words?.join(", ") || "Aivy") + "）"
+                    ? "点击或按空格键 → 说话 → 自动识别并回复（唤醒词已启用：" + (voiceStatus?.wake_words?.join(", ") || "Aivy") + "）"
                     : "演示模式：连接 Python 核心后即可使用真实麦克风语音对话"}
                 </div>
                 {bridgeReady && (
