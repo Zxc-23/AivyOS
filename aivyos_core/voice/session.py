@@ -54,6 +54,10 @@ class VoiceSession:
         self._ptt_buffer = bytearray()
         self._ptt_task: Optional[asyncio.Task] = None
 
+        # 后端播放开关：Tauri 场景由前端 Web Audio 播放 wav_b64（可打断），
+        # 后端不应再播（避免双播 + 打断失效）；CLI/无前端场景保持 True。
+        self.backend_play = bool(voice_cfg.get("backend_play", True))
+
     def status(self) -> Dict[str, Any]:
         st = {
             "asr": self.asr.name,
@@ -155,10 +159,10 @@ class VoiceSession:
 
         if audio is not None:
             try:
-                # 后端播放仅 fire-and-forget，不等待完成
-                # 前端已通过 wav_b64 + Web Audio API 自行播放，后端播放为冗余
-                # 保留 fire-and-forget 兼容 CLI 无前端场景
-                self.sink.play(audio.pcm)
+                # 后端播放仅 fire-and-forget；Tauri 场景由前端 Web Audio 播放（可打断），
+                # backend_play=False 时后端不播（避免双播 + 打断失效）
+                if self.backend_play:
+                    self.sink.play(audio.pcm)
             except Exception:
                 pass
             playback_ms = 0.0  # 非阻塞，不计时
@@ -318,10 +322,10 @@ class VoiceSession:
 
         if audio is not None:
             try:
-                # 后端播放仅 fire-and-forget，不等待完成
-                # 前端已通过 wav_b64 + Web Audio API 自行播放，后端播放为冗余
-                # 保留 fire-and-forget 兼容 CLI 无前端场景
-                self.sink.play(audio.pcm)
+                # 后端播放仅 fire-and-forget；Tauri 场景由前端 Web Audio 播放（可打断），
+                # backend_play=False 时后端不播（避免双播 + 打断失效）
+                if self.backend_play:
+                    self.sink.play(audio.pcm)
             except Exception:
                 pass
             playback_ms = 0.0  # 非阻塞，不计时

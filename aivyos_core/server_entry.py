@@ -125,8 +125,17 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         nonlocal _voice_session
         if _voice_session is None:
             from aivyos_core.voice.session import VoiceSession
-            _voice_session = VoiceSession(cfg, engine)
+            # Tauri 场景：语音由前端 Web Audio 播放（可打断），后端不播（避免双播）
+            _voice_session = VoiceSession(_voice_cfg(), engine)
         return _voice_session
+
+    def _voice_cfg():
+        """VoiceSession 配置：Tauri 场景禁用后端播放（前端 Web Audio 唯一播放通道，可打断）。"""
+        import copy
+
+        vc = copy.deepcopy(cfg)
+        vc.setdefault("voice", {})["backend_play"] = False
+        return vc
 
     # ---- Scheduler (lazily created) ----
     _scheduler = None
@@ -1475,7 +1484,7 @@ async def amain(args) -> None:
         try:
             from aivyos_core.voice.session import VoiceSession
 
-            vs = VoiceSession(cfg, engine)
+            vs = VoiceSession(_voice_cfg(), engine)
             asr = getattr(vs, "asr", None)
             if asr is not None and hasattr(asr, "warmup") and getattr(asr, "name", "") not in ("mock-asr",):
                 log.info("启动预热 ASR 模型（%s）...", getattr(asr, "name", "?"))
