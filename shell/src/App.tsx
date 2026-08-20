@@ -2701,34 +2701,22 @@ export default function App() {
             {/* ============ 9. 模型管理 (models) ============ */}
             <div className={`screen ${nav === "models" ? "active" : ""}`}>
               <div className="models-screen">
-                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>模型管理 — 部署与路由</div>
-                <div style={{ fontSize: 11, color: "var(--muted2)", marginBottom: 12 }}>
-                  Phase 2: 成本追踪 · 断路器状态 · 健康仪表盘
-                </div>
-                {/* Tab nav */}
-                <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center", justifyContent: "space-between" }}>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    {([
-                      { id: "health", label: "健康仪表盘" },
-                      { id: "cost", label: "成本追踪" },
-                      { id: "list", label: "模型列表" },
-                    ] as const).map(tab => (
-                      <button
-                        key={tab.id}
-                        className={`btn ${modelsTab === tab.id ? "btn-approve" : "btn-skip"}`}
-                        style={{ fontSize: 11, padding: "4px 12px", opacity: modelsTab === tab.id ? 1 : 0.7 }}
-                        onClick={() => setModelsTab(tab.id)}
-                      >{tab.label}</button>
-                    ))}
+                {/* Header 状态栏 */}
+                <div className="models-header">
+                  <div>
+                    <h2>🧩 模型管理</h2>
+                    <div className="sub">
+                      {bridgeReady
+                        ? "模型部署 · 路由策略 · 成本与健康监控"
+                        : "演示模式 · 连接核心后显示真实状态"}
+                    </div>
                   </div>
                   {activeModelName && (
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <span style={{ fontSize: 11, color: "var(--accent)", fontWeight: 500 }}>
-                        🔒 锁定模型: {activeModelName}
-                      </span>
+                      <span className="models-lock-badge">🔒 锁定: {activeModelName}</span>
                       <button
                         className="btn btn-skip"
-                        style={{ fontSize: 10, padding: "2px 8px" }}
+                        style={{ fontSize: 10, padding: "4px 10px" }}
                         onClick={async () => {
                           if (!bridgeReady) return;
                           try {
@@ -2744,36 +2732,38 @@ export default function App() {
                   )}
                 </div>
 
+                {/* 卡片化 Tab 导航 */}
+                <div className="models-tabs">
+                  {([
+                    { id: "health", label: "🩺 健康仪表盘" },
+                    { id: "cost", label: "💰 成本追踪" },
+                    { id: "list", label: "📋 模型列表" },
+                  ] as const).map(tab => (
+                    <button
+                      key={tab.id}
+                      className={`models-tab ${modelsTab === tab.id ? "active" : ""}`}
+                      onClick={() => setModelsTab(tab.id)}
+                    >{tab.label}</button>
+                  ))}
+                </div>
+
                 {/* Tab: 健康仪表盘 */}
                 {modelsTab === "health" && modelHealth.length > 0 && (
-                  <div className="glass-card" style={{ padding: 12, marginBottom: 12 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: "var(--accent)", marginBottom: 8 }}>
-                      后端健康状态 ({modelHealth.length} 个)
+                  <div className="models-section">
+                    <div className="models-section-title">
+                      <h3>🩺 后端健康状态</h3>
+                      <span className="hint">{modelHealth.length} 个后端 · 断路器 + 可用性</span>
                     </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                    <div className="models-health-grid">
                       {modelHealth.map((h, i) => (
-                        <div key={i} style={{
-                          padding: 10, borderRadius: 8,
-                          background: h.available ? "rgba(16,185,129,0.08)" : "rgba(239,68,68,0.08)",
-                          border: `1px solid ${h.available ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.3)"}`,
-                        }}>
-                          <div style={{ fontSize: 12, fontWeight: 600 }}>{h.model}</div>
-                          <div style={{ fontSize: 10, color: "var(--muted2)", marginBottom: 4 }}>
-                            {h.provider} · {h.model}
-                          </div>
-                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                            <span style={{
-                              fontSize: 9, padding: "1px 6px", borderRadius: 3,
-                              background: h.breaker_state === "closed" ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
-                              color: h.breaker_state === "closed" ? "var(--success)" : "var(--danger)",
-                            }}>
+                        <div key={i} className={`models-health-card ${h.available ? "ok" : "bad"}`}>
+                          <div className="name">{h.model}</div>
+                          <div className="provider">{h.provider}</div>
+                          <div className="badges">
+                            <span className={`models-badge ${h.breaker_state === "closed" ? "ok" : "bad"}`}>
                               {h.breaker_state === "closed" ? "✓ 熔断关闭" : "⚠ 熔断打开"}
                             </span>
-                            <span style={{
-                              fontSize: 9, padding: "1px 6px", borderRadius: 3,
-                              background: h.available ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
-                              color: h.available ? "var(--success)" : "var(--danger)",
-                            }}>
+                            <span className={`models-badge ${h.available ? "ok" : "bad"}`}>
                               {h.available ? "已就绪" : "不可用"}
                             </span>
                           </div>
@@ -2783,97 +2773,94 @@ export default function App() {
                   </div>
                 )}
                 {modelsTab === "health" && modelHealth.length === 0 && !modelsLoading && (
-                  <div className="glass-card" style={{ padding: 20, textAlign: "center", color: "var(--muted)" }}>
-                    {bridgeReady ? "健康仪表盘加载中..." : "演示模式：连接核心后显示后端状态"}
+                  <div className="models-empty">
+                    <div className="big">🩺</div>
+                    {bridgeReady ? "健康数据加载中..." : "连接核心后显示后端状态"}
                   </div>
                 )}
 
                 {/* Tab: 成本追踪 */}
                 {modelsTab === "cost" && modelCost && (
                   <>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 12 }}>
-                      <div className="glass-card" style={{ padding: 10, textAlign: "center" }}>
-                        <div style={{ fontSize: 10, color: "var(--muted2)" }}>总请求</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: "var(--accent)" }}>{modelCost.total_requests}</div>
+                    <div className="models-stats">
+                      <div className="models-stat">
+                        <div className="label">总请求</div>
+                        <div className="value" style={{ color: "var(--accent)" }}>{modelCost.total_requests}</div>
                       </div>
-                      <div className="glass-card" style={{ padding: 10, textAlign: "center" }}>
-                        <div style={{ fontSize: 10, color: "var(--muted2)" }}>总 Token</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: "var(--accent2)" }}>{modelCost.total_tokens.toLocaleString()}</div>
+                      <div className="models-stat">
+                        <div className="label">总 Token</div>
+                        <div className="value" style={{ color: "var(--accent2)" }}>{modelCost.total_tokens.toLocaleString()}</div>
                       </div>
-                      <div className="glass-card" style={{ padding: 10, textAlign: "center" }}>
-                        <div style={{ fontSize: 10, color: "var(--muted2)" }}>总成本</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: "var(--warning)" }}>${modelCost.total_cost_usd.toFixed(4)}</div>
+                      <div className="models-stat">
+                        <div className="label">总成本</div>
+                        <div className="value" style={{ color: "var(--warning)" }}>${modelCost.total_cost_usd.toFixed(4)}</div>
                       </div>
-                      <div className="glass-card" style={{ padding: 10, textAlign: "center" }}>
-                        <div style={{ fontSize: 10, color: "var(--muted2)" }}>后端数</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: "var(--accent3)" }}>{modelCost.backend_count}</div>
+                      <div className="models-stat">
+                        <div className="label">后端数</div>
+                        <div className="value" style={{ color: "var(--accent3)" }}>{modelCost.backend_count}</div>
                       </div>
                     </div>
                     {Object.entries(modelCost.backends).length > 0 && (
-                      <div className="glass-card" style={{ padding: 12 }}>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--accent)", marginBottom: 8 }}>每后端成本明细</div>
-                        {Object.entries(modelCost.backends).map(([name, stats]) => (
-                          <div key={name} style={{
-                            display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 8,
-                            padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.04)", fontSize: 11,
-                          }}>
-                            <span style={{ color: "var(--ink)", fontWeight: 500 }}>{name}</span>
-                            <span style={{ color: "var(--muted2)" }}>请求: {stats.total_requests}</span>
-                            <span style={{ color: "var(--muted2)" }}>Token: {(stats.total_input_tokens + stats.total_output_tokens).toLocaleString()}</span>
-                            <span style={{ color: "var(--warning)" }}>${stats.total_cost_usd.toFixed(4)}</span>
-                          </div>
-                        ))}
+                      <div className="models-section" style={{ marginTop: 12 }}>
+                        <div className="models-section-title">
+                          <h3>📊 每后端成本明细</h3>
+                          <span className="hint">请求 · Token · 成本</span>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {Object.entries(modelCost.backends).map(([name, stats]) => (
+                            <div key={name} className="models-table-row" style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr" }}>
+                              <span className="row-title">{name}</span>
+                              <span style={{ color: "var(--muted2)" }}>请求: {stats.total_requests}</span>
+                              <span style={{ color: "var(--muted2)" }}>Token: {(stats.total_input_tokens + stats.total_output_tokens).toLocaleString()}</span>
+                              <span style={{ color: "var(--warning)", textAlign: "right" }}>${stats.total_cost_usd.toFixed(4)}</span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </>
                 )}
                 {modelsTab === "cost" && !modelCost && !modelsLoading && (
-                  <div className="glass-card" style={{ padding: 20, textAlign: "center", color: "var(--muted)" }}>
-                    {bridgeReady ? "成本追踪加载中..." : "演示模式：连接后显示成本统计"}
+                  <div className="models-empty">
+                    <div className="big">💰</div>
+                    {bridgeReady ? "成本数据加载中..." : "连接核心后显示成本统计"}
                   </div>
                 )}
 
-                {/* Tab: 模型列表 (原有逻辑) */}
+                {/* Tab: 模型列表 */}
                 {modelsTab === "list" && (
                   <>
                 {modelsLoading && <div style={{ fontSize: 12, color: "var(--muted)", padding: 20, textAlign: "center" }}>加载中...</div>}
-                {!modelsLoading && models.length === 0 && <div style={{ fontSize: 12, color: "var(--muted)", padding: 20, textAlign: "center" }}>暂无模型</div>}
-                {!modelsLoading && (
+                {!modelsLoading && models.length === 0 && (
+                  <div className="models-empty">
+                    <div className="big">📋</div>
+                    暂无模型 · 使用「添加新模型」接入提供商
+                  </div>
+                )}
+                {!modelsLoading && models.length > 0 && (
                   <div className="models-grid">
                     {models.map((m, i) => {
                       const meta = getModelIcon(m.mode, m.model);
                       const tags = getModelTags(m.mode, m.available);
+                      const isActive = activeModelName === m.model;
                       return (
-                        <div key={i} className="glass-card model-card" style={{ padding: 16 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                            <div style={{
-                              width: 44, height: 44, borderRadius: 10,
-                              background: meta.iconBg, display: "flex",
-                              alignItems: "center", justifyContent: "center", fontSize: 22,
-                            }}>{meta.icon}</div>
-                            <div>
-                              <div style={{ fontSize: 14, fontWeight: 600 }}>{m.model}</div>
-                              <div style={{ fontSize: 11, color: "var(--muted2)" }}>{meta.desc}</div>
+                        <div key={i} className={`glass-card model-card ${isActive ? "active" : ""}`} style={{ padding: 14 }}>
+                          <div className="model-head">
+                            <div className="model-icon" style={{ background: meta.iconBg }}>{meta.icon}</div>
+                            <div style={{ minWidth: 0 }}>
+                              <div className="model-title">{m.model}</div>
+                              <div className="model-desc">{meta.desc}</div>
                             </div>
                           </div>
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                          <div className="model-tags">
                             {tags.map((t, j) => (
-                              <span key={j} style={{
-                                fontSize: 10, padding: "2px 8px", borderRadius: 4,
-                                background: `${t.color}22`, color: t.color,
-                              }}>{t.text}</span>
+                              <span key={j} className="models-badge" style={{ background: `${t.color}22`, color: t.color }}>{t.text}</span>
                             ))}
+                            {isActive && <span className="models-badge ok">✓ 当前使用中</span>}
                           </div>
-                          <div style={{ display: "flex", gap: 6 }}>
+                          <div className="model-actions">
                             <button
-                              className={`btn ${activeModelName === m.model ? "btn-approve" : "btn-skip"}`}
-                              style={{
-                                flex: 1, fontSize: 11, padding: "4px",
-                                opacity: activeModelName === m.model ? 1 : 0.6,
-                                border: activeModelName === m.model ? "1px solid var(--accent)" : "1px solid transparent",
-                                boxShadow: activeModelName === m.model ? "0 0 12px rgba(108,140,255,0.4)" : "none",
-                                fontWeight: activeModelName === m.model ? 700 : 400,
-                              }}
+                              className={`btn ${isActive ? "btn-approve" : "btn-skip"}`}
                               onClick={async () => {
                                 if (!bridgeReady) { showNotification("演示模式", "连接核心后才能切换模型", "warning"); return; }
                                 try {
@@ -2889,9 +2876,9 @@ export default function App() {
                                 }
                               }}
                             >
-                              {activeModelName === m.model ? "✓ 当前使用中" : (m.available ? "切换到此模型" : "连接模型")}
+                              {isActive ? "使用中" : (m.available ? "切换到此模型" : "连接模型")}
                             </button>
-                            <button className="btn btn-skip" style={{ fontSize: 11, padding: "4px 10px", opacity: activeModelName === m.model ? 0.8 : 1 }}>配置</button>
+                            <button className="btn btn-skip" style={{ opacity: isActive ? 0.7 : 1 }}>配置</button>
                           </div>
                         </div>
                       );
@@ -2902,15 +2889,16 @@ export default function App() {
                 )}
 
                 {/* ============ API Key 管理 ============ */}
-                <div className="glass-card" style={{ padding: 14, marginBottom: 12 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent)", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span>API Key 管理</span>
-                    <span style={{ fontSize: 10, color: "var(--muted2)" }}>
+                <div className="models-section">
+                  <div className="models-section-title">
+                    <h3>🔑 API Key 管理</h3>
+                    <span className="hint">
                       已配置 {Object.values(apiKeys).filter(k => k.has_key).length} / {Object.keys(apiKeys).length || catalog.length} 个 · 持久化存储
                     </span>
                   </div>
                   {Object.keys(apiKeys).length === 0 && catalog.length === 0 && (
-                    <div style={{ fontSize: 11, color: "var(--muted2)", padding: 10, textAlign: "center" }}>
+                    <div className="models-empty">
+                      <div className="big">🔑</div>
                       {bridgeReady ? "加载中..." : "演示模式：连接核心后显示 API Key 配置"}
                     </div>
                   )}
@@ -2923,118 +2911,88 @@ export default function App() {
                         const maskedPreview = keyEntry?.masked_preview || "";
                         const isEditingKey = editingKeyEnv === (provider.api_key_env || provider.id);
                         return (
-                          <div key={provider.id} style={{
-                            display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: 8,
-                            alignItems: "center", padding: "8px 10px",
-                            background: hasKey ? "rgba(16,185,129,0.08)" : "rgba(0,0,0,0.15)",
-                            borderRadius: 6,
-                            border: hasKey ? "1px solid rgba(16,185,129,0.3)" : "1px solid rgba(255,255,255,0.04)",
-                          }}>
-                            <div>
-                              <div style={{ fontSize: 12, fontWeight: 500 }}>{provider.name}</div>
-                              <div style={{ fontSize: 10, color: "var(--muted2)" }}>
+                          <div key={provider.id} className={`models-table-row ${hasKey ? "key-ok" : ""}`} style={{ gridTemplateColumns: "2fr auto 1fr auto" }}>
+                            <div className="row-main">
+                              <div className="row-title">{provider.name}</div>
+                              <div className="row-sub">
                                 {provider.id} · {provider.base_url}
                                 {hasKey && maskedPreview && (
-                                  <span style={{ color: "var(--accent)", marginLeft: 6 }}>
-                                    🔑 {maskedPreview}
-                                  </span>
+                                  <span style={{ color: "var(--accent)", marginLeft: 6 }}>🔑 {maskedPreview}</span>
                                 )}
                               </div>
                             </div>
-                            <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-                              <span style={{
-                                fontSize: 10, padding: "2px 6px", borderRadius: 3,
-                                background: hasKey ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
-                                color: hasKey ? "var(--success)" : "var(--danger)",
-                              }}>
+                            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                              <span className={`models-badge ${hasKey ? "ok" : "bad"}`}>
                                 {hasKey ? `已配置 (${keyLen}位)` : "未配置"}
                               </span>
                               {hasKey && keyEntry?.source === "env" && (
-                                <span style={{ fontSize: 9, color: "#f59e0b", marginTop: 2 }}>环境变量</span>
+                                <span style={{ fontSize: 9, color: "#f59e0b" }}>环境变量</span>
                               )}
                             </div>
-                            <span style={{ fontSize: 10, color: "var(--muted2)" }}>
-                              {provider.default_model}
-                            </span>
-                            <div style={{ display: "flex", gap: 4 }}>
+                            <span style={{ fontSize: 10, color: "var(--muted2)", textAlign: "center" }}>{provider.default_model}</span>
+                            <div className="row-actions">
                               {hasKey && !isEditingKey ? (
                                 <>
-                                  <button
-                                    className="btn btn-approve"
-                                    style={{ fontSize: 10, padding: "3px 8px" }}
-                                    onClick={() => setEditingKeyEnv(provider.api_key_env || provider.id)}
-                                  >编辑</button>
-                                  <button
-                                    className="btn btn-skip"
-                                    style={{ fontSize: 10, padding: "3px 8px" }}
-                                    onClick={async () => {
-                                      const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
-                                      const val = prompt(`重新输入 ${provider.name} API Key (留空保持不变)`, "");
-                                      if (!val) return;
-                                      try {
-                                        const result = await setApiKey(provider.id, envVar, val, provider.id);
-                                        if (result.ok) {
-                                          showNotification("API Key 已更新", `${provider.name} · ${result.masked_preview}`, "success");
-                                          const keys = await listApiKeys();
-                                          setApiKeys(keys.api_keys || {});
-                                          apiKeyStorage.save(keys.api_keys || {});
-                                        } else {
-                                          showNotification("更新失败", result.error || "未知错误", "danger");
-                                        }
-                                      } catch (e) {
-                                        showNotification("设置失败", e instanceof Error ? e.message : String(e), "danger");
-                                      }
-                                    }}
-                                  >重生成</button>
-                                  <button
-                                    className="btn btn-skip"
-                                    style={{ fontSize: 10, padding: "3px 8px", background: "rgba(239,68,68,0.15)" }}
-                                    onClick={async () => {
-                                      const confirmed = confirm(`确定要删除 ${provider.name} 的 API Key 吗？`);
-                                      if (!confirmed) return;
-                                      try {
-                                        const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
-                                        const result = await removeApiKey(provider.id, envVar);
-                                        if (result.ok) {
-                                          showNotification("API Key 已删除", `${provider.name}`, "success");
-                                          const keys = await listApiKeys();
-                                          setApiKeys(keys.api_keys || {});
-                                          apiKeyStorage.save(keys.api_keys || {});
-                                        }
-                                      } catch (e) {
-                                        showNotification("删除失败", e instanceof Error ? e.message : String(e), "danger");
-                                      }
-                                    }}
-                                  >删除</button>
-                                </>
-                              ) : (
-                                <button
-                                  className="btn btn-approve"
-                                  style={{ fontSize: 10, padding: "3px 8px" }}
-                                  onClick={async () => {
-                                    const val = prompt(`输入 ${provider.name} API Key`, "");
-                                    if (!val) { setEditingKeyEnv(""); return; }
+                                  <button className="btn btn-approve" onClick={() => setEditingKeyEnv(provider.api_key_env || provider.id)}>编辑</button>
+                                  <button className="btn btn-skip" onClick={async () => {
                                     const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
+                                    const val = prompt(`重新输入 ${provider.name} API Key (留空保持不变)`, "");
+                                    if (!val) return;
                                     try {
                                       const result = await setApiKey(provider.id, envVar, val, provider.id);
                                       if (result.ok) {
-                                        showNotification(
-                                          hasKey ? "API Key 已更新" : "API Key 已保存",
-                                          `${provider.name} · ${result.masked_preview}${result.removed ? " (已清除)" : ""}`,
-                                          "success"
-                                        );
+                                        showNotification("API Key 已更新", `${provider.name} · ${result.masked_preview}`, "success");
                                         const keys = await listApiKeys();
                                         setApiKeys(keys.api_keys || {});
                                         apiKeyStorage.save(keys.api_keys || {});
                                       } else {
-                                        showNotification("设置失败", result.error || "未知错误", "danger");
+                                        showNotification("更新失败", result.error || "未知错误", "danger");
                                       }
                                     } catch (e) {
                                       showNotification("设置失败", e instanceof Error ? e.message : String(e), "danger");
                                     }
-                                    setEditingKeyEnv("");
-                                  }}
-                                >{hasKey ? "保存" : "设置"}</button>
+                                  }}>重生成</button>
+                                  <button className="btn btn-skip" style={{ background: "rgba(239,68,68,0.15)" }} onClick={async () => {
+                                    const confirmed = confirm(`确定要删除 ${provider.name} 的 API Key 吗？`);
+                                    if (!confirmed) return;
+                                    try {
+                                      const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
+                                      const result = await removeApiKey(provider.id, envVar);
+                                      if (result.ok) {
+                                        showNotification("API Key 已删除", `${provider.name}`, "success");
+                                        const keys = await listApiKeys();
+                                        setApiKeys(keys.api_keys || {});
+                                        apiKeyStorage.save(keys.api_keys || {});
+                                      }
+                                    } catch (e) {
+                                      showNotification("删除失败", e instanceof Error ? e.message : String(e), "danger");
+                                    }
+                                  }}>删除</button>
+                                </>
+                              ) : (
+                                <button className="btn btn-approve" onClick={async () => {
+                                  const val = prompt(`输入 ${provider.name} API Key`, "");
+                                  if (!val) { setEditingKeyEnv(""); return; }
+                                  const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
+                                  try {
+                                    const result = await setApiKey(provider.id, envVar, val, provider.id);
+                                    if (result.ok) {
+                                      showNotification(
+                                        hasKey ? "API Key 已更新" : "API Key 已保存",
+                                        `${provider.name} · ${result.masked_preview}${result.removed ? " (已清除)" : ""}`,
+                                        "success"
+                                      );
+                                      const keys = await listApiKeys();
+                                      setApiKeys(keys.api_keys || {});
+                                      apiKeyStorage.save(keys.api_keys || {});
+                                    } else {
+                                      showNotification("设置失败", result.error || "未知错误", "danger");
+                                    }
+                                  } catch (e) {
+                                    showNotification("设置失败", e instanceof Error ? e.message : String(e), "danger");
+                                  }
+                                  setEditingKeyEnv("");
+                                }}>{hasKey ? "保存" : "设置"}</button>
                               )}
                             </div>
                           </div>
@@ -3043,50 +3001,40 @@ export default function App() {
                       {catalog.length === 0 && Object.keys(apiKeys).length > 0 && (
                         <>
                           {Object.entries(apiKeys).map(([envVar, entry]) => (
-                            <div key={envVar} style={{
-                              display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: 8,
-                              alignItems: "center", padding: "8px 10px",
-                              background: entry.has_key ? "rgba(16,185,129,0.08)" : "rgba(0,0,0,0.15)",
-                              borderRadius: 6,
-                            }}>
-                              <div>
-                                <div style={{ fontSize: 12, fontWeight: 500 }}>{envVar}</div>
-                                <div style={{ fontSize: 10, color: "var(--muted2)" }}>
+                            <div key={envVar} className={`models-table-row ${entry.has_key ? "key-ok" : ""}`} style={{ gridTemplateColumns: "2fr auto 1fr auto" }}>
+                              <div className="row-main">
+                                <div className="row-title">{envVar}</div>
+                                <div className="row-sub">
                                   {entry.provider || "自定义"} · {entry.source === "env" ? "环境变量" : "持久化存储"}
                                   {entry.has_key && entry.masked_preview && (
                                     <span style={{ color: "var(--accent)", marginLeft: 6 }}>🔑 {entry.masked_preview}</span>
                                   )}
                                 </div>
                               </div>
-                              <span style={{
-                                fontSize: 10, padding: "2px 6px", borderRadius: 3,
-                                background: entry.has_key ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
-                                color: entry.has_key ? "var(--success)" : "var(--danger)",
-                              }}>
+                              <span className={`models-badge ${entry.has_key ? "ok" : "bad"}`}>
                                 {entry.has_key ? `已配置 (${entry.key_length}位)` : "未配置"}
                               </span>
                               <span></span>
-                              <div style={{ display: "flex", gap: 4 }}>
-                                <button className="btn btn-approve" style={{ fontSize: 10, padding: "3px 8px" }}
-                                  onClick={async () => {
-                                    try {
-                                      const val = prompt(`输入 ${envVar}`, "");
-                                      if (!val) return;
-                                      const providerId = entry.provider || envVar.toLowerCase().replace("api_key_", "");
-                                      const result = await setApiKey(providerId, envVar, val, providerId);
-                                      if (result.ok) {
-                                        showNotification("API Key 已更新", `${envVar} · ${result.masked_preview}`, "success");
-                                        const keys = await listApiKeys();
-                                        setApiKeys(keys.api_keys || {});
-                                        apiKeyStorage.save(keys.api_keys || {});
-                                      } else {
-                                        showNotification("设置失败", result.error || "未知错误", "danger");
-                                      }
-                                    } catch (e) { showNotification("设置失败", e instanceof Error ? e.message : String(e), "danger"); }
-                                  }}
+                              <div className="row-actions">
+                                <button className="btn btn-approve" onClick={async () => {
+                                  try {
+                                    const val = prompt(`输入 ${envVar}`, "");
+                                    if (!val) return;
+                                    const providerId = entry.provider || envVar.toLowerCase().replace("api_key_", "");
+                                    const result = await setApiKey(providerId, envVar, val, providerId);
+                                    if (result.ok) {
+                                      showNotification("API Key 已更新", `${envVar} · ${result.masked_preview}`, "success");
+                                      const keys = await listApiKeys();
+                                      setApiKeys(keys.api_keys || {});
+                                      apiKeyStorage.save(keys.api_keys || {});
+                                    } else {
+                                      showNotification("设置失败", result.error || "未知错误", "danger");
+                                    }
+                                  } catch (e) { showNotification("设置失败", e instanceof Error ? e.message : String(e), "danger"); }
+                                }}
                                 >设置</button>
                                 {entry.has_key && (
-                                  <button className="btn btn-skip" style={{ fontSize: 10, padding: "3px 8px", background: "rgba(239,68,68,0.15)" }}
+                                  <button className="btn btn-skip" style={{ background: "rgba(239,68,68,0.15)" }}
                                     onClick={async () => {
                                       const confirmed = confirm(`确定要删除 ${envVar} 吗？`);
                                       if (!confirmed) return;
@@ -3113,12 +3061,12 @@ export default function App() {
                 </div>
 
                 {/* ============ 添加模型对话框 ============ */}
-                <div className="glass-card" style={{ padding: 14, marginBottom: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent)" }}>添加新模型</div>
+                <div className="models-section">
+                  <div className="models-section-title">
+                    <h3>➕ 添加新模型</h3>
                     <button
                       className={`btn ${showAddModelDialog ? "btn-skip" : "btn-approve"}`}
-                      style={{ fontSize: 11, padding: "3px 10px" }}
+                      style={{ fontSize: 11, padding: "4px 12px" }}
                       onClick={() => {
                         if (showAddModelDialog) resetAddModelDialog();
                         setShowAddModelDialog(!showAddModelDialog);
@@ -3128,10 +3076,10 @@ export default function App() {
                   {showAddModelDialog && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {/* 服务商选择 */}
-                      <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 6, alignItems: "center" }}>
-                        <label style={{ fontSize: 11, color: "var(--muted)" }}>提供商</label>
+                      <div className="models-form-row">
+                        <label>提供商</label>
                         <select
-                          className="chat-input" style={{ height: 30 }}
+                          className="chat-input"
                           value={addModelProvider}
                           onChange={e => handleProviderChange(e.target.value)}
                         >
@@ -3143,10 +3091,10 @@ export default function App() {
                       </div>
 
                       {/* Base URL */}
-                      <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 6, alignItems: "center" }}>
-                        <label style={{ fontSize: 11, color: "var(--muted)" }}>Base URL</label>
+                      <div className="models-form-row">
+                        <label>Base URL</label>
                         <input
-                          className="chat-input" style={{ height: 30 }}
+                          className="chat-input"
                           placeholder={addModelProvider ? "自动填充，可修改" : "选择提供商后自动填充"}
                           value={addModelBaseUrl}
                           onChange={e => setAddModelBaseUrl(e.target.value)}
@@ -3154,11 +3102,11 @@ export default function App() {
                       </div>
 
                       {/* API Key + 注册链接 */}
-                      <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 6, alignItems: "center" }}>
-                        <label style={{ fontSize: 11, color: "var(--muted)" }}>API Key</label>
+                      <div className="models-form-row">
+                        <label>API Key</label>
                         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                           <input
-                            className="chat-input" style={{ height: 30, flex: 1 }}
+                            className="chat-input" style={{ flex: 1 }}
                             type="password"
                             placeholder={addModelProvider ? "输入 API Key" : "选择提供商后输入"}
                             value={addModelApiKey}
@@ -3174,9 +3122,9 @@ export default function App() {
                       </div>
 
                       {/* 测试连接 */}
-                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <button
-                          className="btn" style={{ fontSize: 11, padding: "4px 12px", borderColor: "var(--border)", background: "var(--bg3)" }}
+                          className="btn" style={{ fontSize: 11, padding: "5px 14px", borderColor: "var(--border)", background: "var(--bg3)" }}
                           disabled={!addModelProvider || !addModelApiKey || !addModelBaseUrl || addModelTesting}
                           onClick={handleTestConnection}
                         >
@@ -3184,11 +3132,11 @@ export default function App() {
                         </button>
                         {addModelTestResult && (
                           addModelTestResult.ok ? (
-                            <span style={{ fontSize: 10, color: "var(--success)" }}>
+                            <span style={{ fontSize: 11, color: "var(--success)" }}>
                               ✓ 连接成功 · 发现 {addModelTestResult.model_count} 个模型
                             </span>
                           ) : (
-                            <span style={{ fontSize: 10, color: "var(--danger)" }}>
+                            <span style={{ fontSize: 11, color: "var(--danger)" }}>
                               ✗ {addModelTestResult.error}
                             </span>
                           )
@@ -3197,11 +3145,11 @@ export default function App() {
 
                       {/* 选择模型 - 仅在连接成功或有预设模型时显示 */}
                       {(addModelTestResult?.ok || addModelPresetModels) && (
-                        <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 6, alignItems: "center" }}>
-                          <label style={{ fontSize: 11, color: "var(--muted)" }}>选择模型</label>
+                        <div className="models-form-row">
+                          <label>选择模型</label>
                           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                             <input
-                              className="chat-input" style={{ height: 30, flex: 1 }}
+                              className="chat-input" style={{ flex: 1 }}
                               placeholder={addModelFetchingModels ? "加载模型列表..." : "可手动输入或从下拉选择"}
                               value={addModelName}
                               onChange={e => setAddModelName(e.target.value)}
@@ -3232,25 +3180,22 @@ export default function App() {
 
                       {/* 高级配置 - 折叠 */}
                       {addModelProvider && (
-                        <details style={{ marginTop: 4 }}>
-                          <summary style={{ fontSize: 11, color: "var(--muted)", cursor: "pointer", padding: "4px 0" }}>
-                            高级配置（API 类型、上下文窗口、输入类型等）
-                          </summary>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "6px 0", borderTop: "1px solid var(--border)", marginTop: 4 }}>
+                        <details className="models-advanced">
+                          <summary>高级配置（API 类型、上下文窗口、输入类型等）</summary>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "8px 0" }}>
                             {/* API 类型 */}
-                            <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 6, alignItems: "center" }}>
-                              <label style={{ fontSize: 11, color: "var(--muted)" }}>API 类型</label>
-                              <div style={{ display: "flex", gap: 10, fontSize: 11 }}>
+                            <div className="models-form-row">
+                              <label>API 类型</label>
+                              <div className="models-radio-row">
                                 {[
                                   { v: "chat_completions", l: "Chat Completions" },
                                   { v: "responses_api", l: "Responses API" },
                                   { v: "anthropic_messages", l: "Anthropic Messages" },
                                 ].map(opt => (
-                                  <label key={opt.v} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                                  <label key={opt.v}>
                                     <input type="radio" name="apiType" value={opt.v}
                                       checked={addModelApiType === opt.v}
                                       onChange={() => setAddModelApiType(opt.v)}
-                                      style={{ accentColor: "var(--accent)" }}
                                     />{opt.l}
                                   </label>
                                 ))}
@@ -3258,32 +3203,30 @@ export default function App() {
                             </div>
 
                             {/* 思考模式 */}
-                            <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 6, alignItems: "center" }}>
-                              <label style={{ fontSize: 11, color: "var(--muted)" }}>思考模式</label>
+                            <div className="models-form-row">
+                              <label>思考模式</label>
                               <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 11 }}>
                                 <input type="checkbox"
                                   checked={addModelThinking}
                                   onChange={e => setAddModelThinking(e.target.checked)}
-                                  style={{ accentColor: "var(--accent)" }}
                                 />
                                 开启思考模式（Reasoning/Thinking）
                               </label>
                             </div>
 
                             {/* 输入类型 */}
-                            <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 6, alignItems: "center" }}>
-                              <label style={{ fontSize: 11, color: "var(--muted)" }}>输入类型</label>
-                              <div style={{ display: "flex", gap: 12, fontSize: 11 }}>
+                            <div className="models-form-row">
+                              <label>输入类型</label>
+                              <div className="models-radio-row">
                                 {[
                                   { k: "text", l: "文本", v: addModelInputText, s: setAddModelInputText },
                                   { k: "image", l: "图像", v: addModelInputImage, s: setAddModelInputImage },
                                   { k: "audio", l: "音频", v: addModelInputAudio, s: setAddModelInputAudio },
                                   { k: "video", l: "视频", v: addModelInputVideo, s: setAddModelInputVideo },
                                 ].map(item => (
-                                  <label key={item.k} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                                  <label key={item.k}>
                                     <input type="checkbox" checked={item.v}
                                       onChange={e => item.s(e.target.checked)}
-                                      style={{ accentColor: "var(--accent)" }}
                                     />{item.l}
                                   </label>
                                 ))}
@@ -3291,8 +3234,8 @@ export default function App() {
                             </div>
 
                             {/* 上下文窗口 + 最大输出 */}
-                            <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 6, alignItems: "center" }}>
-                              <label style={{ fontSize: 11, color: "var(--muted)" }}>上下文/输出</label>
+                            <div className="models-form-row">
+                              <label>上下文/输出</label>
                               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                                 <label style={{ fontSize: 10, color: "var(--muted2)" }}>窗口</label>
                                 <input type="number" className="chat-input" style={{ height: 28, width: 90 }}
@@ -3311,10 +3254,10 @@ export default function App() {
                       )}
 
                       {/* 保存按钮 */}
-                      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+                      <div className="models-form-actions">
                         <button
                           className="btn btn-approve"
-                          style={{ fontSize: 11, padding: "5px 16px" }}
+                          style={{ fontSize: 11, padding: "6px 18px" }}
                           disabled={!addModelProvider || !addModelName}
                           onClick={async () => {
                             if (!addModelProvider || !addModelName) return;
@@ -3333,7 +3276,7 @@ export default function App() {
                           }}
                         >保存</button>
                       </div>
-                      <div style={{ fontSize: 10, color: "var(--muted2)" }}>
+                      <div className="models-form-hint">
                         选择提供商后自动关联 Base URL，测试连接可验证 API Key 并获取可用模型列表
                       </div>
                     </div>
@@ -3341,12 +3284,12 @@ export default function App() {
                 </div>
 
                 {/* ============ 语音引擎仪表盘 ============ */}
-                <div className="glass-card" style={{ padding: 14 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent)" }}>语音引擎仪表盘</div>
+                <div className="models-section">
+                  <div className="models-section-title">
+                    <h3>🎙️ 语音引擎仪表盘</h3>
                     <button
                       className="btn btn-approve"
-                      style={{ fontSize: 10, padding: "3px 10px" }}
+                      style={{ fontSize: 10, padding: "4px 12px" }}
                       onClick={async () => {
                         try {
                           const eng = await getVoiceEngines();
@@ -3357,40 +3300,37 @@ export default function App() {
                   </div>
                   {voiceEngines ? (
                     <>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 10 }}>
-                        <div style={{ padding: 10, borderRadius: 8, background: "rgba(59,130,246,0.1)", textAlign: "center" }}>
-                          <div style={{ fontSize: 10, color: "var(--muted2)" }}>ASR 引擎</div>
-                          <div style={{ fontSize: 18, fontWeight: 700, color: "var(--accent)" }}>{voiceEngines.asr_count ?? 0}</div>
+                      <div className="models-stats" style={{ marginBottom: 12 }}>
+                        <div className="models-stat">
+                          <div className="label">ASR 引擎</div>
+                          <div className="value" style={{ color: "var(--accent)" }}>{voiceEngines.asr_count ?? 0}</div>
                         </div>
-                        <div style={{ padding: 10, borderRadius: 8, background: "rgba(139,92,246,0.1)", textAlign: "center" }}>
-                          <div style={{ fontSize: 10, color: "var(--muted2)" }}>TTS 引擎</div>
-                          <div style={{ fontSize: 18, fontWeight: 700, color: "var(--accent3)" }}>{voiceEngines.tts_count ?? 0}</div>
+                        <div className="models-stat">
+                          <div className="label">TTS 引擎</div>
+                          <div className="value" style={{ color: "var(--accent3)" }}>{voiceEngines.tts_count ?? 0}</div>
                         </div>
-                        <div style={{ padding: 10, borderRadius: 8, background: "rgba(16,185,129,0.1)", textAlign: "center" }}>
-                          <div style={{ fontSize: 10, color: "var(--muted2)" }}>引擎总数</div>
-                          <div style={{ fontSize: 18, fontWeight: 700, color: "var(--success)" }}>{voiceEngines.total_engines ?? 0}</div>
+                        <div className="models-stat">
+                          <div className="label">引擎总数</div>
+                          <div className="value" style={{ color: "var(--success)" }}>{voiceEngines.total_engines ?? 0}</div>
                         </div>
                       </div>
                       {voiceEngines.engines && voiceEngines.engines.length > 0 && (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                           {voiceEngines.engines.map((eng: any, i: number) => (
-                            <div key={i} style={{
-                              display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8,
-                              padding: "6px 10px", background: "rgba(0,0,0,0.15)", borderRadius: 6,
-                              fontSize: 11,
-                            }}>
-                              <span style={{ color: "var(--ink)", fontWeight: 500 }}>{eng.name || eng.id || "未知引擎"}</span>
+                            <div key={i} className="models-table-row" style={{ gridTemplateColumns: "2fr 1fr 1fr" }}>
+                              <span className="row-title">{eng.name || eng.id || "未知引擎"}</span>
                               <span style={{ color: "var(--muted2)" }}>{eng.type || eng.role || "N/A"}</span>
-                              <span style={{
-                                color: eng.available ? "var(--success)" : "var(--danger)"
-                              }}>{eng.available ? "✓ 就绪" : "⚠ 不可用"}</span>
+                              <span className={`models-badge ${eng.available ? "ok" : "bad"}`} style={{ justifySelf: "start" }}>
+                                {eng.available ? "✓ 就绪" : "⚠ 不可用"}
+                              </span>
                             </div>
                           ))}
                         </div>
                       )}
                     </>
                   ) : (
-                    <div style={{ fontSize: 11, color: "var(--muted2)", padding: 10, textAlign: "center" }}>
+                    <div className="models-empty">
+                      <div className="big">🎙️</div>
                       {bridgeReady ? "点击刷新加载引擎状态" : "演示模式：连接核心后显示语音引擎"}
                     </div>
                   )}
