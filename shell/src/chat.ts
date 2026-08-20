@@ -64,6 +64,13 @@ export interface VoiceTurnResult {
   error_detail?: string;
   source?: string;
   wake?: boolean;
+  breakdown_ms?: {
+    asr: number;
+    llm: number;
+    tts: number;
+    playback: number;
+    total: number;
+  };
 }
 
 export interface TaskInfo {
@@ -118,8 +125,18 @@ export interface VoiceSettings {
   asr_model: string;
   tts_backend: string;
   tts_model: string;
+  tts_voice?: string;
+  tts_speed?: number;
+  tts_resource_id?: string;
   language: string;
   silence_timeout_s: number;
+}
+
+export interface ApplyVoiceTtsResult {
+  ok: boolean;
+  backend?: string;
+  message?: string;
+  error?: string;
 }
 
 /** 是否运行在 Tauri WebView 内 */
@@ -172,6 +189,7 @@ const MOCK_DATA: Record<string, any> = {
   },
   "models.api-key.set": { ok: true },
   "models.api-key.remove": { ok: true },
+  "voiceset.apply-tts": { ok: true, backend: "cloud-tts", message: "TTS 已切换到 cloud-tts" },
   "voice.engines": {
     total_engines: 3,
     asr_count: 1,
@@ -461,6 +479,20 @@ export async function setVoiceSettings(
   return bridgeCall("voiceset.set", { field, value });
 }
 
+export async function applyVoiceTts(
+  provider: string,
+  voice: string,
+  speed: number,
+  apiKey?: string,
+  resourceId?: string,
+): Promise<ApplyVoiceTtsResult> {
+  return bridgeCall("voiceset.apply-tts", {
+    provider, voice, speed,
+    api_key: apiKey || "",
+    resource_id: resourceId || "",
+  });
+}
+
 // ================================================================
 //  Model Management
 // ================================================================
@@ -570,6 +602,28 @@ export interface ApiKeyEntry {
   env_var: string;
   has_key: boolean;
   key_length: number;
+  masked_preview?: string;
+  provider?: string;
+  source?: string;
+  updated_at?: number;
+}
+
+export interface SetApiKeyResult {
+  ok: boolean;
+  env_var?: string;
+  provider?: string;
+  key_length?: number;
+  masked_preview?: string;
+  error?: string;
+  removed?: boolean;
+}
+
+export interface RemoveApiKeyResult {
+  ok: boolean;
+  env_var?: string;
+  was_in_cache?: boolean;
+  was_in_env?: boolean;
+  error?: string;
 }
 
 export async function getModelCatalog(keyword?: string): Promise<any> {
@@ -584,16 +638,52 @@ export async function setApiKey(
   field: string,
   env_var: string,
   value: string,
-): Promise<{ ok: boolean; field: string; env_var: string }> {
-  return bridgeCall("models.api-key.set", { field, env_var, value });
+  provider?: string,
+): Promise<SetApiKeyResult> {
+  return bridgeCall("models.api-key.set", { field, env_var, value, provider: provider || "" });
 }
 
 export async function removeApiKey(
   field: string,
   env_var: string,
-): Promise<{ ok: boolean }> {
+): Promise<RemoveApiKeyResult> {
   return bridgeCall("models.api-key.remove", { field, env_var });
 }
+
+// ================================================================
+//  API Key 本地缓存 (localStorage) — 加速 UI 渲染
+// ================================================================
+
+const API_KEYS_CACHE_KEY = "aivyos_api_keys_cache";
+
+export function loadCachedApiKeys(): Record<string, ApiKeyEntry> {
+  try {
+    const raw = localStorage.getItem(API_KEYS_CACHE_KEY);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch {}
+  return {};
+}
+
+export function saveCachedApiKeys(keys: Record<string, ApiKeyEntry>): void {
+  try {
+    localStorage.setItem(API_KEYS_CACHE_KEY, JSON.stringify(keys));
+  } catch {}
+}
+
+export function clearCachedApiKeys(): void {
+  try {
+    localStorage.removeItem(API_KEYS_CACHE_KEY);
+  } catch {}
+}
+
+/** 前端持久化存储 — 将 API Key 元信息缓存到 localStorage */
+export const apiKeyStorage = {
+  load: (): Record<string, ApiKeyEntry> => loadCachedApiKeys(),
+  save: (keys: Record<string, ApiKeyEntry>): void => saveCachedApiKeys(keys),
+  clear: (): void => clearCachedApiKeys(),
+};
 
 export interface VoiceEngineStatus {
   total_engines: number;

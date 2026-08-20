@@ -60,6 +60,11 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         pipe_name=ipc_cfg.get("pipe_name"),
     )
 
+    # ---- API Key 持久化存储 ----
+    from aivyos_core.api_key_store import create_api_key_store
+    _api_key_store = create_api_key_store(cfg.get("home"))
+    log.info("API Key 存储已初始化: %d 个密钥已加载", _api_key_store.key_count())
+
     # ---- VoiceSession (lazily created) ----
     _voice_session = None
 
@@ -518,13 +523,17 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
 
     @server.method("voiceset.get")
     async def voiceset_get(params):
+        tts_cfg = cfg.get("tts", {})
         return {
             "wake_words": cfg.get("voice", {}).get("wake_words", []),
             "wake_required": cfg.get("voice", {}).get("wake_required", False),
             "asr_backend": cfg.get("asr", {}).get("backend", "auto"),
             "asr_model": cfg.get("asr", {}).get("model", ""),
-            "tts_backend": cfg.get("tts", {}).get("backend", "auto"),
-            "tts_model": cfg.get("tts", {}).get("model", ""),
+            "tts_backend": tts_cfg.get("backend", "auto"),
+            "tts_model": tts_cfg.get("model", ""),
+            "tts_voice": tts_cfg.get("voice", ""),
+            "tts_speed": tts_cfg.get("speed", 1.0),
+            "tts_resource_id": tts_cfg.get("resource_id", ""),
             "language": cfg.get("asr", {}).get("language", "zh"),
             "silence_timeout_s": cfg.get("voice", {}).get("silence_timeout_s", 3.0),
         }
@@ -542,6 +551,84 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             target = target.setdefault(p, {})
         target[parts[-1]] = value
         return {"ok": True, "field": field, "value": value}
+
+    @server.method("voiceset.apply-tts")
+    async def voiceset_apply_tts(params):
+        """应用 TTS 配置并立即重建 VoiceSession 的 TTS 引擎。"""
+        import os
+        from aivyos_core.api_key_store import create_api_key_store
+        from aivyos_core.tts.manager import create_tts
+
+        provider = (params.get("provider", "auto") or "auto").lower()
+        voice = params.get("voice", "")
+        speed = float(params.get("speed", 1.0))
+        api_key = params.get("api_key", "")
+        resource_id = params.get("resource_id", "")
+
+        # 1) 更新 cfg 中的 tts 配置
+        tts_cfg = cfg.setdefault("tts", {})
+        tts_cfg["backend"] = provider
+        if voice:
+            tts_cfg["voice"] = voice
+        tts_cfg["speed"] = speed
+        if resource_id:
+            tts_cfg["resource_id"] = resource_id
+
+        # 2) 同步 API Key 到环境变量（用于 create_tts 自动检测）
+        env_var_map = {
+            "doubao-tts": "VOLCENGINE_API_KEY",
+            "doubao": "VOLCENGINE_API_KEY",
+            "bytedance": "VOLCENGINE_API_KEY",
+            "volcengine": "VOLCENGINE_API_KEY",
+            "elevenlabs": "ELEVENLABS_API_KEY",
+        }
+        if api_key:
+            # 保存到 API Key 持久化存储
+            _store = create_api_key_store(cfg.get("home"))
+            env_var = env_var_map.get(provider, "")
+            if env_var:
+                _store.set_key(env_var, api_key, provider)
+                log.info("API Key 已保存到持久化存储: %s", env_var)
+            # 也同步到 os.environ 供 create_tts 使用
+            if env_var:
+                os.environ[env_var] = api_key
+            tts_cfg["api_key"] = api_key
+        elif provider in env_var_map:
+            # 用户清空了 API Key
+            env_var = env_var_map[provider]
+            os.environ.pop(env_var, None)
+            _store = create_api_key_store(cfg.get("home"))
+            _store.remove_key(env_var)
+            tts_cfg.pop("api_key", None)
+
+        # 3) 重建 VoiceSession 的 TTS 引擎
+        try:
+            new_tts = create_tts(tts_cfg)
+            log.info("TTS 引擎重建: %s (backend=%s)", new_tts.name, provider)
+
+            nonlocal _voice_session
+            if _voice_session is not None:
+                _voice_session.tts = new_tts
+                # 重新配置音频输出（采样率可能变化）
+                try:
+                    from aivyos_core.audio.sink import create_sink
+                    audio_cfg = cfg.get("audio", {})
+                    _voice_session.sink = create_sink({**tts_cfg, "sample_rate": new_tts.sample_rate})
+                except Exception as e:
+                    log.warning("音频输出重建失败: %s", e)
+                log.info("VoiceSession TTS 已更新: %s", new_tts.name)
+            else:
+                # VoiceSession 还未创建，直接用新配置（下次 get_voice() 会使用）
+                pass
+
+            return {
+                "ok": True,
+                "backend": new_tts.name,
+                "message": f"TTS 已切换到 {new_tts.name}",
+            }
+        except Exception as e:
+            log.exception("TTS 引擎重建失败")
+            return {"ok": False, "error": f"TTS 引擎重建失败: {e}"}
 
     # ================================================================
     #  Model Management
@@ -666,10 +753,11 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
 
     @server.method("models.api-key.list")
     async def models_apikey_list(params):
-        """列出所有已配置的 API Key（仅返回元信息，不返回密钥值）。"""
+        """列出所有已配置的 API Key（返回脱敏元信息，不返回密钥值）。"""
         import os
-        import json
-        api_keys = {}
+        api_keys_store = _api_key_store.list_keys()
+
+        # 补充检查环境变量中存在但存储文件中没有的 key
         env_vars = [
             "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
             "GOOGLE_API_KEY", "DASHSCOPE_API_KEY", "SILICONFLOW_API_KEY",
@@ -678,50 +766,61 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             "ELEVENLABS_API_KEY", "DEEPGRAM_API_KEY",
         ]
         for var in env_vars:
-            val = os.environ.get(var, "")
-            provider_id = var.lower().replace("_api_key", "").replace("_secret_key", "")
-            api_keys[provider_id] = {
-                "env_var": var,
-                "has_key": bool(val),
-                "key_length": len(val) if val else 0,
-            }
-        return {"api_keys": api_keys}
+            if var not in api_keys_store:
+                val = os.environ.get(var, "")
+                provider_id = var.lower().replace("_api_key", "").replace("_secret_key", "")
+                api_keys_store[var] = {
+                    "env_var": var,
+                    "provider": provider_id,
+                    "has_key": bool(val),
+                    "key_length": len(val) if val else 0,
+                    "masked_preview": _api_key_store._mask(val) if val else "",
+                    "source": "env",
+                }
+
+        return {"api_keys": api_keys_store}
 
     @server.method("models.api-key.set")
     async def models_apikey_set(params):
-        """设置 API Key（写入环境变量 + 配置文件）。"""
-        import os
-        import json
+        """设置 API Key（加密持久化到文件 + 写入环境变量）。"""
         field = params.get("field", "")
         value = params.get("value", "")
         env_var = params.get("env_var", "")
-        if not field or not env_var:
-            return {"ok": False, "error": "缺少 field/env_var 参数"}
-        # 写入环境变量
-        if value:
-            os.environ[env_var] = value
-        else:
-            os.environ.pop(env_var, None)
-        # 更新配置
-        cfg.setdefault("api_keys", {})[field] = {
+        provider = params.get("provider", "")
+
+        if not env_var:
+            return {"ok": False, "error": "缺少 env_var 参数"}
+
+        # 使用持久化存储
+        result = _api_key_store.set_key(env_var, value, provider or field)
+
+        if not result.get("ok"):
+            return result
+
+        # 同步更新配置中的元信息
+        cfg.setdefault("api_keys", {})[env_var] = {
             "env_var": env_var,
             "set": bool(value),
+            "provider": provider,
             "updated_at": __import__("time").time(),
         }
-        return {"ok": True, "field": field, "env_var": env_var, "set": bool(value)}
+
+        return result
 
     @server.method("models.api-key.remove")
     async def models_apikey_remove(params):
-        """移除 API Key。"""
-        import os
+        """移除 API Key（从持久化存储和环境变量中删除）。"""
         field = params.get("field", "")
         env_var = params.get("env_var", "")
         if not env_var:
             return {"ok": False, "error": "缺少 env_var 参数"}
-        os.environ.pop(env_var, None)
+
+        result = _api_key_store.remove_key(env_var)
+
         if field:
             cfg.setdefault("api_keys", {}).pop(field, None)
-        return {"ok": True, "field": field, "env_var": env_var}
+
+        return result
 
     @server.method("models.test-connection")
     async def models_test_connection(params):

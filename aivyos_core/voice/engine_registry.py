@@ -543,19 +543,69 @@ def create_voice_registry(config: Optional[Dict[str, Any]] = None) -> VoiceEngin
             pass
 
     # 实例化 TTS（本地 + 云端）
-    tts_backend = tts_cfg.get("backend", "mock")
-    tts_name = f"tts-{tts_backend}" if tts_backend != "auto" else "tts-mock"
-    try:
-        reg.create_tts(
-            tts_name,
-            provider=tts_backend,
-            model=tts_cfg.get("model", ""),
-            config=tts_cfg,
-        )
-    except ValueError:
+    tts_backend = tts_cfg.get("backend", "auto")
+    if tts_backend == "auto":
+        # auto 模式：智能检测可用的 TTS
+        import os as _os
+        auto_tts_name = "tts-mock"
+        auto_tts_provider = "mock"
+
+        # 1) 豆包
+        if _os.environ.get("VOLCENGINE_API_KEY") or tts_cfg.get("api_key"):
+            try:
+                reg.create_tts("tts-doubao", provider="doubao", config=tts_cfg)
+                auto_tts_name = "tts-doubao"
+                auto_tts_provider = "doubao"
+            except ValueError:
+                pass
+
+        # 2) ElevenLabs
+        if auto_tts_provider == "mock" and _os.environ.get("ELEVENLABS_API_KEY"):
+            try:
+                reg.create_tts("tts-elevenlabs", provider="elevenlabs", config=tts_cfg)
+                auto_tts_name = "tts-elevenlabs"
+                auto_tts_provider = "elevenlabs"
+            except ValueError:
+                pass
+
+        # 3) CosyVoice
+        if auto_tts_provider == "mock":
+            try:
+                reg.create_tts("tts-cosyvoice", provider="cosyvoice", config=tts_cfg)
+                auto_tts_name = "tts-cosyvoice"
+                auto_tts_provider = "cosyvoice"
+            except ValueError:
+                pass
+
+        # 4) Edge-TTS（免费，无需 API Key）
+        if auto_tts_provider == "mock":
+            try:
+                reg.create_tts("tts-edge", provider="edge-tts", config=tts_cfg)
+                auto_tts_name = "tts-edge"
+                auto_tts_provider = "edge-tts"
+            except ValueError:
+                pass
+
+        # 5) 兜底 mock
+        if auto_tts_provider == "mock":
+            try:
+                reg.create_tts("tts-mock", provider="mock", config=tts_cfg)
+            except ValueError:
+                pass
+    else:
+        # 明确指定的后端
+        tts_name = f"tts-{tts_backend}"
         try:
-            reg.create_tts("tts-mock", config=tts_cfg)
+            reg.create_tts(
+                tts_name,
+                provider=tts_backend,
+                model=tts_cfg.get("model", ""),
+                config=tts_cfg,
+            )
         except ValueError:
-            pass
+            try:
+                reg.create_tts("tts-mock", config=tts_cfg)
+            except ValueError:
+                pass
 
     return reg

@@ -20,7 +20,10 @@ import {
   getVoiceEngines, configVoiceEngine,
   testModelConnection, listProviderModels,
   testTts,
+  applyVoiceTts,
   ProviderCatalogEntry, ApiKeyEntry, TestConnectionResult, ListModelsResult,
+  SetApiKeyResult, RemoveApiKeyResult,
+  apiKeyStorage,
   startWakeLoop, stopWakeLoop, getWakeLoopStatus, listenWakeEvents,
   WakeLoopStatus, WakeEvent,
 } from "./chat";
@@ -149,6 +152,9 @@ const DEMO_VOICE_SETTINGS: VoiceSettings = {
   asr_model: "paraformer-zh",
   tts_backend: "cosyvoice",
   tts_model: "cosyvoice-zh",
+  tts_voice: "zh_female_xiaohe_uranus_bigtts",
+  tts_speed: 1.0,
+  tts_resource_id: "seed-tts-2.0",
   language: "zh",
   silence_timeout_s: 3.0,
 };
@@ -260,6 +266,7 @@ export default function App() {
   const [catalogFilter, setCatalogFilter] = useState<string>("all");
   const [showAddModelDialog, setShowAddModelDialog] = useState(false);
   const [apiKeys, setApiKeys] = useState<Record<string, ApiKeyEntry>>({});
+  const [editingKeyEnv, setEditingKeyEnv] = useState<string>("");
   const [voiceEngines, setVoiceEngines] = useState<any>(null);
   const [addModelProvider, setAddModelProvider] = useState("");
   const [addModelName, setAddModelName] = useState("");
@@ -791,6 +798,10 @@ export default function App() {
         setVsetWakeWord(DEMO_VOICE_SETTINGS.wake_words[0] || "艾薇");
         setVsetAsrEngine(DEMO_VOICE_SETTINGS.asr_backend);
         setVsetLanguage(DEMO_VOICE_SETTINGS.language);
+        setVsetTtsProvider(DEMO_VOICE_SETTINGS.tts_backend || "doubao-tts");
+        setVsetTtsVoice(DEMO_VOICE_SETTINGS.tts_voice || "zh_female_xiaohe_uranus_bigtts");
+        setVsetTtsSpeed(DEMO_VOICE_SETTINGS.tts_speed || 1.0);
+        setVsetTtsResourceId(DEMO_VOICE_SETTINGS.tts_resource_id || "");
         return;
       }
       const st = await getVoiceSettings();
@@ -798,6 +809,10 @@ export default function App() {
       if (st.wake_words && st.wake_words.length > 0) setVsetWakeWord(st.wake_words[0]);
       setVsetAsrEngine(st.asr_backend);
       setVsetLanguage(st.language);
+      if (st.tts_backend) setVsetTtsProvider(st.tts_backend);
+      if (st.tts_voice) setVsetTtsVoice(st.tts_voice);
+      if (st.tts_speed) setVsetTtsSpeed(st.tts_speed);
+      if (st.tts_resource_id) setVsetTtsResourceId(st.tts_resource_id);
     } catch { setVoiceSettings(DEMO_VOICE_SETTINGS); }
     finally { setVsetLoading(false); }
   }, [bridgeReady]);
@@ -865,6 +880,26 @@ export default function App() {
     }
   }, [vsetTtsProvider, vsetTtsVoice, vsetTtsSpeed, vsetTtsApiKey, vsetTtsResourceId, showNotification]);
 
+  const handleSaveTts = useCallback(async () => {
+    try {
+      showNotification("保存中...", "正在应用 TTS 配置", "info");
+      const result = await applyVoiceTts(
+        vsetTtsProvider,
+        vsetTtsVoice,
+        vsetTtsSpeed,
+        vsetTtsApiKey,
+        vsetTtsResourceId,
+      );
+      if (result.ok) {
+        showNotification("保存成功", `TTS 已切换到 ${result.backend} · ${vsetTtsVoice} · ${vsetTtsSpeed.toFixed(1)}x`, "success");
+      } else {
+        showNotification("保存失败", result.error || "未知错误", "danger");
+      }
+    } catch (e) {
+      showNotification("保存失败", String(e), "danger");
+    }
+  }, [vsetTtsProvider, vsetTtsVoice, vsetTtsSpeed, vsetTtsApiKey, vsetTtsResourceId, showNotification]);
+
   const handleRefreshDevices = useCallback(() => {
     setVsetMicDevice("default");
     setVsetOutputDevice("auto");
@@ -886,9 +921,10 @@ export default function App() {
     try {
       if (!bridgeReady) {
         setModels(DEMO_MODELS);
-        // bridge 未就绪，直接使用本地回退数据
+        // bridge 未就绪，使用 localStorage 缓存回退
         setCatalog(LOCAL_PROVIDERS);
-        setApiKeys({});
+        const cachedKeys = apiKeyStorage.load();
+        setApiKeys(Object.keys(cachedKeys).length > 0 ? cachedKeys : {});
         return;
       }
       const list = await listModels();
@@ -916,8 +952,12 @@ export default function App() {
       try {
         const keys = await listApiKeys();
         setApiKeys(keys.api_keys || {});
+        // 同步到 localStorage 缓存
+        apiKeyStorage.save(keys.api_keys || {});
       } catch {
-        setApiKeys({});
+        // 使用本地缓存回退
+        const cachedKeys = apiKeyStorage.load();
+        setApiKeys(Object.keys(cachedKeys).length > 0 ? cachedKeys : {});
       }
     } catch { setModels(DEMO_MODELS); }
     finally { setModelsLoading(false); }
@@ -1275,8 +1315,13 @@ export default function App() {
 
                 {voiceTurnResult && !voiceLoading && (
                   <div style={{ marginTop: 12, padding: "10px 16px", borderRadius: 8, background: "rgba(0,0,0,0.2)", fontSize: 12, color: "var(--muted2)" }}>
-                    <div>模型: {voiceTurnResult.model || "N/A"} · 耗时: {voiceTurnResult.latency_ms || "N/A"}ms</div>
+                    <div>模型: {voiceTurnResult.model || "N/A"} · 耗时: {Math.round(voiceTurnResult.latency_ms || 0)}ms</div>
                     {voiceTurnResult.asr_backend && <div>ASR: {voiceTurnResult.asr_backend} · TTS: {voiceTurnResult.tts_backend}</div>}
+                    {voiceTurnResult.breakdown_ms && (
+                      <div style={{ marginTop: 4, fontSize: 11, opacity: 0.85 }}>
+                        细分: ASR {Math.round(voiceTurnResult.breakdown_ms.asr)}ms · LLM {Math.round(voiceTurnResult.breakdown_ms.llm)}ms · TTS {Math.round(voiceTurnResult.breakdown_ms.tts)}ms · 播放 {Math.round(voiceTurnResult.breakdown_ms.playback)}ms
+                      </div>
+                    )}
                   </div>
                 )}
                 <div className="voice-hint">
@@ -1930,9 +1975,7 @@ export default function App() {
                         <button
                           className="btn btn-approve"
                           style={{ fontSize: 11, padding: "6px 14px" }}
-                          onClick={() => {
-                            showNotification("保存成功", `TTS 配置已保存：${vsetTtsProvider} · ${vsetTtsVoice} · ${vsetTtsSpeed.toFixed(1)}x`, "success");
-                          }}
+                          onClick={handleSaveTts}
                         >保存</button>
                       </div>
                     </div>
@@ -2191,7 +2234,9 @@ export default function App() {
                 <div className="glass-card" style={{ padding: 14, marginBottom: 12 }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent)", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span>API Key 管理</span>
-                    <span style={{ fontSize: 10, color: "var(--muted2)" }}>已配置 {Object.values(apiKeys).filter(k => k.has_key).length} / {Object.keys(apiKeys).length || catalog.length} 个</span>
+                    <span style={{ fontSize: 10, color: "var(--muted2)" }}>
+                      已配置 {Object.values(apiKeys).filter(k => k.has_key).length} / {Object.keys(apiKeys).length || catalog.length} 个 · 持久化存储
+                    </span>
                   </div>
                   {Object.keys(apiKeys).length === 0 && catalog.length === 0 && (
                     <div style={{ fontSize: 11, color: "var(--muted2)", padding: 10, textAlign: "center" }}>
@@ -2204,57 +2249,121 @@ export default function App() {
                         const keyEntry = apiKeys[provider.api_key_env] || apiKeys[provider.id];
                         const hasKey = keyEntry?.has_key || false;
                         const keyLen = keyEntry?.key_length || 0;
+                        const maskedPreview = keyEntry?.masked_preview || "";
+                        const isEditingKey = editingKeyEnv === (provider.api_key_env || provider.id);
                         return (
                           <div key={provider.id} style={{
                             display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: 8,
                             alignItems: "center", padding: "8px 10px",
-                            background: "rgba(0,0,0,0.15)", borderRadius: 6,
-                            border: "1px solid rgba(255,255,255,0.04)",
+                            background: hasKey ? "rgba(16,185,129,0.08)" : "rgba(0,0,0,0.15)",
+                            borderRadius: 6,
+                            border: hasKey ? "1px solid rgba(16,185,129,0.3)" : "1px solid rgba(255,255,255,0.04)",
                           }}>
                             <div>
                               <div style={{ fontSize: 12, fontWeight: 500 }}>{provider.name}</div>
-                              <div style={{ fontSize: 10, color: "var(--muted2)" }}>{provider.id} · {provider.base_url}</div>
+                              <div style={{ fontSize: 10, color: "var(--muted2)" }}>
+                                {provider.id} · {provider.base_url}
+                                {hasKey && maskedPreview && (
+                                  <span style={{ color: "var(--accent)", marginLeft: 6 }}>
+                                    🔑 {maskedPreview}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <span style={{
-                              fontSize: 10, padding: "2px 6px", borderRadius: 3,
-                              background: hasKey ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
-                              color: hasKey ? "var(--success)" : "var(--danger)",
-                            }}>
-                              {hasKey ? `已配置 (${keyLen}位)` : "未配置"}
-                            </span>
+                            <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                              <span style={{
+                                fontSize: 10, padding: "2px 6px", borderRadius: 3,
+                                background: hasKey ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
+                                color: hasKey ? "var(--success)" : "var(--danger)",
+                              }}>
+                                {hasKey ? `已配置 (${keyLen}位)` : "未配置"}
+                              </span>
+                              {hasKey && keyEntry?.source === "env" && (
+                                <span style={{ fontSize: 9, color: "#f59e0b", marginTop: 2 }}>环境变量</span>
+                              )}
+                            </div>
                             <span style={{ fontSize: 10, color: "var(--muted2)" }}>
                               {provider.default_model}
                             </span>
                             <div style={{ display: "flex", gap: 4 }}>
-                              <button
-                                className="btn btn-approve"
-                                style={{ fontSize: 10, padding: "3px 8px" }}
-                                onClick={async () => {
-                                  try {
-                                    const val = prompt(`输入 ${provider.name} API Key`, "");
-                                    if (!val) return;
-                                    const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
-                                    await setApiKey(provider.id, envVar, val);
-                                    showNotification("API Key 已更新", `${provider.name}`, "success");
-                                    const keys = await listApiKeys();
-                                    setApiKeys(keys.api_keys || {});
-                                  } catch (e) { showNotification("设置失败", e instanceof Error ? e.message : String(e), "danger"); }
-                                }}
-                              >设置</button>
-                              {hasKey && (
+                              {hasKey && !isEditingKey ? (
+                                <>
+                                  <button
+                                    className="btn btn-approve"
+                                    style={{ fontSize: 10, padding: "3px 8px" }}
+                                    onClick={() => setEditingKeyEnv(provider.api_key_env || provider.id)}
+                                  >编辑</button>
+                                  <button
+                                    className="btn btn-skip"
+                                    style={{ fontSize: 10, padding: "3px 8px" }}
+                                    onClick={async () => {
+                                      const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
+                                      const val = prompt(`重新输入 ${provider.name} API Key (留空保持不变)`, "");
+                                      if (!val) return;
+                                      try {
+                                        const result = await setApiKey(provider.id, envVar, val, provider.id);
+                                        if (result.ok) {
+                                          showNotification("API Key 已更新", `${provider.name} · ${result.masked_preview}`, "success");
+                                          const keys = await listApiKeys();
+                                          setApiKeys(keys.api_keys || {});
+                                          apiKeyStorage.save(keys.api_keys || {});
+                                        } else {
+                                          showNotification("更新失败", result.error || "未知错误", "danger");
+                                        }
+                                      } catch (e) {
+                                        showNotification("设置失败", e instanceof Error ? e.message : String(e), "danger");
+                                      }
+                                    }}
+                                  >重生成</button>
+                                  <button
+                                    className="btn btn-skip"
+                                    style={{ fontSize: 10, padding: "3px 8px", background: "rgba(239,68,68,0.15)" }}
+                                    onClick={async () => {
+                                      const confirmed = confirm(`确定要删除 ${provider.name} 的 API Key 吗？`);
+                                      if (!confirmed) return;
+                                      try {
+                                        const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
+                                        const result = await removeApiKey(provider.id, envVar);
+                                        if (result.ok) {
+                                          showNotification("API Key 已删除", `${provider.name}`, "success");
+                                          const keys = await listApiKeys();
+                                          setApiKeys(keys.api_keys || {});
+                                          apiKeyStorage.save(keys.api_keys || {});
+                                        }
+                                      } catch (e) {
+                                        showNotification("删除失败", e instanceof Error ? e.message : String(e), "danger");
+                                      }
+                                    }}
+                                  >删除</button>
+                                </>
+                              ) : (
                                 <button
-                                  className="btn btn-skip"
+                                  className="btn btn-approve"
                                   style={{ fontSize: 10, padding: "3px 8px" }}
                                   onClick={async () => {
+                                    const val = prompt(`输入 ${provider.name} API Key`, "");
+                                    if (!val) { setEditingKeyEnv(""); return; }
+                                    const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
                                     try {
-                                      const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
-                                      await removeApiKey(provider.id, envVar);
-                                      showNotification("API Key 已移除", `${provider.name}`, "success");
-                                      const keys = await listApiKeys();
-                                      setApiKeys(keys.api_keys || {});
-                                    } catch (e) { showNotification("移除失败", e instanceof Error ? e.message : String(e), "danger"); }
+                                      const result = await setApiKey(provider.id, envVar, val, provider.id);
+                                      if (result.ok) {
+                                        showNotification(
+                                          hasKey ? "API Key 已更新" : "API Key 已保存",
+                                          `${provider.name} · ${result.masked_preview}${result.removed ? " (已清除)" : ""}`,
+                                          "success"
+                                        );
+                                        const keys = await listApiKeys();
+                                        setApiKeys(keys.api_keys || {});
+                                        apiKeyStorage.save(keys.api_keys || {});
+                                      } else {
+                                        showNotification("设置失败", result.error || "未知错误", "danger");
+                                      }
+                                    } catch (e) {
+                                      showNotification("设置失败", e instanceof Error ? e.message : String(e), "danger");
+                                    }
+                                    setEditingKeyEnv("");
                                   }}
-                                >移除</button>
+                                >{hasKey ? "保存" : "设置"}</button>
                               )}
                             </div>
                           </div>
@@ -2266,11 +2375,17 @@ export default function App() {
                             <div key={envVar} style={{
                               display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: 8,
                               alignItems: "center", padding: "8px 10px",
-                              background: "rgba(0,0,0,0.15)", borderRadius: 6,
+                              background: entry.has_key ? "rgba(16,185,129,0.08)" : "rgba(0,0,0,0.15)",
+                              borderRadius: 6,
                             }}>
                               <div>
                                 <div style={{ fontSize: 12, fontWeight: 500 }}>{envVar}</div>
-                                <div style={{ fontSize: 10, color: "var(--muted2)" }}>环境变量</div>
+                                <div style={{ fontSize: 10, color: "var(--muted2)" }}>
+                                  {entry.provider || "自定义"} · {entry.source === "env" ? "环境变量" : "持久化存储"}
+                                  {entry.has_key && entry.masked_preview && (
+                                    <span style={{ color: "var(--accent)", marginLeft: 6 }}>🔑 {entry.masked_preview}</span>
+                                  )}
+                                </div>
                               </div>
                               <span style={{
                                 fontSize: 10, padding: "2px 6px", borderRadius: 3,
@@ -2286,26 +2401,36 @@ export default function App() {
                                     try {
                                       const val = prompt(`输入 ${envVar}`, "");
                                       if (!val) return;
-                                      const providerId = envVar.toLowerCase().replace("api_key_", "");
-                                      await setApiKey(providerId, envVar, val);
-                                      showNotification("API Key 已更新", envVar, "success");
-                                      const keys = await listApiKeys();
-                                      setApiKeys(keys.api_keys || {});
+                                      const providerId = entry.provider || envVar.toLowerCase().replace("api_key_", "");
+                                      const result = await setApiKey(providerId, envVar, val, providerId);
+                                      if (result.ok) {
+                                        showNotification("API Key 已更新", `${envVar} · ${result.masked_preview}`, "success");
+                                        const keys = await listApiKeys();
+                                        setApiKeys(keys.api_keys || {});
+                                        apiKeyStorage.save(keys.api_keys || {});
+                                      } else {
+                                        showNotification("设置失败", result.error || "未知错误", "danger");
+                                      }
                                     } catch (e) { showNotification("设置失败", e instanceof Error ? e.message : String(e), "danger"); }
                                   }}
                                 >设置</button>
                                 {entry.has_key && (
-                                  <button className="btn btn-skip" style={{ fontSize: 10, padding: "3px 8px" }}
+                                  <button className="btn btn-skip" style={{ fontSize: 10, padding: "3px 8px", background: "rgba(239,68,68,0.15)" }}
                                     onClick={async () => {
+                                      const confirmed = confirm(`确定要删除 ${envVar} 吗？`);
+                                      if (!confirmed) return;
                                       try {
-                                        const providerId = envVar.toLowerCase().replace("api_key_", "");
-                                        await removeApiKey(providerId, envVar);
-                                        showNotification("API Key 已移除", envVar, "success");
-                                        const keys = await listApiKeys();
-                                        setApiKeys(keys.api_keys || {});
-                                      } catch (e) { showNotification("移除失败", e instanceof Error ? e.message : String(e), "danger"); }
+                                        const providerId = entry.provider || envVar.toLowerCase().replace("api_key_", "");
+                                        const result = await removeApiKey(providerId, envVar);
+                                        if (result.ok) {
+                                          showNotification("API Key 已删除", envVar, "success");
+                                          const keys = await listApiKeys();
+                                          setApiKeys(keys.api_keys || {});
+                                          apiKeyStorage.save(keys.api_keys || {});
+                                        }
+                                      } catch (e) { showNotification("删除失败", e instanceof Error ? e.message : String(e), "danger"); }
                                     }}
-                                  >移除</button>
+                                  >删除</button>
                                 )}
                               </div>
                             </div>

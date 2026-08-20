@@ -73,8 +73,13 @@ class VoiceSession:
 
         text_override：跳过真实音频链路（测试/文本模拟模式）。
         认证门控（§9）：真实音频路径下未通过认证 → 静默拒绝（不暴露系统存在）。
+        耗时细分：asr_ms / llm_ms / tts_ms / playback_ms，用于诊断瓶颈。
         """
         start = time.perf_counter()
+        asr_ms = 0.0
+        llm_ms = 0.0
+        tts_ms = 0.0
+        playback_ms = 0.0
 
         if text_override is not None:
             transcript = text_override
@@ -105,7 +110,9 @@ class VoiceSession:
                     self.engine.persona.update(k, v)
             else:
                 auth_result = {"bypassed": True, "reason": "认证未启用"}
+            asr_t0 = time.perf_counter()
             result = self.asr.transcribe(pcm)
+            asr_ms = (time.perf_counter() - asr_t0) * 1000
             transcript = result.text
             asr_backend = result.backend
             wake_passed = not self.wake_required or self.wake.detect(transcript)
@@ -119,8 +126,12 @@ class VoiceSession:
             return None
 
         # LLM 对话
+        llm_t0 = time.perf_counter()
         reply = await self.engine.send(clean)
+        llm_ms = (time.perf_counter() - llm_t0) * 1000
+
         # TTS + 输出 — 用线程池避免阻塞事件循环
+        tts_t0 = time.perf_counter()
         loop = asyncio.get_running_loop()
         try:
             audio = await loop.run_in_executor(
@@ -129,6 +140,7 @@ class VoiceSession:
         except Exception as e:
             log.exception("TTS 合成失败")
             audio = None
+        tts_ms = (time.perf_counter() - tts_t0) * 1000
 
         wav_b64 = ""
         if audio is not None:
@@ -141,12 +153,20 @@ class VoiceSession:
                 log.warning("WAV 编码失败，跳过前端音频")
 
         if audio is not None:
+            play_t0 = time.perf_counter()
             try:
                 await loop.run_in_executor(
                     None, lambda: self.sink.play(audio.pcm)
                 )
             except Exception:
                 pass
+            playback_ms = (time.perf_counter() - play_t0) * 1000
+
+        total_ms = (time.perf_counter() - start) * 1000
+        log.info(
+            "语音对话完成: total=%.0fms asr=%.0fms llm=%.0fms tts=%.0fms play=%.0fms (model=%s)",
+            total_ms, asr_ms, llm_ms, tts_ms, playback_ms, reply.model,
+        )
 
         return {
             "text": transcript,
@@ -161,7 +181,14 @@ class VoiceSession:
             "sample_rate": audio.sample_rate if audio else 24000,
             "auth": auth_result,
             "user_id": self.current_user,
-            "latency_ms": (time.perf_counter() - start) * 1000,
+            "latency_ms": total_ms,
+            "breakdown_ms": {
+                "asr": round(asr_ms, 1),
+                "llm": round(llm_ms, 1),
+                "tts": round(tts_ms, 1),
+                "playback": round(playback_ms, 1),
+                "total": round(total_ms, 1),
+            },
         }
 
     # ---- 音频采集 + VAD 端点检测 ----
