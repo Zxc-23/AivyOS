@@ -43,6 +43,7 @@ import json
 import logging
 import os
 import signal
+import time
 from typing import Any, Dict
 
 from aivyos_core.chat.engine import ChatEngine
