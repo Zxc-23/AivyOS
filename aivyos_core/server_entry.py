@@ -232,8 +232,10 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             and time.monotonic() < _conv_session["expires_at"]
             and _conv_session["turns"] < _conv_max_turns
         )
+        # 连续对话期间 WakeLoop 保持停止（避免每轮停启麦克风导致 WASAPI 设备竞争）
+        # conv_active 为 True 说明会话进行中，WakeLoop 应已停止
         wake_loop = _wake_loop_ref["loop"]
-        wake_was_running = bool(wake_loop and wake_loop.running)
+        wake_was_running = bool(wake_loop and wake_loop.running and not conv_active)
         try:
             # 互斥：真实采集前暂停后台唤醒循环（两者共用同一麦克风设备）
             if text_override is None and wake_was_running:
@@ -242,11 +244,14 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             try:
                 vs = get_voice()
                 result = await vs.run_turn(text_override=text_override, skip_wake=conv_active)
-            finally:
-                # 采集结束恢复唤醒循环
+            except Exception:
+                # 异常时按需恢复 WakeLoop
                 if text_override is None and wake_was_running:
-                    await wake_loop.start()
-                    log.info("voice.turn 结束，WakeLoop 已恢复")
+                    try:
+                        await wake_loop.start()
+                    except Exception:
+                        pass
+                raise
             # 更新连续对话会话状态
             if continuous:
                 if result is not None and result.get("wake") is not False and result.get("error") not in ("empty_command", "no_speech_detected"):
@@ -258,6 +263,14 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
                     # 失败轮（唤醒未命中/空指令）：重置会话
                     _conv_session["active"] = False
                     _conv_session["turns"] = 0
+            # 进入连续对话会话后 WakeLoop 保持停止（避免每轮停启麦克风 → WASAPI 竞争）
+            # 仅当本轮未进入连续对话时恢复唤醒循环
+            keep_wake_stopped = bool(continuous and _conv_session["active"])
+            if text_override is None and wake_was_running and not keep_wake_stopped:
+                await wake_loop.start()
+                log.info("voice.turn 结束，WakeLoop 已恢复")
+            elif text_override is None and wake_was_running and keep_wake_stopped:
+                log.info("voice.turn 进入连续对话，WakeLoop 保持停止")
             if result is None:
                 return {"ok": False, "error": "语音对话执行失败（未识别到有效语音）", "error_type": "no_result", "asr_text": text_override}
             # 处理无语音检测等预期内的失败
@@ -308,6 +321,14 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
                     except Exception:
                         pass
                     log.info("连续对话：退出命令词 %r 结束会话", clean)
+                    # 会话结束 → 恢复后台唤醒监听（麦克风已释放）
+                    wl = _wake_loop_ref["loop"]
+                    if wl is not None and not wl.running:
+                        try:
+                            await wl.start()
+                            log.info("连续对话结束，WakeLoop 已恢复")
+                        except Exception as e:
+                            log.warning("WakeLoop 恢复失败: %s", e)
                 # 2) 窗口将到期提醒（剩 ≤ 15s 或下一轮将超限 → 语音询问是否继续）
                 elif _conv_session["active"]:
                     window_left = _conv_session["expires_at"] - time.monotonic()
@@ -341,24 +362,46 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
 
     @server.method("voice.continuous.status")
     async def voice_continuous_status(params):
-        """查询连续对话会话状态。"""
+        """查询连续对话会话状态。
+
+        窗口已过期且 WakeLoop 未运行 → 自动恢复后台监听（会话自然结束后回到常驻监听）。
+        """
+        active = _conv_session["active"] and time.monotonic() < _conv_session["expires_at"]
+        if not active and _conv_session["turns"] > 0:
+            # 窗口自然过期：结束会话并恢复 WakeLoop
+            _conv_session["active"] = False
+            _conv_session["turns"] = 0
+            wl = _wake_loop_ref["loop"]
+            if wl is not None and not wl.running:
+                try:
+                    await wl.start()
+                    log.info("连续对话窗口过期，WakeLoop 已恢复")
+                except Exception as e:
+                    log.warning("WakeLoop 恢复失败: %s", e)
         return {
             "ok": True,
-            "active": _conv_session["active"],
+            "active": active,
             "turns": _conv_session["turns"],
             "turns_left": max(0, _conv_max_turns - _conv_session["turns"]),
             "window_left_s": max(
                 0, round(_conv_session["expires_at"] - time.monotonic(), 1)
-            ) if _conv_session["active"] else 0,
+            ) if active else 0,
             "window_s": _conv_window_s,
             "max_turns": _conv_max_turns,
         }
 
     @server.method("voice.continuous.reset")
     async def voice_continuous_reset(params):
-        """手动结束连续对话会话。"""
+        """手动结束连续对话会话，恢复后台唤醒监听。"""
         _conv_session["active"] = False
         _conv_session["turns"] = 0
+        wl = _wake_loop_ref["loop"]
+        if wl is not None and not wl.running:
+            try:
+                await wl.start()
+                log.info("连续对话手动结束，WakeLoop 已恢复")
+            except Exception as e:
+                log.warning("WakeLoop 恢复失败: %s", e)
         return {"ok": True, "active": False}
 
     @server.method("voice.listen")

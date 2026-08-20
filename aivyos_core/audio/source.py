@@ -146,7 +146,11 @@ class MicSource(AudioSource):
                 self._shutdown_stream()
 
     def _start_stream(self) -> None:
-        """启动底层音频流（在主循环中调用一次）。"""
+        """启动底层音频流（在主循环中调用一次）。
+
+        Windows WASAPI 下设备刚被其他流释放时立即重开会报
+        [Errno 22] Invalid argument → 带重试 + 退避。
+        """
         loop = self._loop
         if loop is None:
             return
@@ -166,22 +170,37 @@ class MicSource(AudioSource):
             except Exception:
                 pass
 
-        try:
-            self._stream = sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype="int16",
-                blocksize=self._blocksize,
-                device=self.device,
-                callback=_callback,
-            )
-            self._stream.start()
-            log.info("MicSource 已启动: sr=%d ch=%d block=%d gain=%.1fx",
-                     self.sample_rate, self.channels, self._blocksize, self.gain)
-        except Exception:
-            self._started = False
-            self._stream = None
-            raise
+        import time
+
+        last_err: Optional[Exception] = None
+        for attempt in range(3):  # 最多 3 次尝试（设备释放延迟）
+            try:
+                self._stream = sd.InputStream(
+                    samplerate=self.sample_rate,
+                    channels=self.channels,
+                    dtype="int16",
+                    blocksize=self._blocksize,
+                    device=self.device,
+                    callback=_callback,
+                )
+                self._stream.start()
+                log.info("MicSource 已启动: sr=%d ch=%d block=%d gain=%.1fx (attempt=%d)",
+                         self.sample_rate, self.channels, self._blocksize, self.gain, attempt + 1)
+                return
+            except Exception as e:
+                last_err = e
+                log.warning("MicSource 启动失败 (attempt %d/3): %s — 300ms 后重试", attempt + 1, e)
+                if self._stream is not None:
+                    try:
+                        self._stream.close()
+                    except Exception:
+                        pass
+                    self._stream = None
+                time.sleep(0.3)  # 等待 WASAPI 释放设备
+
+        self._started = False
+        self._stream = None
+        raise last_err if last_err is not None else AudioUnavailable("麦克风启动失败")
 
     def _shutdown_stream(self) -> None:
         """关闭底层音频流。"""
