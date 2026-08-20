@@ -1,6 +1,7 @@
-"""核心数据模型（Phase 1）：消息、会话、LLM 请求/响应、路由决策。
+"""核心数据模型（Phase 1 + Phase 2 扩展）：消息、会话、LLM 请求/响应、路由决策、后端能力标签。
 
 会话状态对应文档 §14.3 状态快照中的"会话上下文"（JSON 序列化，可恢复）。
+Phase 2 新增：BackendCapability、BackendStatus、ProviderInfo，用于多提供商适配器层。
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ import time
 import uuid
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, ClassVar
 
 
 class Role(str, Enum):
@@ -127,6 +128,87 @@ class SessionState:
             created_at=data.get("created_at", time.time()),
             updated_at=data.get("updated_at", time.time()),
         )
+
+
+# ============================================================================
+# Phase 2: 多提供商适配器层数据类型
+# ============================================================================
+
+
+@dataclass
+class BackendCapability:
+    """后端能力标签 — 每个 LLM 后端声明自身支持的功能集合。"""
+
+    streaming: bool = False
+    vision: bool = False
+    json_schema: bool = False
+    thinking: bool = False
+    tool_use: bool = False
+    structured_output: bool = False
+    context_window: int = 4096
+    max_output_tokens: int = 2048
+    cost_per_1m_input: float = 0.0
+    cost_per_1m_output: float = 0.0
+    free_tier: bool = False
+    setup_time_s: float = 0.0
+
+    def supports(self, required: Dict[str, Any]) -> bool:
+        """检查后端是否满足所需能力集合。"""
+        for key, value in required.items():
+            if getattr(self, key, None) != value:
+                return False
+        return True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class BackendStatus:
+    """后端健康检查结果。"""
+
+    provider: str
+    model: str
+    status: str = "unknown"       # ok / degraded / down / unknown
+    latency_ms: float = 0.0
+    detail: str = ""
+    last_check: float = field(default_factory=time.time)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ProviderInfo:
+    """提供商元数据 — 描述一个已注册的 LLM 后端。"""
+
+    name: str                     # 唯一标识，如 "ollama-local"
+    provider: str                 # 提供商类型，如 "ollama" / "deepseek"
+    model: str                    # 默认模型名
+    base_url: str = ""
+    api_key_env: str = ""
+    capabilities: BackendCapability = field(default_factory=BackendCapability)
+    enabled: bool = True
+    priority: int = 50            # 路由优先级（越小越优先）
+    config: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d["capabilities"] = self.capabilities.to_dict()
+        return d
+
+
+class RoutingStrategy(str, Enum):
+    """路由策略枚举。"""
+    AUTO = "auto"               # 综合策略：能力 → 可用性 → 成本
+    COST_BASED = "cost-based"   # 成本最优
+    LATENCY_BASED = "latency-based"  # 延迟最优
+    CAPABILITY_BASED = "capability-based"  # 能力匹配
+
+
+# ============================================================================
+# Phase 1 原有数据类型（保持不变）
+# ============================================================================
 
 
 @dataclass

@@ -1,5 +1,5 @@
 // AivyOS 前端 ↔ 核心桥接（文档 §12.1 IPC：Named Pipe / UDS）
-// Week 1：Tauri invoke → Rust bridge 命令（占位）；后续接通 Python 核心 IPC。
+// Week 1：Tauri invoke → Rust bridge 命令 → Python 核心 IPC。
 
 export interface RouteDecision {
   mode: "local" | "cloud" | "mock";
@@ -30,13 +30,245 @@ export interface StatusInfo {
   sessions: number;
 }
 
+export interface VoiceStatus {
+  asr: string;
+  tts: string;
+  vad: string;
+  source: string;
+  sink: string;
+  wake_required: boolean;
+  wake_words: string[];
+  llm_route_mode: string;
+  auth_enabled?: boolean;
+  auth_state?: string;
+  current_user?: string;
+  error?: string;
+  fallback?: boolean;
+}
+
+export interface VoiceTurnResult {
+  ok: boolean;
+  text: string;
+  reply?: string;
+  model?: string;
+  route?: RouteDecision;
+  latency_ms?: number;
+  asr_backend?: string;
+  tts_backend?: string;
+  wav_len?: number;
+  wav_b64?: string;
+  sample_rate?: number;
+  fallback?: boolean;
+  error?: string;
+  error_type?: string;
+  error_detail?: string;
+  source?: string;
+  wake?: boolean;
+}
+
+export interface TaskInfo {
+  id: string;
+  title: string;
+  status: "pending" | "working" | "completed" | "error";
+  steps: { title: string; detail: string }[];
+  current_step: number;
+  logs: string[];
+  created_at?: string;
+}
+
+export interface SchedulerJob {
+  name: string;
+  kind: string;
+  runs: number;
+  last_run: string | null;
+  error: string;
+}
+
+export interface BootCheckResult {
+  checks: { name: string; ok: boolean; detail: string }[];
+  progress: number;
+  passed: number;
+  total: number;
+  summary: string;
+}
+
+export interface MemoryEntry {
+  id?: string;
+  text: string;
+  score?: number;
+  created_at?: string;
+  category?: string;
+}
+
+export interface VibeRunResult {
+  ok: boolean;
+  steps?: Record<string, unknown>;
+  files?: Record<string, string>;
+  delivered_to?: string;
+  preview_url?: string;
+  preview_ok?: boolean;
+  build_failed?: boolean;
+  error?: string;
+}
+
+export interface VoiceSettings {
+  wake_words: string[];
+  wake_required: boolean;
+  asr_backend: string;
+  asr_model: string;
+  tts_backend: string;
+  tts_model: string;
+  language: string;
+  silence_timeout_s: number;
+}
+
 /** 是否运行在 Tauri WebView 内 */
-export const inTauri =
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+function detectTauri(): boolean {
+  if (typeof window === "undefined") return false;
+  const hasInternals = "__TAURI_INTERNALS__" in window;
+  const hasTauri = "__TAURI__" in window;
+  console.log("[AivyOS] 环境检测: __TAURI_INTERNALS__ =", hasInternals, "__TAURI__ =", hasTauri);
+  return hasInternals || hasTauri;
+}
+
+export const inTauri = detectTauri();
+
+console.log("[AivyOS] inTauri =", inTauri);
+
+/** Mock 数据（非 Tauri 环境下的演示数据）。 */
+const MOCK_DATA: Record<string, any> = {
+  "models.catalog": {
+    providers: [
+      { id: "deepseek", name: "DeepSeek", category: "cloud-compat", description: "深度求索", base_url: "https://api.deepseek.com/v1", api_key_env: "DEEPSEEK_API_KEY", auth_type: "api_key", website: "https://deepseek.com", default_model: "deepseek-v4-flash" },
+      { id: "openai", name: "OpenAI", category: "cloud-native", description: "GPT 系列", base_url: "https://api.openai.com/v1", api_key_env: "OPENAI_API_KEY", auth_type: "api_key", website: "https://openai.com", default_model: "gpt-4o" },
+      { id: "anthropic", name: "Anthropic", category: "cloud-native", description: "Claude 系列", base_url: "https://api.anthropic.com/v1", api_key_env: "ANTHROPIC_API_KEY", auth_type: "api_key", website: "https://anthropic.com", default_model: "claude-3-sonnet-20240229" },
+      { id: "google", name: "Google", category: "cloud-native", description: "Gemini 系列", base_url: "https://generativelanguage.googleapis.com/v1", api_key_env: "GOOGLE_API_KEY", auth_type: "api_key", website: "https://google.com", default_model: "gemini-1.5-pro" },
+      { id: "qwen", name: "阿里云百炼", category: "cloud-compat", description: "通义系列", base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1", api_key_env: "DASHSCOPE_API_KEY", auth_type: "api_key", website: "https://aliyun.com", default_model: "qwen-plus" },
+      { id: "siliconflow", name: "SiliconFlow", category: "cloud-compat", description: "硅基流动", base_url: "https://api.siliconflow.cn/v1", api_key_env: "SILICONFLOW_API_KEY", auth_type: "api_key", website: "https://siliconflow.cn", default_model: "deepseek-v4-flash" },
+      { id: "doubao", name: "豆包/火山引擎", category: "cloud-native", description: "豆包大模型", base_url: "https://ark.cn-beijing.volces.com/api/v3", api_key_env: "VOLCENGINE_API_KEY", auth_type: "api_key", website: "https://volcengine.com", default_model: "doubao-pro-32k" },
+      { id: "mistral", name: "Mistral AI", category: "cloud-native", description: "Mistral 系列", base_url: "https://api.mistral.ai/v1", api_key_env: "MISTRAL_API_KEY", auth_type: "api_key", website: "https://mistral.ai", default_model: "mistral-large-latest" },
+      { id: "azure-openai", name: "Azure OpenAI", category: "cloud-native", description: "Azure 托管", base_url: "", api_key_env: "AZURE_OPENAI_API_KEY", auth_type: "api_key", website: "https://azure.microsoft.com", default_model: "gpt-4o" },
+      { id: "ollama", name: "Ollama", category: "local", description: "本地运行", base_url: "http://localhost:11434/v1", api_key_env: "", auth_type: "none", website: "https://ollama.com", default_model: "qwen2.5:7b" },
+      { id: "vllm", name: "vLLM", category: "local", description: "本地推理服务", base_url: "http://localhost:8000/v1", api_key_env: "", auth_type: "none", website: "https://vllm.ai", default_model: "qwen2.5-7b" },
+      { id: "bedrock", name: "AWS Bedrock", category: "cloud-native", description: "亚马逊云", base_url: "", api_key_env: "AWS_ACCESS_KEY_ID", auth_type: "sigv4", website: "https://aws.amazon.com", default_model: "anthropic.claude-3-sonnet" },
+    ],
+    categories: {
+      local: [{ id: "ollama", name: "Ollama" }, { id: "vllm", name: "vLLM" }],
+      "cloud-compat": [{ id: "deepseek", name: "DeepSeek" }, { id: "qwen", name: "阿里云百炼" }, { id: "siliconflow", name: "SiliconFlow" }],
+      "cloud-native": [{ id: "openai", name: "OpenAI" }, { id: "anthropic", name: "Anthropic" }, { id: "google", name: "Google" }, { id: "doubao", name: "豆包/火山引擎" }, { id: "mistral", name: "Mistral AI" }, { id: "azure-openai", name: "Azure OpenAI" }, { id: "bedrock", name: "AWS Bedrock" }],
+    },
+  },
+  "models.api-key.list": {
+    api_keys: {
+      DEESEEK_API_KEY: { env_var: "DEEPSEEK_API_KEY", has_key: false, key_length: 0 },
+      OPENAI_API_KEY: { env_var: "OPENAI_API_KEY", has_key: false, key_length: 0 },
+      ANTHROPIC_API_KEY: { env_var: "ANTHROPIC_API_KEY", has_key: false, key_length: 0 },
+      DASHSCOPE_API_KEY: { env_var: "DASHSCOPE_API_KEY", has_key: false, key_length: 0 },
+      VOLCENGINE_API_KEY: { env_var: "VOLCENGINE_API_KEY", has_key: false, key_length: 0 },
+      SILICONFLOW_API_KEY: { env_var: "SILICONFLOW_API_KEY", has_key: false, key_length: 0 },
+      MISTRAL_API_KEY: { env_var: "MISTRAL_API_KEY", has_key: false, key_length: 0 },
+      AZURE_OPENAI_API_KEY: { env_var: "AZURE_OPENAI_API_KEY", has_key: false, key_length: 0 },
+    },
+  },
+  "models.api-key.set": { ok: true },
+  "models.api-key.remove": { ok: true },
+  "voice.engines": {
+    total_engines: 3,
+    asr_count: 1,
+    tts_count: 2,
+    engines: [
+      { name: "asr-mock", type: "asr", provider: "mock", ready: true },
+      { name: "tts-mock", type: "tts", provider: "mock", ready: true },
+      { name: "tts-doubao", type: "tts", provider: "doubao", ready: false },
+    ],
+    breakers: {},
+    cost: { total_tokens: 0, total_cost_usd: 0 },
+  },
+  "voice.engine.config": { ok: true },
+  "voice.test-tts": async (params: any) => {
+    // 浏览器模式：云端服务商无 API Key 时返回错误
+    const cloudNeedKey = ["doubao-tts", "doubao"];
+    if (cloudNeedKey.includes(params?.provider) && !params?.api_key) {
+      return {
+        ok: false,
+        error: `服务商 ${params.provider} 需要配置 API Key，请先在上方填写后再试听`,
+        backend: params?.provider,
+      };
+    }
+    // 否则生成一段简短的 base64 WAV 提示音
+    const duration = Math.min(params?.text?.length || 1, 3) * 0.5;
+    const sampleRate = 24000;
+    const numSamples = Math.floor(sampleRate * duration);
+    const pcm = new Int16Array(numSamples);
+    for (let i = 0; i < numSamples; i++) {
+      pcm[i] = Math.floor(1200 * Math.sin(2 * Math.PI * 440 * i / sampleRate));
+    }
+    const wavLen = 44 + pcm.length * 2;
+    const buffer = new ArrayBuffer(wavLen);
+    const view = new DataView(buffer);
+    const writeStr = (offset: number, str: string) => {
+      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    };
+    writeStr(0, "RIFF");
+    view.setUint32(4, 36 + pcm.length * 2, true);
+    writeStr(8, "WAVE");
+    writeStr(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, "data");
+    view.setUint32(40, pcm.length * 2, true);
+    for (let i = 0; i < pcm.length; i++) {
+      view.setInt16(44 + i * 2, pcm[i], true);
+    }
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)) as any);
+    }
+    const wavB64 = btoa(binary);
+    return {
+      ok: true,
+      wav_b64: wavB64,
+      sample_rate: sampleRate,
+      text: params?.text || "测试",
+      backend: "mock-browser",
+      pcm_len: pcm.length * 2,
+      wav_len: wavLen,
+      latency_ms: 50,
+    };
+  },
+  "models.test-connection": {
+    ok: true, model_count: 3,
+    models: [
+      { id: "deepseek-v4-flash", owned_by: "deepseek" },
+      { id: "deepseek-v4-pro", owned_by: "deepseek" },
+      { id: "deepseek-v3", owned_by: "deepseek" },
+    ],
+  },
+  "models.list": [
+    { mode: "ollama", model: "local-default", available: true, provider: "ollama" },
+    { mode: "deepseek", model: "cloud-default", available: true, provider: "deepseek" },
+    { mode: "mock", model: "mock-default", available: true, provider: "mock" },
+  ],
+  "models.preset-list": {
+    ok: true, provider: "deepseek",
+    models: [
+      { name: "deepseek-v4-flash", display_name: "DeepSeek V4 Flash", context_window: 1000000, supports_vision: false, supports_tool_use: true, supports_thinking: true, supports_streaming: true, input_price_per_1m: 0.14, output_price_per_1m: 0.28, description: "通用主力，性价比首选" },
+      { name: "deepseek-v4-pro", display_name: "DeepSeek V4 Pro", context_window: 1000000, supports_vision: false, supports_tool_use: true, supports_thinking: true, supports_streaming: true, input_price_per_1m: 1.74, output_price_per_1m: 3.48, description: "旗舰推理，高难度任务" },
+      { name: "deepseek-v3", display_name: "DeepSeek V3", context_window: 128000, supports_vision: false, supports_tool_use: false, supports_thinking: false, supports_streaming: true, input_price_per_1m: 0.5, output_price_per_1m: 2, description: "低成本版本" },
+    ],
+  },
+};
 
 /**
  * 通用桥接调用：Tauri 内走 invoke("bridge")；
- * 浏览器演示模式（npm run dev 单独跑）抛错并提示。
+ * 浏览器演示模式（npm run dev 单独跑）使用 Mock 数据。
  */
 export async function bridgeCall<T>(
   method: string,
@@ -44,12 +276,30 @@ export async function bridgeCall<T>(
 ): Promise<T> {
   if (inTauri) {
     const { invoke } = await import("@tauri-apps/api/core");
-    return invoke<T>("bridge", { method, params });
+    console.log("[AivyOS] bridge.invoke:", method, params);
+    try {
+      const result = await invoke<T>("bridge", { method, params });
+      console.log("[AivyOS] bridge.result:", method, result);
+      return result;
+    } catch (e) {
+      console.error("[AivyOS] bridge.error:", method, e);
+      throw e;
+    }
   }
+  // 非 Tauri 环境：返回 Mock 数据
+  if (MOCK_DATA[method]) {
+    console.log("[AivyOS] bridge.mock:", method);
+    return MOCK_DATA[method] as T;
+  }
+  console.warn("[AivyOS] 非 Tauri 环境，无 Mock 数据:", method);
   throw new Error(
     `演示模式：请通过 \`npm run tauri dev\`（需 Rust）或先启动 Python 核心。bridge(${method}) 未接通。`
   );
 }
+
+// ================================================================
+//  基础对话接口
+// ================================================================
 
 export async function sendChat(text: string, sessionId?: string): Promise<ChatReply> {
   return bridgeCall<ChatReply>("chat.send", { text, session_id: sessionId ?? null });
@@ -57,4 +307,438 @@ export async function sendChat(text: string, sessionId?: string): Promise<ChatRe
 
 export async function fetchStatus(): Promise<StatusInfo> {
   return bridgeCall<StatusInfo>("status", {});
+}
+
+// ================================================================
+//  Voice
+// ================================================================
+
+export async function getVoiceStatus(): Promise<VoiceStatus> {
+  return bridgeCall<VoiceStatus>("voice.status", {});
+}
+
+export async function runVoiceTurn(text?: string): Promise<VoiceTurnResult> {
+  return bridgeCall<VoiceTurnResult>("voice.turn", { text: text ?? null });
+}
+
+export async function listenVoice(): Promise<VoiceTurnResult> {
+  return bridgeCall<VoiceTurnResult>("voice.turn", {});
+}
+
+// ================================================================
+//  Wake Loop (后台唤醒监听)
+// ================================================================
+
+export interface WakeLoopStatus {
+  ok: boolean;
+  running?: boolean;
+  already_running?: boolean;
+  already_stopped?: boolean;
+  wake_count?: number;
+  last_wake_time?: number;
+  cooldown_remaining?: number;
+  status?: WakeLoopStatus;
+}
+
+export interface WakeEvent {
+  text: string;
+  timestamp: number;
+}
+
+/** 启动后台唤醒监听循环。 */
+export async function startWakeLoop(asrConfig?: Record<string, unknown>): Promise<WakeLoopStatus> {
+  return bridgeCall<WakeLoopStatus>("voice.wake_loop.start", { asr_config: asrConfig || {} });
+}
+
+/** 停止后台唤醒监听循环。 */
+export async function stopWakeLoop(): Promise<WakeLoopStatus> {
+  return bridgeCall<WakeLoopStatus>("voice.wake_loop.stop", {});
+}
+
+/** 查询后台唤醒监听状态。 */
+export async function getWakeLoopStatus(): Promise<WakeLoopStatus> {
+  return bridgeCall<WakeLoopStatus>("voice.wake_loop.status", {});
+}
+
+/** 订阅唤醒事件（Tauri 事件系统）。 */
+export async function listenWakeEvents(
+  onWake: (event: WakeEvent) => void
+): Promise<() => void> {
+  if (!inTauri) {
+    return () => {};
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen<WakeEvent>("ipc:wake.detected", (event) => {
+    onWake(event.payload as WakeEvent);
+  });
+  return unlisten;
+}
+
+// ================================================================
+//  Memory
+// ================================================================
+
+export async function searchMemory(query: string, topK = 5): Promise<MemoryEntry[]> {
+  return bridgeCall<MemoryEntry[]>("memory.search", { query, top_k: topK });
+}
+
+export async function addMemory(text: string): Promise<{ id: string }> {
+  return bridgeCall<{ id: string }>("memory.add", { text });
+}
+
+export async function listMemory(): Promise<MemoryEntry[]> {
+  return bridgeCall<MemoryEntry[]>("memory.list", {});
+}
+
+// ================================================================
+//  Autonomous Tasks
+// ================================================================
+
+export async function createTask(description: string): Promise<{
+  ok: boolean;
+  task_id: string;
+  steps: { title: string; detail: string }[];
+  total_steps: number;
+}> {
+  return bridgeCall("task.create", { description });
+}
+
+export async function listTasks(): Promise<TaskInfo[]> {
+  return bridgeCall<TaskInfo[]>("task.list", {});
+}
+
+export async function executeTask(taskId: string): Promise<{ ok: boolean; task: TaskInfo }> {
+  return bridgeCall("task.execute", { task_id: taskId });
+}
+
+// ================================================================
+//  Scheduler
+// ================================================================
+
+export async function listSchedules(): Promise<SchedulerJob[]> {
+  return bridgeCall<SchedulerJob[]>("sched.list", {});
+}
+
+export async function createSchedule(
+  name: string,
+  cronExpr: string,
+  handlerText: string
+): Promise<{ ok: boolean; name?: string; cron?: string; error?: string }> {
+  return bridgeCall("sched.create", { name, cron_expr: cronExpr, handler_text: handlerText });
+}
+
+// ================================================================
+//  Vibe Coding
+// ================================================================
+
+export async function runVibe(
+  request: string,
+  executor: string = "demo"
+): Promise<VibeRunResult> {
+  return bridgeCall<VibeRunResult>("vibe.run", { request, executor });
+}
+
+// ================================================================
+//  Boot / Self-check
+// ================================================================
+
+export async function runBootCheck(): Promise<BootCheckResult> {
+  return bridgeCall<BootCheckResult>("boot.check", {});
+}
+
+// ================================================================
+//  Voice Settings
+// ================================================================
+
+export async function getVoiceSettings(): Promise<VoiceSettings> {
+  return bridgeCall<VoiceSettings>("voiceset.get", {});
+}
+
+export async function setVoiceSettings(
+  field: string,
+  value: unknown
+): Promise<{ ok: boolean; field?: string; value?: unknown; error?: string }> {
+  return bridgeCall("voiceset.set", { field, value });
+}
+
+// ================================================================
+//  Model Management
+// ================================================================
+
+export async function listModels(): Promise<
+  { mode: string; model: string; available: boolean; active?: boolean }[]
+> {
+  return bridgeCall("models.list", {});
+}
+
+export async function setActiveModel(model: string | null): Promise<{ ok: boolean; active: string | null; message: string }> {
+  return bridgeCall("models.set-active", { model });
+}
+
+// ================================================================
+//  Model Management — Phase 2: 健康仪表盘 + 成本追踪
+// ================================================================
+
+export interface BackendHealth {
+  mode: string;
+  model: string;
+  provider: string;
+  available: boolean;
+  breaker_state: string;
+  priority: number;
+  capabilities: Record<string, unknown>;
+  latency_ms?: number;
+}
+
+export interface CostStats {
+  backend_name: string;
+  total_requests: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost_usd: number;
+  avg_latency_ms: number;
+  last_updated: number;
+}
+
+export interface CostDashboard {
+  total_requests: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  backend_count: number;
+  backends: Record<string, CostStats>;
+  recent: CostEntry[];
+}
+
+export interface CostEntry {
+  timestamp: number;
+  backend_name: string;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  latency_ms: number;
+  cost_usd: number;
+}
+
+export async function getModelsHealth(): Promise<{
+  backends: BackendHealth[];
+  breakers: Record<string, unknown>;
+  strategy: Record<string, unknown>;
+}> {
+  return bridgeCall("models.health", {});
+}
+
+export async function getModelsCost(backend?: string, recent = false): Promise<CostDashboard> {
+  return bridgeCall("models.cost", { backend: backend ?? null, recent });
+}
+
+export async function getModelsBackends(): Promise<BackendHealth[]> {
+  return bridgeCall("models.backends", {});
+}
+
+// ================================================================
+//  Model Catalog & API Keys — Enhanced
+// ================================================================
+
+export interface ProviderModel {
+  name: string;
+  display_name: string;
+  context_window: number;
+  supports_vision: boolean;
+  supports_tool_use: boolean;
+  supports_thinking: boolean;
+  supports_streaming: boolean;
+  input_price_per_1m: number;
+  output_price_per_1m: number;
+  description: string;
+}
+
+export interface ProviderCatalogEntry {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  base_url: string;
+  api_key_env: string;
+  auth_type: string;
+  website: string;
+  default_model: string;
+  models: ProviderModel[];
+}
+
+export interface ApiKeyEntry {
+  env_var: string;
+  has_key: boolean;
+  key_length: number;
+}
+
+export async function getModelCatalog(keyword?: string): Promise<any> {
+  return bridgeCall("models.catalog", { keyword: keyword || "" });
+}
+
+export async function listApiKeys(): Promise<{ api_keys: Record<string, ApiKeyEntry> }> {
+  return bridgeCall("models.api-key.list", {});
+}
+
+export async function setApiKey(
+  field: string,
+  env_var: string,
+  value: string,
+): Promise<{ ok: boolean; field: string; env_var: string }> {
+  return bridgeCall("models.api-key.set", { field, env_var, value });
+}
+
+export async function removeApiKey(
+  field: string,
+  env_var: string,
+): Promise<{ ok: boolean }> {
+  return bridgeCall("models.api-key.remove", { field, env_var });
+}
+
+export interface VoiceEngineStatus {
+  total_engines: number;
+  asr_count: number;
+  tts_count: number;
+  engines: any[];
+  breakers: any;
+  cost: any;
+}
+
+export async function getVoiceEngines(): Promise<VoiceEngineStatus> {
+  return bridgeCall("voice.engines", {});
+}
+
+export async function configVoiceEngine(
+  engine: string,
+  field: string,
+  value: string,
+): Promise<{ ok: boolean; engine: string; field: string }> {
+  return bridgeCall("voice.engine.config", { engine, field, value });
+}
+
+export interface TestTtsResult {
+  ok: boolean;
+  wav_b64?: string;
+  sample_rate?: number;
+  text?: string;
+  backend?: string;
+  pcm_len?: number;
+  wav_len?: number;
+  latency_ms?: number;
+  error?: string;
+}
+
+export async function testTts(
+  text: string,
+  provider: string,
+  voice: string,
+  speed: number,
+  apiKey?: string,
+  resourceId?: string,
+): Promise<TestTtsResult> {
+  return bridgeCall("voice.test-tts", {
+    text, provider, voice, speed,
+    api_key: apiKey || "",
+    resource_id: resourceId || "",
+  });
+}
+
+// ================================================================
+//  Model Connection — New
+// ================================================================
+
+export interface TestConnectionResult {
+  ok: boolean;
+  provider?: string;
+  model_count?: number;
+  models?: { id: string; owned_by: string }[];
+  error?: string;
+}
+
+export interface ListModelsResult {
+  ok: boolean;
+  provider?: string;
+  models?: ProviderModel[];
+  error?: string;
+}
+
+export async function testModelConnection(
+  provider: string,
+  apiKey: string,
+  baseUrl: string,
+): Promise<TestConnectionResult> {
+  return bridgeCall("models.test-connection", { provider, api_key: apiKey, base_url: baseUrl });
+}
+
+export async function listProviderModels(
+  provider: string,
+  keyword?: string,
+): Promise<ListModelsResult> {
+  return bridgeCall("models.preset-list", { provider, keyword: keyword || "" });
+}
+
+// ================================================================
+//  MCP Server — Phase 3
+// ================================================================
+
+export interface McpTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+export async function listMcpTools(): Promise<{ tools: McpTool[] }> {
+  return bridgeCall("mcp.tools", {});
+}
+
+export async function callMcpTool(tool: string, params: Record<string, unknown>): Promise<unknown> {
+  return bridgeCall("mcp.call", { tool, params });
+}
+
+// ================================================================
+//  Fallback Chain — Phase 3
+// ================================================================
+
+export interface FallbackStepConfig {
+  name: string;
+  model: string;
+  provider: string;
+  temperature?: number;
+  max_retries?: number;
+  timeout_s?: number;
+  enabled?: boolean;
+}
+
+export async function executeFallbackChain(
+  steps: FallbackStepConfig[],
+  messages: { role: string; content: string }[],
+  model = "auto"
+): Promise<{
+  success: boolean;
+  step_used: string;
+  text: string;
+  error: string;
+  total_latency_ms: number;
+  steps_attempted: string[];
+}> {
+  return bridgeCall("fallback.execute", { steps, messages, model });
+}
+
+export async function getFallbackStatus(steps: FallbackStepConfig[]): Promise<unknown> {
+  return bridgeCall("fallback.status", { steps });
+}
+
+// ================================================================
+//  Config
+// ================================================================
+
+export async function getConfig(): Promise<Record<string, unknown>> {
+  return bridgeCall<Record<string, unknown>>("config.get", {});
+}
+
+export async function updateConfig(
+  path: string,
+  value: unknown
+): Promise<{ ok: boolean; path?: string }> {
+  return bridgeCall("config.update", { path, value });
 }

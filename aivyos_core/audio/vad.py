@@ -36,24 +36,52 @@ def _rms(frame: bytes) -> float:
 class EnergyVAD(VADEngine):
     """RMS 能量阈值 VAD（回退实现，§3.1.1 的简化替代）。
 
-    - threshold：高于判为语音（16-bit 默认 ~300，约 -34dBFS）
-    - hangover_ms：语音结束后保持"语音中"的时长，防止断词
+    设计原则：宁可误报不可漏报。
+    - 自动校准：前 20 帧计算噪声基线，阈值 = 噪声 * 1.3
+    - 高灵敏度：单帧超阈值即判定为语音（由上层负责起止判定）
+    - 校准后阈值范围：15-500，确保在各种环境下都能捕捉语音
     """
 
-    def __init__(self, threshold: int = 300, hangover_ms: int = 300, frame_ms: int = 30) -> None:
+    def __init__(self, threshold: int = 30, hangover_ms: int = 30, frame_ms: int = 30,
+                 auto_calibrate: bool = True) -> None:
         self.threshold = threshold
         self.hangover_ms = hangover_ms
         self.frame_ms = frame_ms
-        self._speech_frames = 0  # 连续语音帧计数（用于断句）
+        self._noise_rms: list[float] = []
+        self._auto_calibrate = auto_calibrate
+        self._calibrated = False
+        self._calibration_frames = 20
 
     def is_speech(self, frame: bytes) -> bool:
-        return _rms(frame) >= self.threshold
+        rms = _rms(frame)
+        if self._auto_calibrate and not self._calibrated:
+            self._noise_rms.append(rms)
+            if len(self._noise_rms) >= self._calibration_frames:
+                self._finalize_calibration()
+        return rms >= self.threshold
+
+    def _finalize_calibration(self) -> None:
+        """基于噪声均值计算阈值（高灵敏度策略）。"""
+        avg_noise = sum(self._noise_rms) / len(self._noise_rms)
+
+        self.threshold = max(15, min(500, int(avg_noise * 1.3)))
+        self._calibrated = True
+        import logging
+        logging.getLogger(__name__).info(
+            "EnergyVAD 校准: noise_avg=%.1f, threshold=%d (n=%d)",
+            avg_noise, self.threshold, len(self._noise_rms)
+        )
 
 
 class SileroVAD(VADEngine):
-    """Silero VAD v5（可选依赖 silero-vad / torch）。"""
+    """Silero VAD v5（可选依赖 silero-vad / torch）。
 
-    def __init__(self, sample_rate: int = 16000, threshold: float = 0.5) -> None:
+    Silero VAD 要求固定帧大小：
+      - 16000 Hz → 512 采样点 (32ms)
+      - 8000 Hz  → 256 采样点 (32ms)
+    """
+
+    def __init__(self, sample_rate: int = 16000, threshold: float = 0.2) -> None:
         try:
             from silero_vad import load_silero_vad  # type: ignore
 
@@ -62,11 +90,25 @@ class SileroVAD(VADEngine):
             raise RuntimeError("silero-vad 未安装：pip install silero-vad（缺失时已可降级 EnergyVAD）") from e
         self.sample_rate = sample_rate
         self.threshold = threshold
+        self._target_samples = 512 if sample_rate == 16000 else 256
+        self._target_bytes = self._target_samples * 2  # int16 = 2 bytes
 
     def is_speech(self, frame: bytes) -> bool:
+        """检测单帧是否包含语音。
+
+        Args:
+            frame: int16 PCM 音频帧（任意长度，自动 padding/truncation 到模型要求）
+
+        Returns:
+            True 表示检测到语音
+        """
         import torch  # type: ignore
 
-        tensor = torch.frombuffer(frame, dtype=torch.int16).float() / 32768.0
+        frame_data = frame
+        if len(frame) != self._target_bytes:
+            frame_data = frame[:self._target_bytes].ljust(self._target_bytes, b"\x00")
+
+        tensor = torch.frombuffer(frame_data, dtype=torch.int16).clone().float() / 32768.0
         prob = self.model(tensor, self.sample_rate).item()
         return prob >= self.threshold
 
@@ -78,6 +120,7 @@ def create_vad(cfg: dict) -> VADEngine:
     if cfg.get("vad_backend") == "energy":
         return EnergyVAD(frame_ms=frame_ms)
     try:
-        return SileroVAD(sample_rate=sample_rate)
+        threshold = float(cfg.get("vad_threshold", 0.2))
+        return SileroVAD(sample_rate=sample_rate, threshold=threshold)
     except (RuntimeError, ImportError):
         return EnergyVAD(frame_ms=frame_ms)

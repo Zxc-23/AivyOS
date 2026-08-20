@@ -11,7 +11,28 @@
   persona.set    params {field, value} → {"ok": bool}
   memory.search  params {query, top_k?} → [ {id, text, score, created_at} ]
   memory.add     params {text} → {"id": ...}
+  memory.list    → [ all memory entries ]
   status         → {backend, routes, persona, home, sessions}
+  voice.status   → {asr, tts, vad, source, sink, wake_required, wake_words, llm_route_mode}
+  voice.turn     params {text?} → {text, reply, model, route, latency_ms, ...}
+  task.create    params {description} → {task_id, steps: [...] }
+  task.list      → [ {id, title, status, steps, created_at} ]
+  task.execute   params {task_id} → {ok, result}
+  sched.list     → [ {name, kind, runs, last_run, error} ]
+  sched.create   params {name, cron_expr, handler_text} → {"ok": true}
+  vibe.run       params {request} → {steps, files, preview_url, ...}
+  boot.check     → {checks: [...], progress, summary}
+  boot.restore   → {summary_text, long_term_memories, ...}
+  voiceset.get   → {wake_words, asr_backend, tts_backend, ...}
+  voiceset.set   params {field, value} → {"ok": true}
+  models.list    → [{mode, model, available}]
+  config.get     → full config dict
+  config.update  params {path, value} → {"ok": true}
+  mcp.tools      → LLM MCP 工具列表
+  mcp.call       params {tool, params} → MCP 工具调用结果
+  fallback.execute params {steps, messages} → 降级链执行结果
+  fallback.status params {steps} → 降级链配置状态
+  voice.test-tts params {text, provider, voice, speed, api_key?, resource_id?} → {ok, wav_b64, sample_rate, latency_ms, ...}
 """
 
 from __future__ import annotations
@@ -21,11 +42,14 @@ import asyncio
 import json
 import logging
 import signal
+from typing import Any, Dict
 
 from aivyos_core.chat.engine import ChatEngine
-from aivyos_core.config import load_config
+from aivyos_core.config import load_config, deep_merge
 from aivyos_core.ipc.server import AivyIpcServer
 from aivyos_core import __version__
+
+log = logging.getLogger(__name__)
 
 
 def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
@@ -35,6 +59,34 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         port=int(ipc_cfg.get("port", 31701)),
         pipe_name=ipc_cfg.get("pipe_name"),
     )
+
+    # ---- VoiceSession (lazily created) ----
+    _voice_session = None
+
+    def get_voice():
+        nonlocal _voice_session
+        if _voice_session is None:
+            from aivyos_core.voice.session import VoiceSession
+            _voice_session = VoiceSession(cfg, engine)
+        return _voice_session
+
+    # ---- Scheduler (lazily created) ----
+    _scheduler = None
+
+    def get_scheduler():
+        nonlocal _scheduler
+        if _scheduler is None:
+            from aivyos_core.scheduler import Scheduler
+            _scheduler = Scheduler(tick_s=float(cfg.get("scheduler", {}).get("tick_s", 5)))
+        return _scheduler
+
+    # ---- Task registry (in-memory, demo-grade) ----
+    _tasks: Dict[str, Dict[str, Any]] = {}
+    _task_counter = 0
+
+    # ================================================================
+    #  基础方法
+    # ================================================================
 
     @server.method("ping")
     async def ping(params):
@@ -69,6 +121,14 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
     async def persona_set(params):
         return {"ok": engine.set_persona(params["field"], params["value"])}
 
+    @server.method("status")
+    async def status(params):
+        return engine.status()
+
+    # ================================================================
+    #  Memory
+    # ================================================================
+
     @server.method("memory.search")
     async def memory_search(params):
         hits = await engine.memory.search(params.get("query", ""), top_k=int(params.get("top_k", 5)))
@@ -79,9 +139,899 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         rid = await engine.memory.add(params["text"])
         return {"id": rid}
 
-    @server.method("status")
-    async def status(params):
-        return engine.status()
+    @server.method("memory.list")
+    async def memory_list(params):
+        all_memories = await engine.memory.get_all()
+        return [m if isinstance(m, dict) else {"text": str(m), "created_at": None} for m in all_memories]
+
+    # ================================================================
+    #  Voice
+    # ================================================================
+
+    @server.method("voice.status")
+    async def voice_status(params):
+        try:
+            vs = get_voice()
+            return vs.status()
+        except Exception as e:
+            return {"error": str(e), "fallback": True, "asr": "mock", "tts": "mock"}
+
+    @server.method("voice.turn")
+    async def voice_turn(params):
+        """执行一轮语音对话。
+
+        - 传 text：跳过真实音频采集，直接用文本走完整链路（text_override 模式）
+        - 不传 text：真实麦克风采集 → VAD → ASR → LLM → TTS（listen 模式）
+        """
+        text_override = params.get("text")
+        try:
+            vs = get_voice()
+            result = await vs.run_turn(text_override=text_override)
+            if result is None:
+                return {"ok": False, "error": "语音对话执行失败", "asr_text": text_override}
+            # 处理无语音检测等预期内的失败
+            if result.get("error") == "no_speech_detected":
+                return {
+                    "ok": False,
+                    "error": result.get("error_detail", "未检测到语音输入"),
+                    "error_type": "no_speech_detected",
+                    "source": result.get("source", "unknown"),
+                    "asr_text": text_override,
+                }
+            # 处理唤醒词未命中
+            if result.get("wake") is False:
+                return {
+                    "ok": False,
+                    "error": "唤醒词未检测到，请说唤醒词后再试",
+                    "error_type": "wake_word_missed",
+                    "text": result.get("text", ""),
+                    "asr_text": text_override,
+                }
+            return {"ok": True, **result}
+        except Exception as e:
+            log.exception("voice.turn 异常")
+            # 仅在文本模式下降级到 chat.send；真实音频模式直接返回错误
+            if text_override is not None:
+                reply = await engine.send(text_override)
+                return {
+                    "ok": True,
+                    "text": text_override,
+                    "reply": reply.text,
+                    "model": reply.model,
+                    "route": reply.route.to_dict(),
+                    "asr_backend": "fallback-chat",
+                    "tts_backend": "fallback-chat",
+                    "fallback": True,
+                    "error_detail": str(e),
+                }
+            return {"ok": False, "error": str(e), "error_type": type(e).__name__}
+
+    @server.method("voice.listen")
+    async def voice_listen(params):
+        """真实麦克风模式：采集音频 → ASR → LLM → TTS → 播放。"""
+        try:
+            vs = get_voice()
+            result = await vs.run_turn(text_override=None)
+            if result is None:
+                return {"ok": False, "error": "未检测到语音输入"}
+            return {"ok": True, **result}
+        except Exception as e:
+            log.exception("voice.listen 异常")
+            return {
+                "ok": False,
+                "error": str(e),
+                "error_type": type(e).__name__,
+            }
+
+    # ================================================================
+    #  Wake Loop (后台唤醒监听)
+    # ================================================================
+
+    _wake_loop_ref = {"loop": None}
+
+    @server.method("voice.wake_loop.start")
+    async def wake_loop_start(params):
+        """启动后台唤醒监听循环。
+
+        Args:
+            params: {"asr_config": {...}, "wake_words": [...]}
+
+        Returns:
+            {"ok": true, "status": {...}}
+        """
+        if _wake_loop_ref["loop"] and _wake_loop_ref["loop"].running:
+            return {"ok": True, "already_running": True, "status": _wake_loop_ref["loop"].status()}
+
+        from aivyos_core.audio.wake_loop import WakeLoop
+
+        asr_cfg = params.get("asr_config", {})
+        wake_words = params.get("wake_words")
+
+        def on_wake(text: str) -> None:
+            asyncio.create_task(
+                server.broadcast_event("wake.detected", {
+                    "text": text,
+                    "timestamp": asyncio.get_event_loop().time(),
+                })
+            )
+
+        loop = WakeLoop(on_wake=on_wake, asr_config=asr_cfg)
+        _wake_loop_ref["loop"] = loop
+        await loop.start()
+        return {"ok": True, "status": loop.status()}
+
+    @server.method("voice.wake_loop.stop")
+    async def wake_loop_stop(params):
+        """停止后台唤醒监听循环。"""
+        loop = _wake_loop_ref["loop"]
+        if not loop:
+            return {"ok": True, "already_stopped": True}
+        await loop.stop()
+        _wake_loop_ref["loop"] = None
+        return {"ok": True}
+
+    @server.method("voice.wake_loop.status")
+    async def wake_loop_status(params):
+        """查询后台唤醒监听状态。"""
+        loop = _wake_loop_ref["loop"]
+        if not loop:
+            return {"ok": True, "running": False}
+        return {"ok": True, **loop.status()}
+
+    # ================================================================
+    #  Autonomous Tasks
+    # ================================================================
+
+    @server.method("task.create")
+    async def task_create(params):
+        nonlocal _task_counter
+        _task_counter += 1
+        task_id = f"task_{_task_counter:04d}"
+        description = params.get("description", "未命名任务")
+        # 使用 LLM 解析任务为步骤
+        steps = []
+        try:
+            analysis = await engine.send(
+                f"将以下任务拆解为 3-5 个可执行步骤，以 JSON 数组格式返回，每个步骤包含 title 和 detail 字段：\n{description}"
+            )
+            import re
+            text = analysis.text
+            # 尝试提取 JSON
+            json_match = re.search(r'\[[\s\S]*\]', text)
+            if json_match:
+                steps = json.loads(json_match.group())
+            else:
+                steps = [{"title": f"分析任务：{description[:30]}", "detail": "理解需求"},
+                         {"title": "制定执行计划", "detail": "拆解子任务"},
+                         {"title": "执行并验证", "detail": "运行并检查结果"}]
+        except Exception:
+            steps = [{"title": f"分析任务：{description[:30]}", "detail": "理解需求"},
+                     {"title": "制定执行计划", "detail": "拆解子任务"},
+                     {"title": "执行并验证", "detail": "运行并检查结果"}]
+
+        _tasks[task_id] = {
+            "id": task_id,
+            "title": description[:50],
+            "status": "pending",
+            "steps": steps,
+            "current_step": 0,
+            "created_at": None,
+            "logs": [f"任务已创建：{description}"],
+        }
+        return {"ok": True, "task_id": task_id, "steps": steps, "total_steps": len(steps)}
+
+    @server.method("task.list")
+    async def task_list(params):
+        return list(_tasks.values())
+
+    @server.method("task.execute")
+    async def task_execute(params):
+        task_id = params["task_id"]
+        task = _tasks.get(task_id)
+        if not task:
+            return {"ok": False, "error": "任务不存在"}
+        task["status"] = "working"
+        task["current_step"] = min(task["current_step"] + 1, len(task["steps"]))
+        step_idx = task["current_step"] - 1
+        if 0 <= step_idx < len(task["steps"]):
+            step = task["steps"][step_idx]
+            task["logs"].append(f"执行步骤 {step_idx + 1}/{len(task['steps'])}: {step.get('title', '')}")
+        if task["current_step"] >= len(task["steps"]):
+            task["status"] = "completed"
+            task["logs"].append("所有步骤执行完成")
+        return {"ok": True, "task": task}
+
+    # ================================================================
+    #  Scheduler
+    # ================================================================
+
+    @server.method("sched.list")
+    async def sched_list(params):
+        sched = get_scheduler()
+        return sched.status()
+
+    @server.method("sched.create")
+    async def sched_create(params):
+        from datetime import datetime
+        sched = get_scheduler()
+        name = params.get("name", "unnamed")
+        cron_expr = params.get("cron_expr", "*/5 * * * *")
+        handler_text = params.get("handler_text", f"定时任务 {name}")
+
+        async def handler():
+            log.info("定时任务触发: %s", name)
+            try:
+                await engine.send(handler_text)
+            except Exception:
+                log.exception("定时任务执行异常")
+
+        try:
+            sched.cron(name, cron_expr)(handler)
+            return {"ok": True, "name": name, "cron": cron_expr}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    # ================================================================
+    #  Vibe Coding
+    # ================================================================
+
+    @server.method("vibe.run")
+    async def vibe_run(params):
+        """运行 VibeCoding 工作流（需求 → 规划 → 生成 → 交付 → 构建 → 预览）。"""
+        request = params.get("request", "创建一个示例网页")
+        executor = params.get("executor", cfg.get("workflow", {}).get("executor", "demo"))
+
+        try:
+            from aivyos_core.workflow.workflows import build_vibe_coding_graph
+            from aivyos_core.workflow.checkpointer import SqliteCheckpointer
+
+            checkpointer = SqliteCheckpointer(cfg.get("workflow", {}).get("checkpoint_db", "checkpoints.sqlite"))
+            graph = build_vibe_coding_graph(checkpointer)
+            compiled = graph.compile()
+
+            workspace = cfg.get("workflow", {}).get("workspace", ".aivyos_workspace")
+
+            ctx = {
+                "executor": executor,
+                "router": engine.router,
+                "codegen": None,
+                "memfs": engine.memfs,
+                "workspace": workspace,
+                "build_command": cfg.get("workflow", {}).get("build_command"),
+                "preview": cfg.get("workflow", {}).get("preview", True),
+            }
+
+            result = await compiled.ainvoke(
+                {"user_request": request, "retry_count": 0},
+                config={"configurable": {"ctx": ctx, "thread_id": f"vibe_{__import__('time').time()}"}},
+            )
+
+            return {
+                "ok": True,
+                "steps": {k: v for k, v in result.items() if k.startswith("note_")},
+                "files": result.get("files", {}),
+                "delivered_to": result.get("delivered_to"),
+                "preview_url": result.get("preview_url"),
+                "preview_ok": result.get("preview_ok"),
+                "build_failed": result.get("build_failed", False),
+            }
+        except Exception as e:
+            log.exception("vibe.run 异常")
+            return {"ok": False, "error": str(e)}
+
+    # ================================================================
+    #  Boot / Self-check
+    # ================================================================
+
+    @server.method("boot.check")
+    async def boot_check(params):
+        """执行系统自检，返回各模块状态。"""
+        checks = []
+        # 1. LLM 路由
+        try:
+            routes = engine.router.backends_status()
+            checks.append({"name": "LLM 路由", "ok": True, "detail": f"{len(routes)} 个后端"})
+        except Exception as e:
+            checks.append({"name": "LLM 路由", "ok": False, "detail": str(e)})
+
+        # 2. 记忆系统
+        try:
+            mem_info = engine.memory.backend_name
+            checks.append({"name": "记忆系统", "ok": True, "detail": mem_info})
+        except Exception as e:
+            checks.append({"name": "记忆系统", "ok": False, "detail": str(e)})
+
+        # 3. 语音
+        try:
+            vs = get_voice()
+            vs_status = vs.status()
+            checks.append({"name": "语音模块", "ok": True, "detail": f"ASR={vs_status.get('asr')}, TTS={vs_status.get('tts')}"})
+        except Exception as e:
+            checks.append({"name": "语音模块", "ok": False, "detail": str(e)})
+
+        # 4. 会话存储
+        try:
+            sessions = engine.list_sessions()
+            checks.append({"name": "会话存储", "ok": True, "detail": f"{len(sessions)} 个会话"})
+        except Exception as e:
+            checks.append({"name": "会话存储", "ok": False, "detail": str(e)})
+
+        # 5. 调度器
+        try:
+            sched = get_scheduler()
+            jobs = sched.status()
+            checks.append({"name": "调度器", "ok": True, "detail": f"{len(jobs)} 个任务"})
+        except Exception as e:
+            checks.append({"name": "调度器", "ok": False, "detail": str(e)})
+
+        # 6. MemFS
+        try:
+            memfs_info = engine.memfs.summary()
+            checks.append({"name": "MemFS", "ok": True, "detail": str(memfs_info)[:100]})
+        except Exception as e:
+            checks.append({"name": "MemFS", "ok": False, "detail": str(e)})
+
+        # 7. 人格
+        try:
+            persona = engine.persona.to_dict()
+            checks.append({"name": "人格引擎", "ok": True, "detail": f"{persona.get('name', 'N/A')}"})
+        except Exception as e:
+            checks.append({"name": "人格引擎", "ok": False, "detail": str(e)})
+
+        # 8. 输出路由
+        try:
+            checks.append({"name": "输出路由", "ok": True, "detail": engine.output.default_channel.value})
+        except Exception as e:
+            checks.append({"name": "输出路由", "ok": False, "detail": str(e)})
+
+        # 9. 情感标签
+        try:
+            checks.append({"name": "情感分析", "ok": True, "detail": "enabled" if engine.emotion.enabled else "disabled"})
+        except Exception as e:
+            checks.append({"name": "情感分析", "ok": False, "detail": str(e)})
+
+        # 10. 视觉
+        try:
+            vision_st = engine.vision.status()
+            checks.append({"name": "视觉模块", "ok": True, "detail": str(vision_st)[:100]})
+        except Exception as e:
+            checks.append({"name": "视觉模块", "ok": False, "detail": str(e)})
+
+        passed = sum(1 for c in checks if c["ok"])
+        progress = int(passed / len(checks) * 100)
+        return {
+            "checks": checks,
+            "progress": progress,
+            "passed": passed,
+            "total": len(checks),
+            "summary": f"{passed}/{len(checks)} 项检查通过",
+        }
+
+    @server.method("boot.restore")
+    async def boot_restore(params):
+        summary = await engine.restore_on_boot()
+        return summary.to_dict()
+
+    # ================================================================
+    #  Voice Settings (配置读写)
+    # ================================================================
+
+    @server.method("voiceset.get")
+    async def voiceset_get(params):
+        return {
+            "wake_words": cfg.get("voice", {}).get("wake_words", []),
+            "wake_required": cfg.get("voice", {}).get("wake_required", False),
+            "asr_backend": cfg.get("asr", {}).get("backend", "auto"),
+            "asr_model": cfg.get("asr", {}).get("model", ""),
+            "tts_backend": cfg.get("tts", {}).get("backend", "auto"),
+            "tts_model": cfg.get("tts", {}).get("model", ""),
+            "language": cfg.get("asr", {}).get("language", "zh"),
+            "silence_timeout_s": cfg.get("voice", {}).get("silence_timeout_s", 3.0),
+        }
+
+    @server.method("voiceset.set")
+    async def voiceset_set(params):
+        field = params.get("field")
+        value = params.get("value")
+        if not field:
+            return {"ok": False, "error": "缺少 field 参数"}
+        # 更新内存中的 cfg（持久化需写文件）
+        parts = field.split(".")
+        target = cfg
+        for p in parts[:-1]:
+            target = target.setdefault(p, {})
+        target[parts[-1]] = value
+        return {"ok": True, "field": field, "value": value}
+
+    # ================================================================
+    #  Model Management
+    # ================================================================
+
+    @server.method("models.list")
+    async def models_list(params):
+        return engine.router.backends_status()
+
+    @server.method("models.set-active")
+    async def models_set_active(params):
+        """设置当前使用的模型（强制路由到指定后端）。"""
+        model_name = params.get("model")
+        if not model_name:
+            engine.router.set_forced_backend(None)
+            return {"ok": True, "active": None, "message": "已取消强制模型，恢复自动路由"}
+        if not engine.router.registry.contains(model_name):
+            return {"ok": False, "error": f"后端不存在: {model_name}"}
+        engine.router.set_forced_backend(model_name)
+        return {"ok": True, "active": model_name, "message": f"已切换到模型: {model_name}"}
+
+    @server.method("models.health")
+    async def models_health(params):
+        """Provider 健康仪表盘：后端状态 + 熔断器 + 成本数据。"""
+        router = engine.router
+        return {
+            "backends": router.backends_status(),
+            "breakers": router.registry.breakers.get_all_stats(),
+            "cost": router.cost_tracker.get_dashboard(),
+            "strategy": str(router._strategy.value) if hasattr(router._strategy, 'value') else str(router._strategy),
+            "selected": router._strategy,
+        }
+
+    @server.method("models.cost")
+    async def models_cost(params):
+        """成本追踪数据。"""
+        backend = params.get("backend")
+        if backend:
+            return engine.router.cost_tracker.get_stats(backend)
+        return engine.router.cost_tracker.get_dashboard()
+
+    @server.method("models.backends")
+    async def models_backends(params):
+        """所有已注册后端详情。"""
+        router = engine.router
+        result = []
+        for backend in router._all_backends():
+            info = router.registry.get_info(backend.name)
+            result.append({
+                "name": backend.name,
+                "provider": backend.provider,
+                "model": backend.model,
+                "capabilities": backend.capabilities.to_dict(),
+                "available": router.registry.can_execute(backend.name),
+                "info": info.to_dict() if info else {},
+            })
+        return result
+
+    @server.method("models.add")
+    async def models_add(params):
+        """动态添加后端。"""
+        try:
+            from aivyos_core.llm.providers import create_provider_info
+            name = params.get("name", "")
+            provider = params.get("provider", "")
+            model = params.get("model", "")
+            if not all([name, provider, model]):
+                return {"ok": False, "error": "缺少 name/provider/model 参数"}
+            info = create_provider_info(
+                name=name,
+                provider=provider,
+                model=model,
+                base_url=params.get("base_url", ""),
+                api_key_env=params.get("api_key_env", ""),
+                priority=int(params.get("priority", 50)),
+            )
+            backend = engine.router.registry.create(info)
+            # 注册成本追踪
+            engine.router.cost_tracker.register_backend(
+                backend_name=backend.name,
+                provider=info.provider,
+                model=info.model,
+                cost_per_1m_input=backend.capabilities.cost_per_1m_input,
+                cost_per_1m_output=backend.capabilities.cost_per_1m_output,
+            )
+            return {"ok": True, "name": backend.name, "provider": provider, "model": model}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("models.remove")
+    async def models_remove(params):
+        """动态移除后端。"""
+        name = params.get("name", "")
+        if not name:
+            return {"ok": False, "error": "缺少 name 参数"}
+        try:
+            engine.router.registry.remove(name)
+            engine.router.cost_tracker.reset(name)
+            return {"ok": True, "name": name}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("models.catalog")
+    async def models_catalog(params):
+        """获取提供商目录（11+ 提供商及其模型列表）。"""
+        try:
+            from aivyos_core.llm.provider_catalog import (
+                get_provider_catalog, search_models, get_categories,
+            )
+            keyword = params.get("keyword", "")
+            if keyword:
+                return {"results": search_models(keyword)}
+            return {
+                "providers": get_provider_catalog(),
+                "categories": {
+                    k: [p.to_dict() for p in v]
+                    for k, v in get_categories().items()
+                },
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    @server.method("models.api-key.list")
+    async def models_apikey_list(params):
+        """列出所有已配置的 API Key（仅返回元信息，不返回密钥值）。"""
+        import os
+        import json
+        api_keys = {}
+        env_vars = [
+            "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+            "GOOGLE_API_KEY", "DASHSCOPE_API_KEY", "SILICONFLOW_API_KEY",
+            "MISTRAL_API_KEY", "AZURE_OPENAI_API_KEY",
+            "VOLCENGINE_API_KEY", "TENCENT_SECRET_KEY",
+            "ELEVENLABS_API_KEY", "DEEPGRAM_API_KEY",
+        ]
+        for var in env_vars:
+            val = os.environ.get(var, "")
+            provider_id = var.lower().replace("_api_key", "").replace("_secret_key", "")
+            api_keys[provider_id] = {
+                "env_var": var,
+                "has_key": bool(val),
+                "key_length": len(val) if val else 0,
+            }
+        return {"api_keys": api_keys}
+
+    @server.method("models.api-key.set")
+    async def models_apikey_set(params):
+        """设置 API Key（写入环境变量 + 配置文件）。"""
+        import os
+        import json
+        field = params.get("field", "")
+        value = params.get("value", "")
+        env_var = params.get("env_var", "")
+        if not field or not env_var:
+            return {"ok": False, "error": "缺少 field/env_var 参数"}
+        # 写入环境变量
+        if value:
+            os.environ[env_var] = value
+        else:
+            os.environ.pop(env_var, None)
+        # 更新配置
+        cfg.setdefault("api_keys", {})[field] = {
+            "env_var": env_var,
+            "set": bool(value),
+            "updated_at": __import__("time").time(),
+        }
+        return {"ok": True, "field": field, "env_var": env_var, "set": bool(value)}
+
+    @server.method("models.api-key.remove")
+    async def models_apikey_remove(params):
+        """移除 API Key。"""
+        import os
+        field = params.get("field", "")
+        env_var = params.get("env_var", "")
+        if not env_var:
+            return {"ok": False, "error": "缺少 env_var 参数"}
+        os.environ.pop(env_var, None)
+        if field:
+            cfg.setdefault("api_keys", {}).pop(field, None)
+        return {"ok": True, "field": field, "env_var": env_var}
+
+    @server.method("models.test-connection")
+    async def models_test_connection(params):
+        """测试 API Key 与 Base URL 的连通性。
+
+        通过调用 /models 端点验证 API Key 是否有效。
+        成功时返回可用模型列表，失败时返回错误信息。
+        """
+        provider_id = params.get("provider", "")
+        api_key = params.get("api_key", "")
+        base_url = params.get("base_url", "")
+        if not api_key:
+            return {"ok": False, "error": "缺少 API Key"}
+        if not base_url:
+            return {"ok": False, "error": "缺少 Base URL"}
+        try:
+            import urllib.request
+            import urllib.error
+            req = urllib.request.Request(
+                f"{base_url.rstrip('/')}/models",
+                headers={"Authorization": f"Bearer {api_key}"}
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    import json
+                    data = json.loads(resp.read().decode())
+                    models = data.get("data", [])
+                    return {
+                        "ok": True,
+                        "provider": provider_id,
+                        "model_count": len(models),
+                        "models": [
+                            {"id": m.get("id", ""), "owned_by": m.get("owned_by", "")}
+                            for m in models
+                        ],
+                    }
+            except urllib.error.HTTPError as e:
+                body = ""
+                try:
+                    body = e.read().decode()[:200]
+                except Exception:
+                    pass
+                return {"ok": False, "error": f"HTTP {e.code}: {body}"}
+            except urllib.error.URLError as e:
+                return {"ok": False, "error": f"连接失败: {str(e.reason)}"}
+        except Exception as e:
+            return {"ok": False, "error": f"连接失败: {str(e.reason)}"}
+
+    @server.method("models.preset-list")
+    async def models_preset_list(params):
+        """获取指定提供商的预设模型列表。
+
+        无需网络请求，直接从本地目录返回模型元数据。
+        """
+        provider_id = params.get("provider", "")
+        keyword = params.get("keyword", "")
+        try:
+            from aivyos_core.llm.provider_catalog import (
+                get_provider_models, search_models,
+            )
+            if provider_id:
+                models = get_provider_models(provider_id)
+                if keyword:
+                    models = [m for m in models if keyword.lower() in m.get("name", "").lower()]
+                return {"ok": True, "provider": provider_id, "models": models}
+            if keyword:
+                return {"ok": True, "models": search_models(keyword)}
+            return {"ok": False, "error": "需要 provider 或 keyword 参数"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("voice.engines")
+    async def voice_engines(params):
+        """列出所有可用的语音引擎（ASR/TTS）。"""
+        try:
+            from aivyos_core.voice.engine_registry import (
+                create_voice_registry,
+            )
+            reg = create_voice_registry(cfg)
+            return reg.get_dashboard()
+        except Exception as e:
+            return {"error": str(e)}
+
+    @server.method("voice.engine.config")
+    async def voice_engine_config(params):
+        """配置语音引擎参数（语速、音量、音色等）。"""
+        engine_name = params.get("engine", "")
+        field = params.get("field", "")
+        value = params.get("value", "")
+        if not engine_name or not field:
+            return {"ok": False, "error": "缺少 engine/field 参数"}
+        try:
+            from aivyos_core.voice.engine_registry import create_voice_registry
+            reg = create_voice_registry(cfg)
+            backend = reg.get(engine_name)
+            if backend is None:
+                return {"ok": False, "error": f"引擎 {engine_name} 不存在"}
+            if field == "speed_ratio" and hasattr(backend, "update_params"):
+                backend.update_params(speed_ratio=float(value))
+            elif field == "volume_ratio" and hasattr(backend, "update_params"):
+                backend.update_params(volume_ratio=float(value))
+            elif field == "pitch_ratio" and hasattr(backend, "update_params"):
+                backend.update_params(pitch_ratio=float(value))
+            elif field == "voice_type" and hasattr(backend, "update_params"):
+                backend.update_params(voice_type=str(value))
+            else:
+                return {"ok": False, "error": f"字段 {field} 不支持此引擎"}
+            return {"ok": True, "engine": engine_name, "field": field, "value": value}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("voice.test-tts")
+    async def voice_test_tts(params):
+        """TTS 试听：合成文本并返回 base64 WAV 音频数据供前端播放。
+
+        Params:
+            text: 要合成的文本（默认 "你好，这是一段语音测试"）
+            provider: TTS 服务商 (doubao-tts / edge-tts / cosyvoice / mock)
+            voice: 音色 ID
+            speed: 语速倍率 (0.5-2.0)
+            api_key: 云端 API Key（可选）
+            resource_id: 资源 ID（火山引擎/豆包）
+
+        Returns:
+            {ok, wav_b64, sample_rate, text, backend, latency_ms, error?}
+        """
+        import base64
+        import time as _time
+
+        text = params.get("text", "你好，这是一段语音测试")
+        provider = params.get("provider", "mock")
+        voice = params.get("voice", "")
+        speed = float(params.get("speed", 1.0))
+        api_key = params.get("api_key", "")
+        resource_id = params.get("resource_id", "")
+
+        try:
+            from aivyos_core.audio.wav import pcm_to_wav_bytes
+            from aivyos_core.tts.mock_backend import MockTTS
+
+            # 云端服务商必须配置 API Key
+            cloud_providers_need_key = {"doubao-tts", "doubao"}
+            if provider in cloud_providers_need_key and not api_key:
+                return {
+                    "ok": False,
+                    "error": f"服务商 {provider} 需要配置 API Key，请先在上方填写后再试听",
+                    "backend": provider,
+                }
+
+            # 根据 provider 选择后端
+            backend = None
+            cfg_override = {}
+
+            if provider in ("doubao-tts", "doubao"):
+                try:
+                    from aivyos_core.tts.doubao_backend import DoubaoTTSBackend
+                    cfg_override = {
+                        "api_key": api_key,
+                        "resource_id": resource_id or "seed-tts-2.0",
+                        "voice_type": voice or "zh_female_xiaohe_uranus_bigtts",
+                        "speed_ratio": speed,
+                    }
+                    backend = DoubaoTTSBackend(config=cfg_override)
+                    if not backend.available:
+                        return {
+                            "ok": False,
+                            "error": "豆包 TTS 未配置 API Key，请在前端语音设置中填写豆包 API Key",
+                            "backend": provider,
+                        }
+                except ImportError as e:
+                    return {
+                        "ok": False,
+                        "error": f"豆包 TTS 模块导入失败: {e}",
+                        "backend": provider,
+                    }
+                except Exception as e:
+                    return {
+                        "ok": False,
+                        "error": f"豆包 TTS 初始化失败: {e}",
+                        "backend": provider,
+                    }
+
+            if backend is None and provider in ("edge-tts", "edge"):
+                try:
+                    from aivyos_core.voice.cloud_engines import EdgeTTSBackend
+                    edge_cfg = {"voice": voice or "zh-CN-XiaoxiaoNeural", "rate": f"+{int((speed - 1) * 100)}%"}
+                    backend = EdgeTTSBackend(config=edge_cfg)
+                except Exception:
+                    pass
+
+            if backend is None and provider in ("cosyvoice",):
+                try:
+                    from aivyos_core.tts.cosyvoice_backend import CosyVoiceBackend
+                    backend = CosyVoiceBackend()
+                except Exception:
+                    pass
+
+            # Fallback to mock
+            if backend is None:
+                backend = MockTTS(sample_rate=24000, tone_hz=523.25, duration_s=min(len(text) * 0.15, 3.0))
+
+            start = _time.perf_counter()
+            result = backend.synthesize(text)
+            latency_ms = (_time.perf_counter() - start) * 1000
+
+            wav_bytes = pcm_to_wav_bytes(result.pcm, result.sample_rate)
+            wav_b64 = base64.b64encode(wav_bytes).decode("ascii")
+
+            return {
+                "ok": True,
+                "wav_b64": wav_b64,
+                "sample_rate": result.sample_rate,
+                "text": text,
+                "backend": result.backend,
+                "pcm_len": len(result.pcm),
+                "wav_len": len(wav_bytes),
+                "latency_ms": round(latency_ms, 1),
+            }
+        except Exception as e:
+            log.exception("voice.test-tts 异常")
+            return {"ok": False, "error": str(e), "backend": provider}
+
+    # ================================================================
+    #  MCP Server (Phase 3)
+    # ================================================================
+
+    @server.method("mcp.tools")
+    async def mcp_tools(params):
+        """列出所有 LLM MCP 工具。"""
+        try:
+            from aivyos_core.llm.mcp_server import create_mcp_server
+            mcp = create_mcp_server(engine.router)
+            return {"tools": mcp.list_tools()}
+        except Exception as e:
+            return {"error": str(e)}
+
+    @server.method("mcp.call")
+    async def mcp_call(params):
+        """调用 LLM MCP 工具。"""
+        tool_name = params.get("tool", "")
+        tool_params = params.get("params", {})
+        if not tool_name:
+            return {"error": "缺少 tool 参数"}
+        try:
+            from aivyos_core.llm.mcp_server import create_mcp_server
+            mcp = create_mcp_server(engine.router)
+            return await mcp.call_tool_async(tool_name, tool_params)
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ================================================================
+    #  Fallback Chain (Phase 3)
+    # ================================================================
+
+    @server.method("fallback.execute")
+    async def fallback_execute(params):
+        """执行声明式降级链。"""
+        steps_cfg = params.get("steps", [])
+        messages = params.get("messages", [])
+        if not steps_cfg:
+            return {"error": "缺少 steps 配置"}
+        if not messages:
+            return {"error": "缺少 messages 参数"}
+        try:
+            from aivyos_core.llm.fallback_chain import FallbackChain
+            from aivyos_core.models import LLMRequest
+            chain = FallbackChain.from_config({"steps": steps_cfg})
+            request = LLMRequest(messages=messages, model=params.get("model", "auto"))
+            result = await chain.execute(request, engine.router)
+            return result.to_dict()
+        except Exception as e:
+            return {"error": str(e)}
+
+    @server.method("fallback.status")
+    async def fallback_status(params):
+        """获取降级链状态。"""
+        steps_cfg = params.get("steps", [])
+        if not steps_cfg:
+            return {"error": "缺少 steps 配置"}
+        try:
+            from aivyos_core.llm.fallback_chain import FallbackChain
+            chain = FallbackChain.from_config({"steps": steps_cfg})
+            return chain.to_dict()
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ================================================================
+    #  Config
+    # ================================================================
+
+    @server.method("config.get")
+    async def config_get(params):
+        # 不返回敏感字段
+        safe_cfg = {}
+        for key in ("llm", "persona", "voice", "asr", "tts", "chat", "workflow", "codegen"):
+            safe_cfg[key] = cfg.get(key, {})
+        safe_cfg["scheduler"] = cfg.get("scheduler", {})
+        safe_cfg["memory"] = {k: v for k, v in cfg.get("memory", {}).items() if k not in ("mem0_llm_model",)}
+        return safe_cfg
+
+    @server.method("config.update")
+    async def config_update(params):
+        path = params.get("path", "")
+        value = params.get("value")
+        parts = path.split(".")
+        target = cfg
+        for p in parts[:-1]:
+            target = target.setdefault(p, {})
+        target[parts[-1]] = value
+        return {"ok": True, "path": path}
 
     return server
 
@@ -102,7 +1052,7 @@ async def amain(args) -> None:
         try:
             asyncio.get_running_loop().add_signal_handler(sig, stop.set)
         except NotImplementedError:
-            pass  # Windows 部分环境不支持 add_signal_handler
+            pass
     await stop.wait()
     await server.stop()
 

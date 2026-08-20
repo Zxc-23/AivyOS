@@ -35,3 +35,10 @@ target/
 .idea/
 .vscode/
 *.swp
+
+# 临时测试文件
+out.wav
+test_*.py
+test_*.txt
+test_reports/
+*.wav

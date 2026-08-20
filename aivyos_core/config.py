@@ -21,25 +21,35 @@ DATA_DIRS = ("sessions", "memory", "memfs", "logs", "snapshots")
 DEFAULT_CONFIG: Dict[str, Any] = {
     "home": str(DEFAULT_HOME),
     "llm": {
-        # auto: 按 §4.1.3 路由（简单→本地，复杂/编程→云端优先，均不可达→mock 回退）
-        # local / cloud / mock: 强制指定
+        # auto: Phase 2 多维度路由（能力匹配 → 可用性 → 成本优化 → 降级 mock）
+        # local / cloud / mock: 强制指定（Phase 1 兼容）
         "mode": "auto",
+        "routing_strategy": "auto",   # auto / cost-based / latency-based / capability-based
+        # Phase 1 兼容配置（未配置 providers 列表时使用）
         "local": {
-            "base_url": "http://127.0.0.1:11434/v1",  # Ollama OpenAI 兼容端点；vLLM 同构
-            "model": "qwen2.5:3b",   # 8GB 显存推荐；文档规格 qwen2.5:7b 需 12GB+（INT4）
+            "base_url": "http://127.0.0.1:11434/v1",
+            "model": "qwen2.5:3b",
             "api_key": None,
             "timeout_s": 60,
-            "probe": True,             # 真实可用性探测（GET /models）
+            "probe": True,
             "probe_timeout_s": 1.5,
-            "probe_ttl_s": 20,         # 探测结果缓存时长
+            "probe_ttl_s": 20,
         },
         "cloud": {
-            "base_url": "https://api.anthropic.com/v1",
+            "base_url": "https://api.deepseek.com/v1",
             "api_key_env": "AIVYOS_CLOUD_API_KEY",
-            "model": "claude-latest",
+            "model": "deepseek-v4-flash",
             "timeout_s": 120,
         },
         "mock": {"model": "mock-echo"},
+        # ---- Phase 2 多提供商配置（可选） ----
+        # 配置此列表后，将替代 local/cloud 配置进行多提供商实例化
+        # providers: [
+        #     {"name": "ollama-local", "provider": "ollama", "model": "qwen2.5:3b",
+        #      "base_url": "http://127.0.0.1:11434/v1", "priority": 30},
+        #     {"name": "deepseek-flash", "provider": "deepseek", "model": "deepseek-v4-flash",
+        #      "base_url": "https://api.deepseek.com/v1", "api_key_env": "DEEPSEEK_API_KEY"},
+        # ],
     },
     "chat": {
         "context_window": 32768,   # §4.4.1 按 32K 模型分配；128K 模型可调大
@@ -91,17 +101,28 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "wav_path": None,            # input_backend=wav 时指定输入文件
     },
     "asr": {
-        "backend": "auto",           # auto | mock | funasr
+        "backend": "auto",           # auto | mock | funasr | deepgram
         "model": "sensevoice-small", # SenseVoice/FunASR（§3.1.1）
         "language": "zh",
         "sample_rate": 16000,
+        # ---- Phase 2 云端 ASR 配置 ----
+        # "deepgram": {"api_key_env": "DEEPGRAM_API_KEY", "model": "general"},
     },
     "tts": {
-        "backend": "auto",           # auto | mock | cosyvoice
+        "backend": "auto",           # auto | mock | cosyvoice | elevenlabs | edge-tts
         "model": "CosyVoice3-0.5B",  # §6.1 主引擎
         "sample_rate": 24000,        # CosyVoice 3 输出 24kHz
         "clone_seconds": 3,          # 3 秒音色克隆（§6.1）
         "clone_ref_path": None,      # 克隆参考音频 WAV 路径（§6.1 3 秒样本）
+        # ---- Phase 2 云端 TTS 配置 ----
+        # "elevenlabs": {"api_key_env": "ELEVENLABS_API_KEY", "voice_id": "...", "model_id": "eleven_multilingual_v2"},
+        # "edge-tts": {"voice": "zh-CN-XiaoxiaoNeural"},
+    },
+    "emotion": {
+        # ---- Phase 2 情感控制（报告 §4.4.3）----
+        "enabled": True,
+        "auto_detect": True,          # 自动从文本关键词推断情感
+        "default_emotion": "neutral", # 无关键词时的默认情感
     },
     "voice": {
         "wake_words": ["Aivy", "艾维", "贾维斯"],

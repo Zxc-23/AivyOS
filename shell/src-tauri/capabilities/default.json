@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "AivyOS 主窗口能力（§12 桌面端：窗口/热键/通知/自启/更新）",
+  "description": "AivyOS 主窗口能力（§12 桌面端：窗口/热键/通知/自启/更新 + IPC 桥接）",
   "windows": ["main"],
   "permissions": [
     "core:default",

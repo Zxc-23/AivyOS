@@ -16,6 +16,9 @@ tauri-plugin-autostart = "2"        # §12.5 开机自启
 tauri-plugin-updater = "2"          # §13 自动更新
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# IPC 桥接：spawn Python 子进程 + TCP 回环客户端（§16.2 协议）
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
+which = "6"
 
 [lib]
 name = "aivyos_shell_lib"

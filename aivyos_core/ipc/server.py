@@ -5,6 +5,9 @@
 - Windows Named Pipe（需 pywin32，自动探测；不可用时降级 TCP）
 
 方法注册：`server.method("chat.send")(handler)`，handler 为 async (params) -> result。
+
+事件推送：`server.broadcast_event("wake.detected", {"text": "艾薇"})`
+  向所有已连接的 TCP 客户端广播 JSON-RPC Notification 帧（无 id）。
 """
 
 from __future__ import annotations
@@ -12,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional, Set
 
 from aivyos_core.ipc.protocol import (
     FrameCodec,
@@ -40,6 +43,8 @@ class AivyIpcServer:
         self._tcp_server: Optional[asyncio.AbstractServer] = None
         self._pipe_task: Optional[asyncio.Task] = None
         self.transport = "none"
+        self._tcp_writers: Set[asyncio.StreamWriter] = set()
+        self._tcp_writers_lock = asyncio.Lock()
 
     # ---- 方法注册 ----
 
@@ -53,6 +58,39 @@ class AivyIpcServer:
     def register(self, name: str, fn: Handler) -> None:
         self._handlers[name] = fn
 
+    # ---- 事件推送 ----
+
+    async def broadcast_event(self, method: str, params: Optional[Dict[str, Any]] = None) -> None:
+        """向所有已连接的 TCP 客户端广播 Notification 帧。
+
+        Args:
+            method: 事件方法名（如 "wake.detected"）
+            params: 事件载荷
+        """
+        notification = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params or {},
+        }
+        frame_bytes = encode_frame(notification)
+
+        async with self._tcp_writers_lock:
+            writers = list(self._tcp_writers)
+
+        dead_writers = []
+        for writer in writers:
+            try:
+                writer.write(frame_bytes)
+                await writer.drain()
+            except Exception:
+                dead_writers.append(writer)
+
+        if dead_writers:
+            async with self._tcp_writers_lock:
+                for w in dead_writers:
+                    self._tcp_writers.discard(w)
+            log.debug("清理 %d 个已断开的客户端", len(dead_writers))
+
     # ---- 生命周期 ----
 
     async def start(self) -> None:
@@ -65,7 +103,7 @@ class AivyIpcServer:
             try:
                 await self._start_pipe_server()
                 self.transport = "tcp+named_pipe"
-            except Exception as e:  # pywin32 缺失或管道创建失败 → 保持 TCP
+            except Exception as e:
                 log.info("Named Pipe 不可用（%s），保持 TCP 回环", e)
 
     async def _start_pipe_server(self) -> None:
@@ -114,6 +152,10 @@ class AivyIpcServer:
         codec = FrameCodec()
         peer = writer.get_extra_info("peername")
         log.debug("IPC 连接: %s", peer)
+
+        async with self._tcp_writers_lock:
+            self._tcp_writers.add(writer)
+
         try:
             while True:
                 chunk = await reader.read(65536)
@@ -126,6 +168,8 @@ class AivyIpcServer:
         except Exception:
             log.exception("IPC 连接异常")
         finally:
+            async with self._tcp_writers_lock:
+                self._tcp_writers.discard(writer)
             writer.close()
             try:
                 await writer.wait_closed()

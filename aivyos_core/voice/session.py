@@ -80,18 +80,26 @@ class VoiceSession:
             transcript = text_override
             asr_backend = "text-override"
             auth_result = {"bypassed": True, "reason": "文本模拟模式"}
+            wake_passed = True
         else:
+            log.info("开始真实音频采集...")
             pcm = await self._capture_utterance()
             if not pcm:
-                return None
-            # 专属认证（§9.1：声纹比对 → 活体 → 面部可选）
+                log.warning("音频采集未检测到语音 (source=%s)", type(self.source).__name__)
+                return {
+                    "text": "",
+                    "reply": None,
+                    "error": "no_speech_detected",
+                    "error_detail": "未检测到语音输入，请靠近麦克风重试",
+                    "source": type(self.source).__name__,
+                }
+            log.info("音频采集完成: %d bytes", len(pcm))
             if self.auth is not None:
                 auth_result = (await self.auth.authenticate(pcm=pcm)).to_dict()
                 if not auth_result["accepted"]:
                     log.info("认证未通过，静默忽略（%s）", auth_result.get("reason", ""))
                     return {"text": "", "reply": None, "auth": auth_result, "wake": False}
                 self.current_user = auth_result["user_id"]
-                # T6.7：应用该用户的人格配置
                 persona = self.auth.get_user_persona(self.current_user)
                 for k, v in persona.items():
                     self.engine.persona.update(k, v)
@@ -100,21 +108,45 @@ class VoiceSession:
             result = self.asr.transcribe(pcm)
             transcript = result.text
             asr_backend = result.backend
+            wake_passed = not self.wake_required or self.wake.detect(transcript)
+            if not wake_passed:
+                log.info("唤醒词未命中: %r", transcript[:30])
+                return {"text": transcript, "reply": None, "wake": False, "auth": auth_result}
 
-        # 唤醒词门控
-        if self.wake_required and not self.wake.detect(transcript):
-            log.info("唤醒词未命中: %r", transcript[:30])
-            return {"text": transcript, "reply": None, "wake": False, "auth": auth_result}
-
+        # 已通过唤醒词检查（文本模式自动通过，真实音频需命中唤醒词）
         clean = self.wake.strip(transcript) if self.wake_required else transcript
         if not clean:
             return None
 
         # LLM 对话
         reply = await self.engine.send(clean)
-        # TTS + 输出
-        audio = self.tts.synthesize(reply.text)
-        self.sink.play(audio.pcm)
+        # TTS + 输出 — 用线程池避免阻塞事件循环
+        loop = asyncio.get_running_loop()
+        try:
+            audio = await loop.run_in_executor(
+                None, lambda: self.tts.synthesize(reply.text)
+            )
+        except Exception as e:
+            log.exception("TTS 合成失败")
+            audio = None
+
+        wav_b64 = ""
+        if audio is not None:
+            try:
+                import base64
+                from aivyos_core.audio.wav import pcm_to_wav_bytes
+                wav_bytes = pcm_to_wav_bytes(audio.pcm, audio.sample_rate)
+                wav_b64 = base64.b64encode(wav_bytes).decode("ascii")
+            except Exception:
+                log.warning("WAV 编码失败，跳过前端音频")
+
+        if audio is not None:
+            try:
+                await loop.run_in_executor(
+                    None, lambda: self.sink.play(audio.pcm)
+                )
+            except Exception:
+                pass
 
         return {
             "text": transcript,
@@ -123,8 +155,10 @@ class VoiceSession:
             "model": reply.model,
             "route": reply.route.to_dict(),
             "asr_backend": asr_backend,
-            "tts_backend": audio.backend,
-            "wav_len": len(audio.pcm),
+            "tts_backend": audio.backend if audio else "tts-failed",
+            "wav_len": len(audio.pcm) if audio else 0,
+            "wav_b64": wav_b64,
+            "sample_rate": audio.sample_rate if audio else 24000,
             "auth": auth_result,
             "user_id": self.current_user,
             "latency_ms": (time.perf_counter() - start) * 1000,
@@ -133,7 +167,10 @@ class VoiceSession:
     # ---- 音频采集 + VAD 端点检测 ----
 
     async def _capture_utterance(self) -> bytes:
-        """从音源采集一段语音：VAD 判定起点/终点（30ms 帧）。"""
+        """从音源采集一段语音：VAD 判定起点/终点（30ms 帧）。
+
+        带超时保护：若 10 秒内无语音输入，自动返回空字节。
+        """
         buf = bytearray()
         started = False
         silence_frames = 0
@@ -142,25 +179,51 @@ class VoiceSession:
         max_silence_frames = int(self.silence_timeout_s * 1000 / self.vad.frame_ms)
         total_frames = 0
         overall_limit = int((self.max_turn_s + 5) * 1000 / self.vad.frame_ms)
+        startup_timeout_frames = int(10.0 * 1000 / self.vad.frame_ms)
 
-        async for frame in self.source.stream():
-            total_frames += 1
-            if self.vad.is_speech(frame):
-                if not started:
-                    started = True
-                buf += frame
-                speech_frames += 1
-                silence_frames = 0
-                if speech_frames >= max_speech_frames:
+        stream_iter = self.source.stream()
+        try:
+            while True:
+                try:
+                    frame = await asyncio.wait_for(stream_iter.__anext__(), timeout=120.0)
+                except StopAsyncIteration:
                     break
-            elif started:
-                buf += frame  # 保留少量尾音，便于 ASR 断句
-                silence_frames += 1
-                if silence_frames >= max_silence_frames:
+                except asyncio.TimeoutError:
+                    log.warning("音频采集超时（120s 无数据）")
                     break
-            if total_frames >= overall_limit:
-                break
+
+                total_frames += 1
+                if self.vad.is_speech(frame):
+                    if not started:
+                        started = True
+                        log.debug("VAD 检测到语音起点 (frame %d)", total_frames)
+                    buf += frame
+                    speech_frames += 1
+                    silence_frames = 0
+                    if speech_frames >= max_speech_frames:
+                        log.debug("达到最大语音时长限制")
+                        break
+                elif started:
+                    buf += frame
+                    silence_frames += 1
+                    if silence_frames >= max_silence_frames:
+                        log.debug("VAD 检测到语音终点（静默 %d 帧）", silence_frames)
+                        break
+                if total_frames >= overall_limit:
+                    log.debug("达到总帧上限")
+                    break
+                if not started and total_frames >= startup_timeout_frames:
+                    log.info("启动超时：%d 帧内未检测到语音", startup_timeout_frames)
+                    break
+        finally:
+            try:
+                stream_iter.aclose()
+            except Exception:
+                pass
 
         if not started:
+            log.info("未检测到语音输入 (总帧数=%d)", total_frames)
             return b""
+        log.info("采集完成: %d 帧, %d bytes, 时长 %.1fs",
+                 total_frames, len(buf), len(buf) / 32000)
         return bytes(buf)
