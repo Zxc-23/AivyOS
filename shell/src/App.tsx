@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChatReply, StatusInfo, fetchStatus, sendChat, inTauri,
-  getVoiceStatus, runVoiceTurn, listenVoice,
+  getVoiceStatus, runVoiceTurn, listenVoice, pttStart, pttStop,
   listTasks, createTask, executeTask,
   listSchedules, createSchedule,
   runVibe,
@@ -641,6 +641,52 @@ export default function App() {
     }
   }, [voiceTextInput, bridgeReady, updateTrayState, showNotification]);
 
+  // ---- 共享的语音结果处理（handleVoiceListen 与 PTT 共用）----
+  const handleVoiceResult = useCallback(async (result: VoiceTurnResult) => {
+    setVoiceTurnResult(result);
+    if (result.continuous) {
+      showNotification(
+        "连续对话",
+        `已进入连续对话（剩 ${result.continuous.turns_left} 轮 / ${result.continuous.window_left_s}s），无需重复唤醒词`,
+        "success",
+      );
+    }
+    if (result.error_type === "no_speech_detected") {
+      showNotification("未检测到语音", "请靠近麦克风并重新点击说话", "warning");
+      return;
+    }
+    if (result.error_type === "wake_word_missed") {
+      showNotification("唤醒词未识别", `已识别: "${result.text}" — 请说唤醒词后再试`, "warning");
+      return;
+    }
+    if (!result.ok && result.error) {
+      showNotification("语音错误", result.error, "danger");
+      return;
+    }
+    if (result.reply) {
+      setMessages(prev => [...prev, { role: "user", text: result.text || "(语音输入)" }]);
+      setMessages(prev => [...prev, { role: "assistant", text: result.reply! }]);
+    }
+    if (result.wav_b64) {
+      try {
+        const binary = atob(result.wav_b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
+        const source = audioCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioCtx.destination);
+        source.start(0);
+        source.onended = () => { try { audioCtx.close(); } catch {} };
+      } catch (e) {
+        console.warn("语音播放失败:", e);
+      }
+    }
+    if (result.fallback) showNotification("降级模式", "语音组件部分不可用", "warning");
+    if (!result.ok) showNotification("语音识别失败", result.error || "未检测到语音输入", "danger");
+  }, [showNotification]);
+
   const handleVoiceListen = useCallback(async () => {
     setVoiceLoading(true);
     setVoiceListening(true);
@@ -659,48 +705,7 @@ export default function App() {
         return;
       }
       const result = await listenVoice(vsetContinuous);
-      setVoiceTurnResult(result);
-      if (result.continuous) {
-        showNotification(
-          "连续对话",
-          `已进入连续对话（剩 ${result.continuous.turns_left} 轮 / ${result.continuous.window_left_s}s），无需重复唤醒词`,
-          "success",
-        );
-      }
-      if (result.error_type === "no_speech_detected") {
-        showNotification("未检测到语音", "请靠近麦克风并重新点击说话", "warning");
-        return;
-      }
-      if (result.error_type === "wake_word_missed") {
-        showNotification("唤醒词未识别", `已识别: "${result.text}" — 请说唤醒词后再试`, "warning");
-        return;
-      }
-      if (!result.ok && result.error) {
-        showNotification("语音错误", result.error, "danger");
-        return;
-      }
-      if (result.reply) {
-        setMessages(prev => [...prev, { role: "user", text: result.text || "(语音输入)" }]);
-        setMessages(prev => [...prev, { role: "assistant", text: result.reply! }]);
-      }
-      if (result.wav_b64) {
-        try {
-          const binary = atob(result.wav_b64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
-          const source = audioCtx.createBufferSource();
-          source.buffer = audioBuffer;
-          source.connect(audioCtx.destination);
-          source.start(0);
-          source.onended = () => { try { audioCtx.close(); } catch {} };
-        } catch (e) {
-          console.warn("语音播放失败:", e);
-        }
-      }
-      if (result.fallback) showNotification("降级模式", "语音组件部分不可用", "warning");
-      if (!result.ok) showNotification("语音识别失败", result.error || "未检测到语音输入", "danger");
+      await handleVoiceResult(result);
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
       setVoiceTurnResult({ ok: false, text: "", reply: errMsg });
@@ -710,23 +715,72 @@ export default function App() {
       setVoiceListening(false);
       updateTrayState("idle");
     }
-  }, [bridgeReady, updateTrayState, showNotification]);
+  }, [bridgeReady, updateTrayState, showNotification, vsetContinuous, handleVoiceResult]);
 
-  // 空格键 = 麦克风说话（push-to-talk 快捷键）
+  // ---- PTT（按住说话）：按住空格/鼠标开始采集，松开处理 ----
+  const pttActiveRef = useRef(false);
+  const handlePttStart = useCallback(async () => {
+    if (pttActiveRef.current) return;
+    pttActiveRef.current = true;
+    setVoiceListening(true);
+    updateTrayState("voice");
+    try {
+      if (!bridgeReady) return;
+      await pttStart();
+    } catch (e) {
+      console.warn("PTT 开始失败:", e);
+      pttActiveRef.current = false;
+      setVoiceListening(false);
+      updateTrayState("idle");
+    }
+  }, [bridgeReady, updateTrayState]);
+
+  const handlePttStop = useCallback(async () => {
+    if (!pttActiveRef.current) return;
+    pttActiveRef.current = false;
+    setVoiceListening(false);
+    updateTrayState("idle");
+    try {
+      if (!bridgeReady) {
+        setVoiceListening(false);
+        return;
+      }
+      setVoiceLoading(true);
+      const result = await pttStop(vsetContinuous);
+      await handleVoiceResult(result);
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      setVoiceTurnResult({ ok: false, text: "", reply: errMsg });
+      showNotification("语音错误", errMsg, "danger");
+    } finally {
+      setVoiceLoading(false);
+      updateTrayState("idle");
+    }
+  }, [bridgeReady, updateTrayState, showNotification, vsetContinuous, handleVoiceResult]);
+
+  // 空格键 = PTT（按住说话）：按住空格开始采集，松开停止处理
   // 排除输入框/文本域聚焦时（避免打字时空格误触发语音）
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code !== "Space") return;
       const t = e.target as HTMLElement;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-      e.preventDefault(); // 阻止页面滚动/按钮默认行为
-      if (!voiceLoading) {
-        void handleVoiceListen();
-      }
+      if (e.repeat) return; // 长按不重复触发
+      e.preventDefault();
+      void handlePttStart();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      e.preventDefault();
+      void handlePttStop();
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleVoiceListen, voiceLoading]);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [handlePttStart, handlePttStop]);
 
   // ---- Task screen ----
   const loadTasks = useCallback(async () => {
@@ -1339,12 +1393,16 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Microphone button - large circular push-to-talk */}
+                {/* Microphone button - large circular PTT（按住说话） */}
                 <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
                   <button
-                    onClick={handleVoiceListen}
+                    onMouseDown={(e) => { e.preventDefault(); if (!voiceLoading) void handlePttStart(); }}
+                    onMouseUp={() => void handlePttStop()}
+                    onMouseLeave={() => { if (pttActiveRef.current) void handlePttStop(); }}
+                    onTouchStart={(e) => { e.preventDefault(); if (!voiceLoading) void handlePttStart(); }}
+                    onTouchEnd={() => void handlePttStop()}
                     disabled={voiceLoading}
-                    title="点击或按空格键说话（Alt+V 快捷）"
+                    title="按住说话（按住空格或按住本按钮，松开结束）"
                     style={{
                       width: 80, height: 80,
                       borderRadius: "50%",
@@ -1371,7 +1429,7 @@ export default function App() {
                     {voiceListening ? "⏺" : (voiceLoading ? "⏳" : "🎙️")}
                   </button>
                   <div style={{ fontSize: 12, color: "var(--muted2)" }}>
-                    {voiceListening ? "正在聆听...请说话" : (voiceLoading ? "处理中..." : "点击或按空格键说话")}
+                    {voiceListening ? "正在聆听...松开结束" : (voiceLoading ? "处理中..." : "按住空格或按住按钮说话")}
                   </div>
                 </div>
 

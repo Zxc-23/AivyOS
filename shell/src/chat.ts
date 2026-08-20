@@ -348,6 +348,16 @@ export async function listenVoice(continuous = false): Promise<VoiceTurnResult> 
   return bridgeCall<VoiceTurnResult>("voice.turn", { continuous });
 }
 
+/** PTT（按住说话）：开始采集（按住空格/鼠标）。 */
+export async function pttStart(): Promise<{ ok: boolean; active: boolean; error?: string }> {
+  return bridgeCall("voice.ptt.start", {});
+}
+
+/** PTT（按住说话）：停止采集并处理（松开空格/鼠标）。 */
+export async function pttStop(continuous = false): Promise<VoiceTurnResult> {
+  return bridgeCall<VoiceTurnResult>("voice.ptt.stop", { continuous });
+}
+
 /** 查询连续对话会话状态（唤醒后窗口期内免唤醒词）。 */
 export async function getContinuousStatus(): Promise<{
   ok: boolean; active: boolean; turns: number; turns_left: number;

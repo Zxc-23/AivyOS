@@ -405,6 +405,80 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
                 log.warning("WakeLoop 恢复失败: %s", e)
         return {"ok": True, "active": False}
 
+    # ================================================================
+    #  PTT（按住说话）：voice.ptt.start / voice.ptt.stop
+    # ================================================================
+
+    @server.method("voice.ptt.start")
+    async def voice_ptt_start(params):
+        """开始 PTT 采集（按住空格/鼠标）：持续采集麦克风，不自动结束。
+
+        暂停后台 WakeLoop（麦克风互斥），返回采集会话 id。
+        """
+        try:
+            vs = get_voice()
+            ok = await vs.start_ptt()
+            if not ok:
+                return {"ok": False, "error": "PTT 已在采集", "error_type": "already_active"}
+            # 互斥：PTT 采集期间暂停 WakeLoop
+            wl = _wake_loop_ref["loop"]
+            if wl is not None and wl.running:
+                await wl.stop()
+                log.info("PTT 开始，WakeLoop 已暂停")
+            return {"ok": True, "active": True}
+        except Exception as e:
+            log.exception("voice.ptt.start 异常")
+            return {"ok": False, "error": str(e), "error_type": type(e).__name__}
+
+    @server.method("voice.ptt.stop")
+    async def voice_ptt_stop(params):
+        """结束 PTT 采集并处理 buffer（认证→ASR→唤醒→LLM→TTS）。
+
+        返回与 voice.turn 相同的结果结构；采集为空返回 no_speech_detected。
+        """
+        try:
+            vs = get_voice()
+            continuous = bool(params.get("continuous", False))
+            # 连续对话窗口内免唤醒词
+            conv_active = (
+                continuous
+                and _conv_session["active"]
+                and time.monotonic() < _conv_session["expires_at"]
+                and _conv_session["turns"] < _conv_max_turns
+            )
+            result = await vs.stop_ptt(skip_wake=conv_active)
+            # 更新连续对话会话状态
+            if continuous:
+                if result.get("wake") is not False and result.get("error") not in ("empty_command", "no_speech_detected"):
+                    _conv_session["active"] = True
+                    _conv_session["expires_at"] = time.monotonic() + _conv_window_s
+                    _conv_session["turns"] += 1
+                else:
+                    _conv_session["active"] = False
+                    _conv_session["turns"] = 0
+            # PTT 结束恢复 WakeLoop（连续对话会话激活时保持停止）
+            keep_wake_stopped = bool(continuous and _conv_session["active"])
+            wl = _wake_loop_ref["loop"]
+            if wl is not None and not wl.running and not keep_wake_stopped:
+                try:
+                    await wl.start()
+                    log.info("PTT 结束，WakeLoop 已恢复")
+                except Exception as e:
+                    log.warning("WakeLoop 恢复失败: %s", e)
+            # 连续对话元数据
+            if continuous and result.get("reply"):
+                result["continuous"] = {
+                    "active": _conv_session["active"],
+                    "turns_left": max(0, _conv_max_turns - _conv_session["turns"]),
+                    "window_left_s": max(0, round(_conv_session["expires_at"] - time.monotonic(), 1)),
+                }
+            if result.get("error"):
+                return {"ok": False, **result}
+            return {"ok": True, **result}
+        except Exception as e:
+            log.exception("voice.ptt.stop 异常")
+            return {"ok": False, "error": str(e), "error_type": type(e).__name__}
+
     @server.method("voice.listen")
     async def voice_listen(params):
         """真实麦克风模式：采集音频 → ASR → LLM → TTS → 播放。"""

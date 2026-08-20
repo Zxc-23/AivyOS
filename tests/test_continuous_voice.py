@@ -105,5 +105,60 @@ class TestSpeakHelper(AivyTestCase):
         self.assertTrue(ok)
 
 
+class TestPTT(AivyTestCase):
+    """PTT（按住说话）：分离采集 + process_pcm 共用路径。"""
+
+    def _session(self):
+        cfg = make_config()
+        cfg["tts"]["backend"] = "mock"
+        cfg["asr"]["backend"] = "mock"  # 强制 mock ASR（真机 auto 会选 FunASR）
+        cfg["voice"]["wake_required"] = False  # 简化：不需唤醒词
+        from aivyos_core.voice.session import VoiceSession
+
+        s = VoiceSession(cfg)
+        return s
+
+    def test_ptt_start_stop_empty(self):
+        """未采集到音频 → no_speech_detected（不崩溃）。"""
+        s = self._session()
+        ok = asyncio.run(s.start_ptt())
+        self.assertTrue(ok)
+        self.assertFalse(asyncio.run(s.start_ptt()))  # 重复启动被拒
+        result = asyncio.run(s.stop_ptt())
+        self.assertEqual(result["error"], "no_speech_detected")
+
+    def test_ptt_process_pcm_direct(self):
+        """process_pcm 直接处理合成 PCM → 完整链路（ASR mock + LLM mock + TTS mock）。"""
+        import math
+        import struct
+
+        s = self._session()
+        pcm = bytearray()
+        for i in range(16000):
+            v = int(3000 * math.sin(2 * math.pi * 440 * i / 16000))
+            pcm += struct.pack("<h", v)
+        result = asyncio.run(s.process_pcm(bytes(pcm)))
+        self.assertTrue(result["reply"])
+        self.assertIn("breakdown_ms", result)
+        self.assertIn("wav_b64", result)
+
+    def test_ptt_stop_uses_process_pcm(self):
+        """stop_ptt 与 process_pcm 返回结构一致。"""
+        import math
+        import struct
+
+        s = self._session()
+        # 手动填充 buffer 模拟已采集
+        pcm = bytearray()
+        for i in range(8000):
+            v = int(3000 * math.sin(2 * math.pi * 440 * i / 16000))
+            pcm += struct.pack("<h", v)
+        s._ptt_buffer = bytearray(pcm)
+        s._ptt_active = True
+        result = asyncio.run(s.stop_ptt())
+        self.assertTrue(result["reply"])
+        self.assertIn("text_clean", result)
+
+
 if __name__ == "__main__":
     unittest.main()

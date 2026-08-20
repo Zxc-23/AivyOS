@@ -49,6 +49,11 @@ class VoiceSession:
         self.auth = AuthService(config) if config.get("auth", {}).get("enabled", False) else None
         self.current_user: Optional[str] = None
 
+        # PTT（按住说话）状态
+        self._ptt_active = False
+        self._ptt_buffer = bytearray()
+        self._ptt_task: Optional[asyncio.Task] = None
+
     def status(self) -> Dict[str, Any]:
         st = {
             "asr": self.asr.name,
@@ -103,29 +108,172 @@ class VoiceSession:
                     "error_detail": "未检测到语音输入，请靠近麦克风重试",
                     "source": type(self.source).__name__,
                 }
-            log.info("音频采集完成: %d bytes", len(pcm))
-            if self.auth is not None:
-                auth_result = (await self.auth.authenticate(pcm=pcm)).to_dict()
-                if not auth_result["accepted"]:
-                    log.info("认证未通过，静默忽略（%s）", auth_result.get("reason", ""))
-                    return {"text": "", "reply": None, "auth": auth_result, "wake": False}
-                self.current_user = auth_result["user_id"]
-                persona = self.auth.get_user_persona(self.current_user)
-                for k, v in persona.items():
-                    self.engine.persona.update(k, v)
-            else:
-                auth_result = {"bypassed": True, "reason": "认证未启用"}
-            # ASR 为 CPU 密集同步推理 → 线程池执行，避免阻塞事件循环（否则所有 IPC 调用排队卡顿）
-            asr_t0 = time.perf_counter()
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, lambda: self.asr.transcribe(pcm))
-            asr_ms = (time.perf_counter() - asr_t0) * 1000
-            transcript = result.text
-            asr_backend = result.backend
-            wake_passed = (not self.wake_required) or skip_wake or self.wake.detect(transcript)
-            if not wake_passed:
-                log.info("唤醒词未命中: %r", transcript[:30])
-                return {"text": transcript, "reply": None, "wake": False, "auth": auth_result}
+            return await self.process_pcm(pcm, skip_wake=skip_wake)
+
+        # ---- 文本覆盖模式：跳过采集直接走 PCM 处理（不含认证/ASR）----
+
+        # 已通过唤醒词检查（文本模式自动通过，真实音频需命中唤醒词）
+        clean = self.wake.strip(transcript) if self.wake_required else transcript
+        if not clean:
+            # 识别到语音但内容为空/纯噪音/仅唤醒词 → 明确错误（§3.1 噪音过滤）
+            log.info("识别结果为空指令（可能为环境噪音）: %r", transcript[:40])
+            return {
+                "text": transcript,
+                "reply": None,
+                "error": "empty_command",
+                "error_detail": "未识别到有效语音指令（请减少环境噪音后重试）",
+                "auth": auth_result,
+                "wake": True,
+            }
+
+        # LLM 对话
+        llm_t0 = time.perf_counter()
+        reply = await self.engine.send(clean)
+        llm_ms = (time.perf_counter() - llm_t0) * 1000
+
+        # TTS + 输出 — 用线程池避免阻塞事件循环
+        tts_t0 = time.perf_counter()
+        loop = asyncio.get_running_loop()
+        try:
+            audio = await loop.run_in_executor(
+                None, lambda: self.tts.synthesize(reply.text)
+            )
+        except Exception as e:
+            log.exception("TTS 合成失败")
+            audio = None
+        tts_ms = (time.perf_counter() - tts_t0) * 1000
+
+        wav_b64 = ""
+        if audio is not None:
+            try:
+                import base64
+                from aivyos_core.audio.wav import pcm_to_wav_bytes
+                wav_bytes = pcm_to_wav_bytes(audio.pcm, audio.sample_rate)
+                wav_b64 = base64.b64encode(wav_bytes).decode("ascii")
+            except Exception:
+                log.warning("WAV 编码失败，跳过前端音频")
+
+        if audio is not None:
+            try:
+                # 后端播放仅 fire-and-forget，不等待完成
+                # 前端已通过 wav_b64 + Web Audio API 自行播放，后端播放为冗余
+                # 保留 fire-and-forget 兼容 CLI 无前端场景
+                self.sink.play(audio.pcm)
+            except Exception:
+                pass
+            playback_ms = 0.0  # 非阻塞，不计时
+
+        total_ms = (time.perf_counter() - start) * 1000
+        log.info(
+            "语音对话完成: total=%.0fms asr=%.0fms llm=%.0fms tts=%.0fms play=%.0fms (model=%s)",
+            total_ms, asr_ms, llm_ms, tts_ms, playback_ms, reply.model,
+        )
+
+        return {
+            "text": transcript,
+            "text_clean": clean,
+            "reply": reply.text,
+            "model": reply.model,
+            "route": reply.route.to_dict(),
+            "asr_backend": asr_backend,
+            "tts_backend": audio.backend if audio else "tts-failed",
+            "wav_len": len(audio.pcm) if audio else 0,
+            "wav_b64": wav_b64,
+            "sample_rate": audio.sample_rate if audio else 24000,
+            "auth": auth_result,
+            "user_id": self.current_user,
+            "latency_ms": total_ms,
+            "breakdown_ms": {
+                "asr": round(asr_ms, 1),
+                "llm": round(llm_ms, 1),
+                "tts": round(tts_ms, 1),
+                "playback": round(playback_ms, 1),
+                "total": round(total_ms, 1),
+            },
+        }
+
+    # ---- PTT（按住说话）：分离采集与处理 ----
+
+    async def start_ptt(self) -> bool:
+        """开始 PTT 采集：持续把麦克风帧追加到 buffer，不自动结束。
+
+        与 run_turn 的 VAD 自动端点检测不同，PTT 由用户按键控制起止。
+        返回是否成功启动（重复启动返回 False）。
+        """
+        if self._ptt_active:
+            return False
+        self._ptt_active = True
+        self._ptt_buffer = bytearray()
+        self._ptt_task = asyncio.get_event_loop().create_task(self._ptt_collect())
+        log.info("PTT 采集开始")
+        return True
+
+    async def _ptt_collect(self) -> None:
+        """PTT 采集循环：读帧追加到 buffer，直到 stop。"""
+        try:
+            async for frame in self.source.stream():
+                if not self._ptt_active:
+                    break
+                self._ptt_buffer.extend(frame)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            log.warning("PTT 采集异常: %s", e)
+
+    async def stop_ptt(self, skip_wake: bool = False) -> Dict[str, Any]:
+        """停止 PTT 采集并处理 buffer（认证→ASR→唤醒→LLM→TTS）。"""
+        self._ptt_active = False
+        if self._ptt_task is not None:
+            self._ptt_task.cancel()
+            try:
+                await self._ptt_task
+            except asyncio.CancelledError:
+                pass
+            self._ptt_task = None
+        pcm = bytes(self._ptt_buffer)
+        self._ptt_buffer = bytearray()
+        log.info("PTT 采集停止: %d bytes", len(pcm))
+        if not pcm:
+            return {
+                "text": "",
+                "reply": None,
+                "error": "no_speech_detected",
+                "error_detail": "未采集到音频，请按住空格说话",
+                "source": type(self.source).__name__,
+            }
+        return await self.process_pcm(pcm, skip_wake=skip_wake)
+
+    async def process_pcm(self, pcm: bytes, skip_wake: bool = False) -> Dict[str, Any]:
+        """处理一段完整 PCM：认证 → ASR → 唤醒词 → LLM → TTS（run_turn 与 PTT 共用）。"""
+        start = time.perf_counter()
+        asr_ms = 0.0
+        llm_ms = 0.0
+        tts_ms = 0.0
+        playback_ms = 0.0
+
+        log.info("处理 PCM: %d bytes", len(pcm))
+        if self.auth is not None:
+            auth_result = (await self.auth.authenticate(pcm=pcm)).to_dict()
+            if not auth_result["accepted"]:
+                log.info("认证未通过，静默忽略（%s）", auth_result.get("reason", ""))
+                return {"text": "", "reply": None, "auth": auth_result, "wake": False}
+            self.current_user = auth_result["user_id"]
+            persona = self.auth.get_user_persona(self.current_user)
+            for k, v in persona.items():
+                self.engine.persona.update(k, v)
+        else:
+            auth_result = {"bypassed": True, "reason": "认证未启用"}
+        # ASR 为 CPU 密集同步推理 → 线程池执行，避免阻塞事件循环（否则所有 IPC 调用排队卡顿）
+        asr_t0 = time.perf_counter()
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, lambda: self.asr.transcribe(pcm))
+        asr_ms = (time.perf_counter() - asr_t0) * 1000
+        transcript = result.text
+        asr_backend = result.backend
+        wake_passed = (not self.wake_required) or skip_wake or self.wake.detect(transcript)
+        if not wake_passed:
+            log.info("唤醒词未命中: %r", transcript[:30])
+            return {"text": transcript, "reply": None, "wake": False, "auth": auth_result}
 
         # 已通过唤醒词检查（文本模式自动通过，真实音频需命中唤醒词）
         clean = self.wake.strip(transcript) if self.wake_required else transcript
