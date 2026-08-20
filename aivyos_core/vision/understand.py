@@ -76,6 +76,41 @@ def create_understand(cfg: Dict[str, Any]) -> UnderstandBackend:
     if backend in ("qwen2-vl", "auto"):
         base_url = cfg.get("base_url") or cfg.get("local_base_url")
         if base_url:
-            return QwenVLBackend(base_url, model=cfg.get("model", "qwen2-vl-7b"))
+            model = cfg.get("model", "qwen2-vl-7b")
+            # 真实可用性探测：确认端点可达且模型存在（否则回退 mock，避免假阳性）
+            if _probe_vision_model(base_url, model):
+                return QwenVLBackend(base_url, model=model)
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "视觉理解模型 %s 不可用（端点 %s），回退 mock", model, base_url
+            )
+            return MockUnderstand()
         return MockUnderstand()
     return MockUnderstand()
+
+
+def _probe_vision_model(base_url: str, model: str) -> bool:
+    """探测 OpenAI 兼容端点是否可访问且模型存在（GET /models）。
+
+    Ollama /v1/models 返回字段为 id（如 qwen2.5:3b）；标准 OpenAI 为 id。
+    """
+    import json
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(base_url.rstrip("/") + "/models", method="GET")
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            payload = json.loads(resp.read().decode())
+        ids = [m.get("id", "") for m in payload.get("data", [])]
+        if not ids:
+            return False
+        # 精确匹配，或按主名段精确匹配（避免 qwen2.5:3b 误匹配 qwen2.5vl:7b）
+        for mid in ids:
+            if mid == model:
+                return True
+            if mid.split(":")[0] == model.split(":")[0] and ":" in model:
+                return True
+        return False
+    except Exception:
+        return False

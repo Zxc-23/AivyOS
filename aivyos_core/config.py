@@ -170,6 +170,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "ocr_backend": "auto",       # auto | mock | paddleocr
         "understand_backend": "auto",  # auto | mock | qwen2-vl
         "screenshot_backend": "auto",  # auto | mss | none
+        # 视觉理解端点（OpenAI 兼容，Ollama/vLLM 视觉模型）
+        "base_url": "http://127.0.0.1:11434/v1",
+        "model": "qwen2.5vl:7b",      # Ollama 视觉模型（如 llava/qwen2.5vl）；未拉取时理解回退 mock
     },
     "multimodal": {
         "fusion_strategy": "late",   # §3.4 晚期融合
