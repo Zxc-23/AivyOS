@@ -29,8 +29,8 @@ from aivyos_core.asr.base import ASRBackend, ASRResult
 log = logging.getLogger(__name__)
 
 # 重试配置
-DEFAULT_MAX_RETRIES = 3
-DEFAULT_RETRY_DELAY = 1.0  # 秒
+DEFAULT_MAX_RETRIES = 1
+DEFAULT_RETRY_DELAY = 0.5  # 秒
 
 
 class CloudASRBase(ASRBackend):

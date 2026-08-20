@@ -376,8 +376,11 @@ class ModelRouter:
                 filtered.append(b)  # 本地后端始终可用
             elif info and info.api_key_env:
                 key = os.environ.get(info.api_key_env, "")
+                if not key:
+                    # 尝试常见别名
+                    key = self._resolve_cloud_key(info.api_key_env)
                 if key:
-                    filtered.append(b)  # 云端后端需要 API Key
+                    filtered.append(b)
                 else:
                     had_cloud_without_key = True
             elif info and not info.api_key_env:
@@ -789,6 +792,27 @@ class ModelRouter:
                     return key
         # Phase 1 兼容：回退到 AIVYOS_CLOUD_API_KEY
         return os.environ.get("AIVYOS_CLOUD_API_KEY")
+
+    # 常见 API Key 环境变量别名映射
+    _CLOUD_KEY_ALIASES: Dict[str, List[str]] = {
+        "AIVYOS_CLOUD_API_KEY": ["DEEPSEEK_API_KEY", "SILICONFLOW_API_KEY", "DASHSCOPE_API_KEY",
+                                  "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"],
+        "DEEPSEEK_API_KEY": ["AIVYOS_CLOUD_API_KEY", "DEEPSEEK_API_KEY"],
+    }
+
+    def _resolve_cloud_key(self, primary_env: str) -> str:
+        """尝试从常见别名中查找 API Key。"""
+        # 直接查找
+        key = os.environ.get(primary_env, "")
+        if key:
+            return key
+        # 查找别名
+        aliases = self._CLOUD_KEY_ALIASES.get(primary_env, [])
+        for alias in aliases:
+            key = os.environ.get(alias, "")
+            if key:
+                return key
+        return ""
 
     def _mock_cfg(self) -> Dict[str, Any]:
         return self.cfg.get("mock", {"model": "mock-echo"})

@@ -716,6 +716,7 @@ export interface TestTtsResult {
   wav_len?: number;
   latency_ms?: number;
   error?: string;
+  warning?: string;
 }
 
 export async function testTts(

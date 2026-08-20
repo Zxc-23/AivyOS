@@ -153,14 +153,14 @@ class VoiceSession:
                 log.warning("WAV 编码失败，跳过前端音频")
 
         if audio is not None:
-            play_t0 = time.perf_counter()
             try:
-                await loop.run_in_executor(
-                    None, lambda: self.sink.play(audio.pcm)
-                )
+                # 后端播放仅 fire-and-forget，不等待完成
+                # 前端已通过 wav_b64 + Web Audio API 自行播放，后端播放为冗余
+                # 保留 fire-and-forget 兼容 CLI 无前端场景
+                self.sink.play(audio.pcm)
             except Exception:
                 pass
-            playback_ms = (time.perf_counter() - play_t0) * 1000
+            playback_ms = 0.0  # 非阻塞，不计时
 
         total_ms = (time.perf_counter() - start) * 1000
         log.info(

@@ -42,9 +42,10 @@ def _try_doubao(cfg: Dict[str, Any]) -> Optional[TTSBackend]:
         voice = cfg.get("voice", "zh_female_xiaohe_uranus_bigtts")
         if not voice or "bigtts" not in voice:
             voice = "zh_female_xiaohe_uranus_bigtts"
+        resource_id = cfg.get("resource_id") or "seed-tts-2.0"
         return DoubaoTTSBackend(config={
             "api_key": api_key,
-            "resource_id": cfg.get("resource_id", "seed-tts-2.0"),
+            "resource_id": resource_id,
             "voice_type": voice,
             "speed_ratio": float(cfg.get("speed", 1.0)),
             "sample_rate": int(cfg.get("sample_rate", 24000)),
@@ -59,6 +60,13 @@ def _try_doubao(cfg: Dict[str, Any]) -> Optional[TTSBackend]:
 
 def _try_edge(cfg: Dict[str, Any]) -> Optional[TTSBackend]:
     """尝试创建 Edge-TTS 后端（始终可用，无需 API Key）。"""
+    try:
+        # 先验证 edge_tts 包是否可用
+        import edge_tts  # noqa: F401
+    except ImportError:
+        log.warning("Edge-TTS 未安装: pip install edge-tts")
+        return None
+
     try:
         from aivyos_core.voice.cloud_engines import EdgeTTSBackend
         voice = cfg.get("voice", "zh-CN-XiaoxiaoNeural")

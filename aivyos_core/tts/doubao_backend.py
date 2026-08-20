@@ -28,8 +28,8 @@ from aivyos_core.tts.base import TTSBackend, TTSResult
 log = logging.getLogger(__name__)
 
 # 重试配置
-DEFAULT_MAX_RETRIES = 3
-DEFAULT_RETRY_DELAY = 1.0
+DEFAULT_MAX_RETRIES = 1
+DEFAULT_RETRY_DELAY = 0.5
 
 # 2.0 模型支持的采样率
 VALID_SAMPLE_RATES = {8000, 16000, 22050, 24000, 32000, 44100, 48000}

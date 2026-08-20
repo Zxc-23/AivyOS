@@ -41,6 +41,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import signal
 from typing import Any, Dict
 
@@ -63,7 +64,22 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
     # ---- API Key 持久化存储 ----
     from aivyos_core.api_key_store import create_api_key_store
     _api_key_store = create_api_key_store(cfg.get("home"))
+    _api_key_store.load()
     log.info("API Key 存储已初始化: %d 个密钥已加载", _api_key_store.key_count())
+
+    # ── 同步提供商特定 Key 到通用 AIVYOS_CLOUD_API_KEY ──
+    # 系统默认查找 AIVYOS_CLOUD_API_KEY，但用户可能存储了 DEEPSEEK_API_KEY 等
+    _CLOUD_KEY_ALIASES = [
+        "DEEPSEEK_API_KEY", "SILICONFLOW_API_KEY", "DASHSCOPE_API_KEY",
+        "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
+    ]
+    if not os.environ.get("AIVYOS_CLOUD_API_KEY"):
+        for _alias in _CLOUD_KEY_ALIASES:
+            _val = os.environ.get(_alias)
+            if _val:
+                os.environ["AIVYOS_CLOUD_API_KEY"] = _val
+                log.info("映射 API Key: %s → AIVYOS_CLOUD_API_KEY", _alias)
+                break
 
     # ---- VoiceSession (lazily created) ----
     _voice_session = None
@@ -556,7 +572,6 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
     async def voiceset_apply_tts(params):
         """应用 TTS 配置并立即重建 VoiceSession 的 TTS 引擎。"""
         import os
-        from aivyos_core.api_key_store import create_api_key_store
         from aivyos_core.tts.manager import create_tts
 
         provider = (params.get("provider", "auto") or "auto").lower()
@@ -584,13 +599,12 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             "elevenlabs": "ELEVENLABS_API_KEY",
         }
         if api_key:
-            # 保存到 API Key 持久化存储
-            _store = create_api_key_store(cfg.get("home"))
+            # 保存到全局 API Key 持久化存储
             env_var = env_var_map.get(provider, "")
             if env_var:
-                _store.set_key(env_var, api_key, provider)
+                _api_key_store.set_key(env_var, api_key, provider)
                 log.info("API Key 已保存到持久化存储: %s", env_var)
-            # 也同步到 os.environ 供 create_tts 使用
+            # 同步到 os.environ 供 create_tts 使用
             if env_var:
                 os.environ[env_var] = api_key
             tts_cfg["api_key"] = api_key
@@ -598,8 +612,7 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             # 用户清空了 API Key
             env_var = env_var_map[provider]
             os.environ.pop(env_var, None)
-            _store = create_api_key_store(cfg.get("home"))
-            _store.remove_key(env_var)
+            _api_key_store.remove_key(env_var)
             tts_cfg.pop("api_key", None)
 
         # 3) 重建 VoiceSession 的 TTS 引擎
@@ -783,7 +796,8 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
 
     @server.method("models.api-key.set")
     async def models_apikey_set(params):
-        """设置 API Key（加密持久化到文件 + 写入环境变量）。"""
+        """设置 API Key（加密持久化到文件 + 写入环境变量 + 热切换引擎）。"""
+        nonlocal engine
         field = params.get("field", "")
         value = params.get("value", "")
         env_var = params.get("env_var", "")
@@ -798,6 +812,19 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         if not result.get("ok"):
             return result
 
+        # 同步到 os.environ（供后端解析和路由过滤使用）
+        import os as _os
+        _os.environ[env_var] = value
+
+        # 若为已知云端提供商，同时映射到通用 AIVYOS_CLOUD_API_KEY
+        _CLOUD_PROVIDER_KEYS = {
+            "DEEPSEEK_API_KEY", "SILICONFLOW_API_KEY", "DASHSCOPE_API_KEY",
+            "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
+        }
+        if env_var in _CLOUD_PROVIDER_KEYS:
+            _os.environ["AIVYOS_CLOUD_API_KEY"] = value
+            log.info("API Key 映射: %s → AIVYOS_CLOUD_API_KEY", env_var)
+
         # 同步更新配置中的元信息
         cfg.setdefault("api_keys", {})[env_var] = {
             "env_var": env_var,
@@ -805,6 +832,13 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             "provider": provider,
             "updated_at": __import__("time").time(),
         }
+
+        # 热重建引擎以使新 API Key 生效
+        try:
+            engine = ChatEngine(cfg)
+            log.info("LLM 引擎已热重建（API Key 更新后）")
+        except Exception as e:
+            log.warning("LLM 引擎热重建失败（将在下次请求时重试）: %s", e)
 
         return result
 
@@ -946,7 +980,7 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             resource_id: 资源 ID（火山引擎/豆包）
 
         Returns:
-            {ok, wav_b64, sample_rate, text, backend, latency_ms, error?}
+            {ok, wav_b64, sample_rate, text, backend, latency_ms, warning?, error?}
         """
         import base64
         import os as _os
@@ -959,9 +993,13 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         api_key = params.get("api_key", "")
         resource_id = params.get("resource_id", "")
 
+        log.info("voice.test-tts 请求: provider=%s, voice=%s, api_key=%s, resource_id=%s",
+                 provider, voice, "***" if api_key else "(空)", resource_id)
+
         try:
             from aivyos_core.audio.wav import pcm_to_wav_bytes
             from aivyos_core.tts.manager import create_tts
+            from aivyos_core.tts.mock_backend import MockTTS
 
             # ── 若前端未传 API Key，尝试从环境变量读取（ApiKeyStore.load() 已注入）──
             if not api_key:
@@ -983,17 +1021,43 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
                 "api_key": api_key,
             }
 
-            # ── 通过 manager.create_tts() 选择后端（统一逻辑） ──
+            # ── 通过 manager.create_tts() 选择后端 ──
             backend = create_tts(tts_cfg)
+            log.info("voice.test-tts: create_tts 返回 %s", backend.__class__.__name__)
 
+            # ── 检查是否创建成功（非 mock 或用户明确要求 mock）──
+            is_mock = isinstance(backend, MockTTS)
+            log.info("voice.test-tts: is_mock=%s, provider=%s", is_mock, provider)
+            if is_mock and provider != "mock":
+                env_hint = ""
+                if provider in ("auto", "doubao-tts"):
+                    env_hint = "，请先在上方填写豆包 API Key 并保存"
+                elif provider == "elevenlabs":
+                    env_hint = "，请先在上方填写 ElevenLabs API Key 并保存"
+                elif provider == "edge-tts":
+                    env_hint = "（Edge-TTS 需要联网及 pip install edge-tts）"
+                return {
+                    "ok": False,
+                    "error": f"无法初始化 {provider} TTS 引擎{env_hint}",
+                    "backend": "mock",
+                }
+
+            # ── 执行合成 ──
             start = _time.perf_counter()
             result = backend.synthesize(text)
             latency_ms = (_time.perf_counter() - start) * 1000
 
+            # ── 检测云端合成是否失败并降级到 mock ──
+            warning = None
+            if is_mock:
+                pass  # 用户明确要求 mock，正常返回
+            elif result.backend == "mock-tts" and provider != "mock":
+                warning = "云端 TTS 调用失败，已降级为 mock 提示音（无真实语音）。请检查 API Key 是否正确、网络是否连通。"
+
             wav_bytes = pcm_to_wav_bytes(result.pcm, result.sample_rate)
             wav_b64 = base64.b64encode(wav_bytes).decode("ascii")
 
-            return {
+            resp = {
                 "ok": True,
                 "wav_b64": wav_b64,
                 "sample_rate": result.sample_rate,
@@ -1003,6 +1067,9 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
                 "wav_len": len(wav_bytes),
                 "latency_ms": round(latency_ms, 1),
             }
+            if warning:
+                resp["warning"] = warning
+            return resp
         except Exception as e:
             log.exception("voice.test-tts 异常")
             return {"ok": False, "error": str(e), "backend": provider}
@@ -1103,6 +1170,26 @@ async def amain(args) -> None:
     cfg = load_config(args.config)
     if args.mode:
         cfg["llm"]["mode"] = args.mode
+
+    # ── 先加载 API Key 到环境变量（引擎创建前） ──
+    from aivyos_core.api_key_store import create_api_key_store
+    _tmp_store = create_api_key_store(cfg.get("home"))
+    _tmp_store.load()
+    log.info("启动时加载 API Key: %d 个密钥", _tmp_store.key_count())
+
+    # 同步提供商特定 Key 到通用 AIVYOS_CLOUD_API_KEY
+    _CLOUD_KEY_ALIASES = [
+        "DEEPSEEK_API_KEY", "SILICONFLOW_API_KEY", "DASHSCOPE_API_KEY",
+        "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
+    ]
+    if not os.environ.get("AIVYOS_CLOUD_API_KEY"):
+        for _alias in _CLOUD_KEY_ALIASES:
+            _val = os.environ.get(_alias)
+            if _val:
+                os.environ["AIVYOS_CLOUD_API_KEY"] = _val
+                log.info("启动映射 API Key: %s → AIVYOS_CLOUD_API_KEY", _alias)
+                break
+
     engine = ChatEngine(cfg)
     server = build_server(engine, cfg)
     await server.start()

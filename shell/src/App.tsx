@@ -890,6 +890,12 @@ export default function App() {
       if (!result.ok || !result.wav_b64) {
         throw new Error(result.error || "合成失败，未返回音频数据");
       }
+      // Mock 降级警告（云端调用失败导致 fallback 到 mock 提示音）
+      if (result.warning) {
+        setVsetTestResult("⚠ " + result.warning);
+        showNotification("试听警告", result.warning, "warning");
+        return;
+      }
       // 使用 Web Audio API 播放（比 <audio> 更可靠）
       const binary = atob(result.wav_b64);
       const bytes = new Uint8Array(binary.length);
@@ -915,7 +921,7 @@ export default function App() {
 
   const handleSaveTts = useCallback(async () => {
     try {
-      showNotification("保存中...", "正在应用 TTS 配置", "info");
+      showNotification("保存中...", "正在应用 TTS 配置", "success");
       const result = await applyVoiceTts(
         vsetTtsProvider,
         vsetTtsVoice,

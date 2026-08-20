@@ -2,16 +2,20 @@
 
 - NullSink：丢弃（默认，无设备环境安全）
 - WavSink：写入 WAV 文件（演示/保存）
-- PlaybackSink：sounddevice 实时播放（可选）
+- PlaybackSink：sounddevice 实时播放（非阻塞，fire-and-forget）
 """
 
 from __future__ import annotations
 
+import logging
+import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
 
 from aivyos_core.audio.wav import write_wav
+
+log = logging.getLogger(__name__)
 
 
 class AudioSink(ABC):
@@ -19,6 +23,10 @@ class AudioSink(ABC):
     def play(self, pcm: bytes) -> None:
         """播放/输出一段 16-bit PCM。"""
         raise NotImplementedError
+
+    def stop(self) -> None:
+        """停止当前播放（默认空实现）。"""
+        pass
 
 
 class NullSink(AudioSink):
@@ -38,6 +46,12 @@ class WavSink(AudioSink):
 
 
 class PlaybackSink(AudioSink):
+    """非阻塞音频播放：fire-and-forget，不阻塞调用线程。
+
+    前端已通过 Web Audio API 播放 wav_b64，后端 PlaybackSink 仅在无前端时使用。
+    使用 sounddevice.play() 异步播放（不调用 wait()），立即返回。
+    """
+
     def __init__(self, sample_rate: int = 24000) -> None:
         try:
             import sounddevice as sd  # type: ignore
@@ -48,14 +62,34 @@ class PlaybackSink(AudioSink):
         except ImportError as e:
             raise RuntimeError("实时播放需要 sounddevice + numpy（缺失时降级 NullSink）") from e
         self.sample_rate = sample_rate
+        self._current_audio = None
+        self._lock = threading.Lock()
+
+    def stop(self) -> None:
+        """停止当前正在播放的音频。"""
+        with self._lock:
+            self._current_audio = None
+        try:
+            self.sd.stop()
+        except Exception:
+            pass
+        log.debug("PlaybackSink.stop() 已调用")
 
     def play(self, pcm: bytes) -> None:
+        """异步播放 PCM 音频（fire-and-forget，不阻塞）。
+
+        sounddevice.play() 立即返回，音频在后台播放。
+        保留音频引用防止 GC 回收导致播放中断。
+        """
         try:
             audio = self.np.frombuffer(pcm, dtype="int16")
+            with self._lock:
+                self._current_audio = audio
             self.sd.play(audio, self.sample_rate)
-            self.sd.wait()
-        except Exception:
-            pass  # 无音频设备等异常 → 静默降级（不阻断对话链路）
+            # play() 立即返回，音频在后台播放
+            # 不调用 wait()，不阻塞
+        except Exception as e:
+            log.warning("PlaybackSink 播放异常: %s", e)
 
 
 def create_sink(cfg: dict) -> AudioSink:

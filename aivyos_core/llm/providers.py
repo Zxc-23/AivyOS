@@ -64,6 +64,12 @@ class OpenAICompatBackend(LLMBackend):
             key = os.environ.get(info.api_key_env)
             if key:
                 return key
+        # 查找常见别名（DEEPSEEK_API_KEY 等）
+        _COMMON_KEY_ENVS = ["DEEPSEEK_API_KEY", "SILICONFLOW_API_KEY", "AIVYOS_CLOUD_API_KEY"]
+        for env_name in _COMMON_KEY_ENVS:
+            key = os.environ.get(env_name)
+            if key:
+                return key
         return info.config.get("api_key") or os.environ.get("AIVYOS_CLOUD_API_KEY")
 
     @property
