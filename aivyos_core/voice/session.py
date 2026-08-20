@@ -127,7 +127,16 @@ class VoiceSession:
         # 已通过唤醒词检查（文本模式自动通过，真实音频需命中唤醒词）
         clean = self.wake.strip(transcript) if self.wake_required else transcript
         if not clean:
-            return None
+            # 识别到语音但内容为空/纯噪音/仅唤醒词 → 明确错误（§3.1 噪音过滤）
+            log.info("识别结果为空指令（可能为环境噪音）: %r", transcript[:40])
+            return {
+                "text": transcript,
+                "reply": None,
+                "error": "empty_command",
+                "error_detail": "未识别到有效语音指令（请减少环境噪音后重试）",
+                "auth": auth_result,
+                "wake": True,
+            }
 
         # LLM 对话
         llm_t0 = time.perf_counter()

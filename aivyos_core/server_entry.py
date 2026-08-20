@@ -183,13 +183,26 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
 
         - 传 text：跳过真实音频采集，直接用文本走完整链路（text_override 模式）
         - 不传 text：真实麦克风采集 → VAD → ASR → LLM → TTS（listen 模式）
+        - 互斥：真实采集期间暂停后台 WakeLoop，避免多 MicSource 抢占麦克风产生噪音
         """
         text_override = params.get("text")
+        wake_loop = _wake_loop_ref["loop"]
+        wake_was_running = bool(wake_loop and wake_loop.running)
         try:
-            vs = get_voice()
-            result = await vs.run_turn(text_override=text_override)
+            # 互斥：真实采集前暂停后台唤醒循环（两者共用同一麦克风设备）
+            if text_override is None and wake_was_running:
+                log.info("voice.turn 采集前暂停 WakeLoop（麦克风互斥）")
+                await wake_loop.stop()
+            try:
+                vs = get_voice()
+                result = await vs.run_turn(text_override=text_override)
+            finally:
+                # 采集结束恢复唤醒循环
+                if text_override is None and wake_was_running:
+                    await wake_loop.start()
+                    log.info("voice.turn 结束，WakeLoop 已恢复")
             if result is None:
-                return {"ok": False, "error": "语音对话执行失败", "asr_text": text_override}
+                return {"ok": False, "error": "语音对话执行失败（未识别到有效语音）", "error_type": "no_result", "asr_text": text_override}
             # 处理无语音检测等预期内的失败
             if result.get("error") == "no_speech_detected":
                 return {
@@ -197,6 +210,15 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
                     "error": result.get("error_detail", "未检测到语音输入"),
                     "error_type": "no_speech_detected",
                     "source": result.get("source", "unknown"),
+                    "asr_text": text_override,
+                }
+            # 处理识别为空/纯噪音（§3.1：环境噪音过滤）
+            if result.get("error") == "empty_command":
+                return {
+                    "ok": False,
+                    "error": result.get("error_detail", "未识别到有效语音指令（请减少环境噪音后重试）"),
+                    "error_type": "empty_command",
+                    "text": result.get("text", ""),
                     "asr_text": text_override,
                 }
             # 处理唤醒词未命中
@@ -270,7 +292,7 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
 
         def on_wake(text: str) -> None:
             asyncio.create_task(
-                server.broadcast_event("wake.detected", {
+                server.broadcast_event("wake-detected", {
                     "text": text,
                     "timestamp": asyncio.get_event_loop().time(),
                 })
