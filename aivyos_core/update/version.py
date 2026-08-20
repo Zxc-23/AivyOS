@@ -105,18 +105,28 @@ class VersionManager:
         return dst
 
     def _switch(self, version: str) -> None:
-        """切换 current → v{version}。优先符号链接（§2.3），无权限时降级指针文件。"""
+        """切换 current → v{version}。
+
+        Windows 兼容实现：
+        - 优先使用指针文件（写入版本号文本），避免符号链接权限问题
+        - 如果之前存在符号链接或目录，先正确清理
+        """
         link = self.root / "current"
-        if link.is_symlink() or link.exists():
-            if link.is_dir():
-                shutil.rmtree(link, ignore_errors=True)
-            else:
+
+        # 清理旧的 current 指针
+        if link.exists() or link.is_symlink():
+            if link.is_symlink():
+                # 符号链接：直接删除链接本身，不删除目标
                 link.unlink()
-        try:
-            os.symlink(f"v{version}", link, target_is_directory=True)
-        except (OSError, NotImplementedError):
-            # 沙箱/无符号链接权限：指针文件降级（§2 优雅降级）
-            link.write_text(f"v{version}", encoding="utf-8")
+            elif link.is_file():
+                # 指针文件：直接删除
+                link.unlink()
+            elif link.is_dir():
+                # 真实目录（异常情况）：删除目录
+                shutil.rmtree(link, ignore_errors=True)
+
+        # 使用指针文件（跨平台兼容，无需管理员权限）
+        link.write_text(f"v{version}", encoding="utf-8")
 
     def _prune(self) -> None:
         """保留最近 KEEP_VERSIONS 个版本，自动清理更早版本（§2.3）。"""

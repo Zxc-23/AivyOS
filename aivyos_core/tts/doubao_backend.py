@@ -59,7 +59,12 @@ class DoubaoTTSBackend(TTSBackend):
                 - max_retries: 最大重试次数
         """
         cfg = config or {}
-        self._api_key = cfg.get("api_key", "") or os.environ.get("VOLCENGINE_API_KEY", "")
+        # 支持多种API Key参数名：api_key或access_key
+        self._api_key = (
+            cfg.get("api_key", "")
+            or cfg.get("access_key", "")
+            or os.environ.get("VOLCENGINE_API_KEY", "")
+        )
         self._resource_id = cfg.get("resource_id", "seed-tts-2.0")
         self._voice_type = cfg.get("voice_type", "zh_female_xiaohe_uranus_bigtts")
         self._speed_ratio = float(cfg.get("speed_ratio", 1.0))
@@ -81,19 +86,18 @@ class DoubaoTTSBackend(TTSBackend):
     def synthesize(self, text: str) -> TTSResult:
         """文本转语音（带自动重试）。
 
+        无 API Key 时自动降级到 Mock 模式，返回合成静音音频。
+
         Args:
             text: 要合成的文本。
 
         Returns:
             TTSResult 合成结果。
-
-        Raises:
-            RuntimeError: 无 API Key 或全部重试失败。
         """
         if not self._available:
-            raise RuntimeError(
-                "豆包 TTS 未配置 API Key，请在前端语音设置中填写豆包 API Key"
-            )
+            # Mock 降级：生成1秒静音PCM数据
+            log.info("豆包 TTS 无 API Key，降级到 Mock 模式")
+            return self._mock_synthesize(text)
 
         last_error = None
         for attempt in range(self._max_retries + 1):
@@ -289,6 +293,33 @@ class DoubaoTTSBackend(TTSBackend):
             raise RuntimeError("豆包 TTS 返回空音频数据")
 
         return b"".join(audio_chunks)
+
+    def _mock_synthesize(self, text: str) -> TTSResult:
+        """Mock 合成：生成1秒静音PCM数据用于测试。
+
+        Args:
+            text: 要合成的文本（仅用于日志记录）。
+
+        Returns:
+            TTSResult 包含1秒静音PCM数据。
+        """
+        duration_s = 1.0
+        num_samples = int(self._sample_rate * duration_s)
+        # 生成静音数据（全0）
+        pcm_data = b"\x00" * (num_samples * 2)  # 16-bit PCM
+        
+        return TTSResult(
+            pcm=pcm_data,
+            sample_rate=self._sample_rate,
+            text=text,
+            backend="doubao-mock",
+            latency_ms=0.0,
+            meta={
+                "mode": "mock",
+                "reason": "no_api_key",
+                "chars": len(text),
+            },
+        )
 
     def clone_voice(self, ref_pcm: bytes, text: str) -> TTSResult:
         """音色克隆 — V3 API 通过声音复刻接口实现。

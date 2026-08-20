@@ -85,7 +85,11 @@ class VoiceSession:
             transcript = text_override
             asr_backend = "text-override"
             auth_result = {"bypassed": True, "reason": "文本模拟模式"}
-            wake_passed = True
+            # 唤醒词门控：即使在文本覆盖模式下，若 wake_required=True 仍需检查
+            wake_passed = not self.wake_required or self.wake.detect(transcript)
+            if not wake_passed:
+                log.info("唤醒词未命中 (text_override): %r", transcript[:30])
+                return {"text": transcript, "reply": None, "wake": False, "auth": auth_result}
         else:
             log.info("开始真实音频采集...")
             pcm = await self._capture_utterance()
