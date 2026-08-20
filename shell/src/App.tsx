@@ -721,11 +721,11 @@ export default function App() {
   const pttActiveRef = useRef(false);
   const handlePttStart = useCallback(async () => {
     if (pttActiveRef.current) return;
+    if (!bridgeReady) return; // 核心未就绪：不进入聆听状态（避免卡 UI）
     pttActiveRef.current = true;
     setVoiceListening(true);
     updateTrayState("voice");
     try {
-      if (!bridgeReady) return;
       await pttStart();
     } catch (e) {
       console.warn("PTT 开始失败:", e);
