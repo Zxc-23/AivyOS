@@ -1214,7 +1214,15 @@ async def amain(args) -> None:
 
     engine = ChatEngine(cfg)
     server = build_server(engine, cfg)
-    await server.start()
+    try:
+        await server.start()
+    except OSError as e:
+        if getattr(e, "winerror", None) == 10048 or "10048" in str(e):
+            print(f"\n[提示] 端口 {cfg['ipc']['port']} 已被占用 —— Tauri 壳层可能已自动启动 Python 核心。")
+            print("       无需手动启动；若确需重启，请先关闭 Tauri（或结束现有 python 进程）再试。")
+        else:
+            print(f"\n[错误] 服务启动失败: {e}")
+        raise SystemExit(1) from e
     print(f"AivyOS IPC 服务已启动（transport={server.transport}）")
     print(f"  端口: {cfg['ipc']['port']}  记忆后端: {engine.memory.backend_name}")
     print("  按 Ctrl+C 停止")
