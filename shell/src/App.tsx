@@ -202,6 +202,12 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [bridgeReady, setBridgeReady] = useState(false);
 
+  // 聊天自动滚动：消息变化时滚动到底部（最新消息）
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages]);
+
   /* ---- Voice screen state ---- */
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [voiceTurnResult, setVoiceTurnResult] = useState<VoiceTurnResult | null>(null);
@@ -1319,6 +1325,7 @@ export default function App() {
                       <div className={`msg-bubble ${m.role}`}>{m.text}</div>
                     </div>
                   ))}
+                  <div ref={chatEndRef} />
                 </div>
                 <div className="chat-input-area">
                   <div className="chat-input-row">
