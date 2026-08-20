@@ -150,8 +150,8 @@ const DEMO_VOICE_SETTINGS: VoiceSettings = {
   wake_required: true,
   asr_backend: "funasr",
   asr_model: "paraformer-zh",
-  tts_backend: "cosyvoice",
-  tts_model: "cosyvoice-zh",
+  tts_backend: "auto",
+  tts_model: "",
   tts_voice: "zh_female_xiaohe_uranus_bigtts",
   tts_speed: 1.0,
   tts_resource_id: "seed-tts-2.0",
@@ -298,7 +298,7 @@ export default function App() {
   /* ---- Voice settings: cloud providers ---- */
   const [vsetAsrProvider, setVsetAsrProvider] = useState("aliyun");
   const [vsetAsrApiKey, setVsetAsrApiKey] = useState("");
-  const [vsetTtsProvider, setVsetTtsProvider] = useState("doubao-tts");
+  const [vsetTtsProvider, setVsetTtsProvider] = useState("auto");
   const [vsetTtsVoice, setVsetTtsVoice] = useState("zh_female_xiaohe_uranus_bigtts");
   const [vsetTtsSpeed, setVsetTtsSpeed] = useState(1.0);
   const [vsetTtsApiKey, setVsetTtsApiKey] = useState("");
@@ -324,13 +324,31 @@ export default function App() {
     { id: "edge", name: "Edge-Speech", hint: "微软 Edge 语音服务" },
   ];
   const TTS_PROVIDERS = [
+    { id: "auto", name: "自动 (推荐：豆包 → Edge-TTS → Mock)" },
     { id: "doubao-tts", name: "豆包 (方舟，流式，中文最自然)" },
     { id: "bytedance", name: "火山引擎 · 字节跳动" },
-    { id: "elevenlabs", name: "ElevenLabs" },
-    { id: "openai", name: "OpenAI" },
+    { id: "elevenlabs", name: "ElevenLabs (英文)" },
+    { id: "edge-tts", name: "Edge-TTS (微软免费云端)" },
+    { id: "cosyvoice", name: "CosyVoice (本地离线)" },
     { id: "volcengine", name: "火山引擎" },
   ];
   const TTS_VOICES: Record<string, { id: string; name: string }[]> = {
+    "auto": [
+      { id: "zh_female_xiaohe_uranus_bigtts", name: "小何 2.0 (女声·通用)" },
+      { id: "zh_female_vv_uranus_bigtts", name: "Vivi 2.0 (女声·活泼)" },
+      { id: "zh_female_sophie_uranus_bigtts", name: "魅力苏菲 2.0 (女声·知性)" },
+      { id: "zh_female_cancan_uranus_bigtts", name: "知性灿灿 2.0 (女声·角色扮演)" },
+      { id: "zh_female_shuangkuaisisi_uranus_bigtts", name: "爽快思思 2.0 (女声·通用)" },
+      { id: "zh_female_linjianvhai_uranus_bigtts", name: "邻家女孩 2.0 (女声·通用)" },
+      { id: "zh_female_peiqi_uranus_bigtts", name: "佩奇猪 2.0 (女声·视频配音)" },
+      { id: "zh_male_m191_uranus_bigtts", name: "云舟 2.0 (男声·通用)" },
+      { id: "zh_male_taocheng_uranus_bigtts", name: "小天 2.0 (男声·通用)" },
+      { id: "zh_male_liufei_uranus_bigtts", name: "刘飞 2.0 (男声·通用)" },
+      { id: "zh_male_shaonianzixin_uranus_bigtts", name: "少年梓辛 2.0 (男声·少年)" },
+      { id: "zh_male_dayi_uranus_bigtts", name: "大壹 2.0 (男声·视频配音)" },
+      { id: "en_male_tim_uranus_bigtts", name: "Tim (英语男声)" },
+      { id: "en_female_dacey_uranus_bigtts", name: "Dacey (英语女声)" },
+    ],
     "doubao-tts": [
       { id: "zh_female_xiaohe_uranus_bigtts", name: "小何 2.0 (女声·通用)" },
       { id: "zh_female_vv_uranus_bigtts", name: "Vivi 2.0 (女声·活泼)" },
@@ -354,10 +372,24 @@ export default function App() {
     "elevenlabs": [
       { id: "rachel", name: "Rachel (English)" },
       { id: "adam", name: "Adam (English)" },
+      { id: "bella", name: "Bella (English)" },
+      { id: "antoni", name: "Antoni (English)" },
     ],
-    "openai": [
-      { id: "alloy", name: "Alloy" },
-      { id: "echo", name: "Echo" },
+    "edge-tts": [
+      { id: "zh-CN-XiaoxiaoNeural", name: "晓晓 (女声·推荐)" },
+      { id: "zh-CN-XiaoyiNeural", name: "晓伊 (女声·温柔)" },
+      { id: "zh-CN-XiaomengNeural", name: "晓梦 (女声·知性)" },
+      { id: "zh-CN-XiaohanNeural", name: "晓涵 (女声·亲切)" },
+      { id: "zh-CN-YunxiNeural", name: "云希 (男声·推荐)" },
+      { id: "zh-CN-YunjianNeural", name: "云健 (男声·有力)" },
+      { id: "zh-CN-YunyangNeural", name: "云扬 (男声·阳光)" },
+      { id: "zh-CN-YunzeNeural", name: "云泽 (男声·温和)" },
+      { id: "en-US-AriaNeural", name: "Aria (English Female)" },
+      { id: "en-US-GuyNeural", name: "Guy (English Male)" },
+    ],
+    "cosyvoice": [
+      { id: "zh_female_xiaohe", name: "小何 (本地女声)" },
+      { id: "zh_male_m191", name: "云舟 (本地男声)" },
     ],
     "volcengine": [
       { id: "xiaoming", name: "小明" },
@@ -809,7 +841,8 @@ export default function App() {
       if (st.wake_words && st.wake_words.length > 0) setVsetWakeWord(st.wake_words[0]);
       setVsetAsrEngine(st.asr_backend);
       setVsetLanguage(st.language);
-      if (st.tts_backend) setVsetTtsProvider(st.tts_backend);
+      if (st.tts_backend && TTS_VOICES[st.tts_backend]) setVsetTtsProvider(st.tts_backend);
+      else if (st.tts_backend) setVsetTtsProvider("auto");
       if (st.tts_voice) setVsetTtsVoice(st.tts_voice);
       if (st.tts_speed) setVsetTtsSpeed(st.tts_speed);
       if (st.tts_resource_id) setVsetTtsResourceId(st.tts_resource_id);

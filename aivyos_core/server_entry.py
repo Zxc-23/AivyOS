@@ -576,6 +576,7 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
 
         # 2) 同步 API Key 到环境变量（用于 create_tts 自动检测）
         env_var_map = {
+            "auto": "VOLCENGINE_API_KEY",
             "doubao-tts": "VOLCENGINE_API_KEY",
             "doubao": "VOLCENGINE_API_KEY",
             "bytedance": "VOLCENGINE_API_KEY",

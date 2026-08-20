@@ -39,10 +39,13 @@ def _try_doubao(cfg: Dict[str, Any]) -> Optional[TTSBackend]:
         return None
     try:
         from aivyos_core.tts.doubao_backend import DoubaoTTSBackend
+        voice = cfg.get("voice", "zh_female_xiaohe_uranus_bigtts")
+        if not voice or "bigtts" not in voice:
+            voice = "zh_female_xiaohe_uranus_bigtts"
         return DoubaoTTSBackend(config={
             "api_key": api_key,
             "resource_id": cfg.get("resource_id", "seed-tts-2.0"),
-            "voice_type": cfg.get("voice", "zh_female_xiaohe_uranus_bigtts"),
+            "voice_type": voice,
             "speed_ratio": float(cfg.get("speed", 1.0)),
             "sample_rate": int(cfg.get("sample_rate", 24000)),
         })
@@ -59,6 +62,8 @@ def _try_edge(cfg: Dict[str, Any]) -> Optional[TTSBackend]:
     try:
         from aivyos_core.voice.cloud_engines import EdgeTTSBackend
         voice = cfg.get("voice", "zh-CN-XiaoxiaoNeural")
+        if "Neural" not in voice:
+            voice = "zh-CN-XiaoxiaoNeural"
         speed = float(cfg.get("speed", 1.0))
         rate_str = f"+{int((speed - 1) * 100)}%" if speed != 1.0 else "+0%"
         return EdgeTTSBackend(config={"voice": voice, "rate": rate_str})
