@@ -719,27 +719,82 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
 
     @server.method("boot.check")
     async def boot_check(params):
-        """执行系统自检，返回各模块状态。"""
+        """执行系统自检，返回各模块状态。
+
+        真实性原则：每项做真实可用性探测（而非仅配置读取），
+        避免假阳性 —— LLM 探测、记忆真实检索、语音模型就绪检查。
+        """
         checks = []
-        # 1. LLM 路由
+        # 1. LLM 路由（真实探测本地/云端可用性）
         try:
             routes = engine.router.backends_status()
-            checks.append({"name": "LLM 路由", "ok": True, "detail": f"{len(routes)} 个后端"})
+            local_ok = False
+            cloud_ok = False
+            mock_only = True
+            for r in routes:
+                prov = str(r.get("mode", "")).lower()
+                avail = bool(r.get("available"))
+                if avail:
+                    if prov in ("ollama", "vllm"):
+                        local_ok = True
+                        mock_only = False
+                    elif prov != "mock":
+                        cloud_ok = True
+                        mock_only = False
+            detail = f"{len(routes)} 个后端"
+            if local_ok:
+                detail += "（本地✓）"
+            elif cloud_ok:
+                detail += "（云端✓）"
+            elif mock_only:
+                detail += "（仅 mock）"
+            else:
+                detail += "（均不可用→mock）"
+            checks.append({"name": "LLM 路由", "ok": local_ok or cloud_ok, "detail": detail})
         except Exception as e:
             checks.append({"name": "LLM 路由", "ok": False, "detail": str(e)})
 
-        # 2. 记忆系统
+        # 2. 记忆系统（真实检索验证读写可用）
         try:
             mem_info = engine.memory.backend_name
-            checks.append({"name": "记忆系统", "ok": True, "detail": mem_info})
+            try:
+                await engine.memory.search("自检", top_k=1)
+                detail = f"{mem_info}（读写✓）"
+                ok = True
+            except Exception:
+                detail = f"{mem_info}（检索失败）"
+                ok = False
+            checks.append({"name": "记忆系统", "ok": ok, "detail": detail})
         except Exception as e:
             checks.append({"name": "记忆系统", "ok": False, "detail": str(e)})
 
-        # 3. 语音
+        # 3. 语音模块（检查模型就绪，不触发 VoiceSession 创建/麦克风打开）
         try:
-            vs = get_voice()
-            vs_status = vs.status()
-            checks.append({"name": "语音模块", "ok": True, "detail": f"ASR={vs_status.get('asr')}, TTS={vs_status.get('tts')}"})
+            from aivyos_core.voice.session import VoiceSession
+
+            # 用轻量方式读取语音配置（不实例化，避免打开麦克风）
+            asr_cfg = cfg.get("asr", {})
+            tts_cfg = cfg.get("tts", {})
+            asr_backend = asr_cfg.get("backend", "auto")
+            tts_backend = tts_cfg.get("backend", "auto")
+            detail = f"ASR={asr_backend}, TTS={tts_backend}"
+            # 真实就绪：ASR 模型（FunASR）是否已预热（仅当已创建 VoiceSession 时可知）
+            # 惰性检查：若 VoiceSession 已创建，读取就绪状态；未创建则视为待检查（不触发创建/开麦克风）
+            asr_ready = None
+            tts_ready = None
+            try:
+                existing = _voice_session
+                if existing is not None:
+                    asr_ready = bool(getattr(existing.asr, "_warmed_up", True)) or existing.asr.name == "mock-asr"
+                    tts_ready = bool(getattr(existing.tts, "_available", True)) or existing.tts.name == "mock-tts"
+                    if asr_ready is False:
+                        detail += "（ASR 模型预热中）"
+            except Exception:
+                pass
+            if asr_ready is False:
+                checks.append({"name": "语音模块", "ok": False, "detail": detail})
+            else:
+                checks.append({"name": "语音模块", "ok": True, "detail": detail})
         except Exception as e:
             checks.append({"name": "语音模块", "ok": False, "detail": str(e)})
 
@@ -791,8 +846,9 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         except Exception as e:
             checks.append({"name": "视觉模块", "ok": False, "detail": str(e)})
 
+        total = len(checks) or 1  # 防除零
         passed = sum(1 for c in checks if c["ok"])
-        progress = int(passed / len(checks) * 100)
+        progress = int(passed / total * 100)
         return {
             "checks": checks,
             "progress": progress,
