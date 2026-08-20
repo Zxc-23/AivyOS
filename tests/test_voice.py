@@ -74,6 +74,19 @@ class TestVoiceSession(AivyTestCase):
         self.assertIn("vad", st)
         self.assertFalse(st["wake_required"])
 
+    def test_status_reports_readiness(self):
+        """就绪门：mock 后端 asr_ready/tts_ready 恒为 True（无需预热）。"""
+        from aivyos_core.server_entry import _is_exit_command  # noqa: F401  (确保模块可导入)
+
+        session = VoiceSession(voice_config())
+        st = session.status()
+        # session.status 本身不带 asr_ready；由 server_entry.voice_status 附加。
+        # 这里验证 mock 后端可安全读取 _warmed_up / _available 属性（不抛异常）。
+        asr_ready = bool(getattr(session.asr, "_warmed_up", True)) or session.asr.name == "mock-asr"
+        tts_ready = bool(getattr(session.tts, "_available", True)) or session.tts.name == "mock-tts"
+        self.assertTrue(asr_ready)
+        self.assertTrue(tts_ready)
+
 
 if __name__ == "__main__":
     unittest.main()

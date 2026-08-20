@@ -44,6 +44,8 @@ export interface VoiceStatus {
   current_user?: string;
   error?: string;
   fallback?: boolean;
+  asr_ready?: boolean;
+  tts_ready?: boolean;
 }
 
 export interface VoiceTurnResult {

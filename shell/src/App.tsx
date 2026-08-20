@@ -60,6 +60,7 @@ const DEMO_VOICE_STATUS: VoiceStatus = {
   source: "text-sim", sink: "wav-file",
   wake_required: true, wake_words: ["艾薇", "艾维"],
   llm_route_mode: "local",
+  asr_ready: true, tts_ready: true,
 };
 
 const DEMO_VOICE_TEXTS = [
@@ -719,9 +720,10 @@ export default function App() {
 
   // ---- PTT（按住说话）：按住空格/鼠标开始采集，松开处理 ----
   const pttActiveRef = useRef(false);
+  const voiceReady = bridgeReady && voiceStatus?.asr_ready !== false;
   const handlePttStart = useCallback(async () => {
     if (pttActiveRef.current) return;
-    if (!bridgeReady) return; // 核心未就绪：不进入聆听状态（避免卡 UI）
+    if (!voiceReady) return; // 核心未就绪/模型预热中：不进入聆听状态（显示加载门）
     pttActiveRef.current = true;
     setVoiceListening(true);
     updateTrayState("voice");
@@ -733,7 +735,7 @@ export default function App() {
       setVoiceListening(false);
       updateTrayState("idle");
     }
-  }, [bridgeReady, updateTrayState]);
+  }, [voiceReady, updateTrayState]);
 
   const handlePttStop = useCallback(async () => {
     if (!pttActiveRef.current) return;
@@ -1395,6 +1397,16 @@ export default function App() {
 
                 {/* Microphone button - large circular PTT（按住说话） */}
                 <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+                  {(!bridgeReady || voiceStatus?.asr_ready === false) ? (
+                    <div style={{ padding: "24px 32px", borderRadius: 12, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)", textAlign: "center" }}>
+                      <div style={{ fontSize: 20, marginBottom: 6 }}>⏳</div>
+                      <div style={{ fontSize: 14, color: "var(--warning)", fontWeight: 500 }}>核心加载中（模型预热中）</div>
+                      <div style={{ fontSize: 11, color: "var(--muted2)", marginTop: 4 }}>
+                        {!bridgeReady ? "正在连接 Python 核心..." : "正在加载语音识别模型（FunASR），首次约需 10-30 秒"}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
                   <button
                     onMouseDown={(e) => { e.preventDefault(); if (!voiceLoading) void handlePttStart(); }}
                     onMouseUp={() => void handlePttStop()}
@@ -1431,6 +1443,8 @@ export default function App() {
                   <div style={{ fontSize: 12, color: "var(--muted2)" }}>
                     {voiceListening ? "正在聆听...松开结束" : (voiceLoading ? "处理中..." : "按住空格或按住按钮说话")}
                   </div>
+                    </>
+                  )}
                 </div>
 
                 {voiceTurnResult && !voiceLoading && (

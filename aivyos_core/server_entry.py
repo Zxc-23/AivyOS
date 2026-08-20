@@ -210,9 +210,21 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
     async def voice_status(params):
         try:
             vs = get_voice()
-            return vs.status()
+            st = vs.status()
+            # 就绪门：ASR 模型（FunASR）是否已预热、TTS 是否可用
+            try:
+                asr = getattr(vs, "asr", None)
+                st["asr_ready"] = bool(getattr(asr, "_warmed_up", True)) or asr.name == "mock-asr"
+            except Exception:
+                st["asr_ready"] = True
+            try:
+                tts = getattr(vs, "tts", None)
+                st["tts_ready"] = bool(getattr(tts, "_available", True)) or tts.name == "mock-tts"
+            except Exception:
+                st["tts_ready"] = True
+            return st
         except Exception as e:
-            return {"error": str(e), "fallback": True, "asr": "mock", "tts": "mock"}
+            return {"error": str(e), "fallback": True, "asr": "mock", "tts": "mock", "asr_ready": False, "tts_ready": False}
 
     @server.method("voice.turn")
     async def voice_turn(params):
@@ -1456,6 +1468,23 @@ async def amain(args) -> None:
     print(f"AivyOS IPC 服务已启动（transport={server.transport}）")
     print(f"  端口: {cfg['ipc']['port']}  记忆后端: {engine.memory.backend_name}")
     print("  按 Ctrl+C 停止")
+
+    # 启动就绪门：后台预热语音模型（FunASR），不阻塞服务启动。
+    # 预热完成后 voice.status 的 asr_ready=true，前端才放行 PTT。
+    async def _warmup_voice() -> None:
+        try:
+            from aivyos_core.voice.session import VoiceSession
+
+            vs = VoiceSession(cfg, engine)
+            asr = getattr(vs, "asr", None)
+            if asr is not None and hasattr(asr, "warmup") and getattr(asr, "name", "") not in ("mock-asr",):
+                log.info("启动预热 ASR 模型（%s）...", getattr(asr, "name", "?"))
+                await asyncio.get_running_loop().run_in_executor(None, asr.warmup)
+                log.info("ASR 模型预热完成")
+        except Exception as e:
+            log.warning("启动预热语音模型失败（不影响使用，首次调用会自动预热）: %s", e)
+
+    asyncio.get_running_loop().create_task(_warmup_voice())
 
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
