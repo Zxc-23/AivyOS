@@ -249,8 +249,8 @@ impl CoreHandle {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// 发送一个 JSON-RPC 请求并阻塞等待响应（sync tauri command 调用）
-    fn call_sync(&self, method: &str, params: Value) -> Result<Value, String> {
+    /// 发送一个 JSON-RPC 请求并等待响应（async command 使用，不阻塞主线程）
+    async fn call(&self, method: &str, params: Value) -> Result<Value, String> {
         if !self.0.ready.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(
                 "Python 核心尚未就绪（稍后再试；或手动在 f:\\AivyOS\\aivyos 下执行 `python -m aivyos_core.server_entry --mode auto`）"
@@ -271,45 +271,44 @@ impl CoreHandle {
 
         let inner = Arc::clone(&self.0);
         let method_owned = method.to_string();
-        tauri::async_runtime::block_on(async move {
-            let tx_guard = inner.tx.lock().await;
-            let Some(tx) = tx_guard.as_ref() else {
-                return Err("Python 核心尚未就绪：actor tx 为空".into());
-            };
-            let (resp_tx, resp_rx) = oneshot::channel::<Result<Value, String>>();
-            tx.send((id, frame_bytes, resp_tx))
-                .await
-                .map_err(|_| "Python 核心 IPC actor 已退出")?;
-            drop(tx_guard);
-
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(IPC_CALL_TIMEOUT_SECS),
-                resp_rx,
-            )
+        let tx_guard = inner.tx.lock().await;
+        let Some(tx) = tx_guard.as_ref() else {
+            return Err("Python 核心尚未就绪：actor tx 为空".into());
+        };
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Value, String>>();
+        tx.send((id, frame_bytes, resp_tx))
             .await
-            {
-                Ok(Ok(res)) => res,
-                Ok(Err(_)) => Err(format!(
-                    "IPC(id={id}, method={method_owned}) 响应通道被关闭"
-                )),
-                Err(_) => Err(format!(
-                    "IPC(id={id}, method={method_owned}) 超时（> {IPC_CALL_TIMEOUT_SECS}s）"
-                )),
-            }
-        })
+            .map_err(|_| "Python 核心 IPC actor 已退出")?;
+        drop(tx_guard);
+
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(IPC_CALL_TIMEOUT_SECS),
+            resp_rx,
+        )
+        .await
+        {
+            Ok(Ok(res)) => res,
+            Ok(Err(_)) => Err(format!(
+                "IPC(id={id}, method={method_owned}) 响应通道被关闭"
+            )),
+            Err(_) => Err(format!(
+                "IPC(id={id}, method={method_owned}) 超时（> {IPC_CALL_TIMEOUT_SECS}s）"
+            )),
+        }
     }
 }
 
 // ---------- Tauri command 实现 ----------
 
 /// 桥接命令：前端 invoke("bridge", {method, params}) → JSON-RPC over TCP → Python 核心
+/// async command：在 tokio runtime 执行，不阻塞主线程（避免 voice.turn 等长调用卡 UI）
 #[tauri::command]
-fn bridge(
+async fn bridge(
     method: String,
     params: Value,
     state: tauri::State<'_, CoreHandle>,
 ) -> Result<Value, String> {
-    state.call_sync(&method, params)
+    state.call(&method, params).await
 }
 
 #[tauri::command]

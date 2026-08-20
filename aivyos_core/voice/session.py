@@ -115,8 +115,10 @@ class VoiceSession:
                     self.engine.persona.update(k, v)
             else:
                 auth_result = {"bypassed": True, "reason": "认证未启用"}
+            # ASR 为 CPU 密集同步推理 → 线程池执行，避免阻塞事件循环（否则所有 IPC 调用排队卡顿）
             asr_t0 = time.perf_counter()
-            result = self.asr.transcribe(pcm)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, lambda: self.asr.transcribe(pcm))
             asr_ms = (time.perf_counter() - asr_t0) * 1000
             transcript = result.text
             asr_backend = result.backend
