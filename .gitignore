@@ -38,7 +38,7 @@ target/
 
 # 临时测试文件
 out.wav
-test_*.py
-test_*.txt
+/test_*.py       # 仅忽略仓库根目录的临时脚本（tests/ 下的测试不受影响）
+/test_*.txt
 test_reports/
 *.wav
