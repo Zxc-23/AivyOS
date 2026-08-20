@@ -6,7 +6,7 @@
 
 方法注册：`server.method("chat.send")(handler)`，handler 为 async (params) -> result。
 
-事件推送：`server.broadcast_event("wake.detected", {"text": "艾薇"})`
+事件推送：`server.broadcast_event("wake-detected", {"text": "艾薇"})`
   向所有已连接的 TCP 客户端广播 JSON-RPC Notification 帧（无 id）。
 """
 
@@ -64,7 +64,7 @@ class AivyIpcServer:
         """向所有已连接的 TCP 客户端广播 Notification 帧。
 
         Args:
-            method: 事件方法名（如 "wake.detected"）
+            method: 事件方法名（如 "wake-detected"）
             params: 事件载荷
         """
         notification = {

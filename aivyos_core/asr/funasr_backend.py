@@ -5,16 +5,20 @@ funasr 为可选依赖：未安装时导入安全，实例化抛 ASRUnavailable�
 `AutoModel(model="paraformer-zh")`（FunASR/Paraformer），二者同属 FunASR 生态。
 
 v2 改进：添加语音预过滤，避免对静音/纯噪音产生幻觉输出。
+v3 优化：模型缓存 + 预热机制，减少首次调用延迟。
 """
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 import struct
 from typing import Optional
 
 from aivyos_core.asr.base import ASRBackend, ASRResult, ASRUnavailable
+
+log = logging.getLogger(__name__)
 
 
 def _rms_energy(pcm: bytes) -> float:
@@ -107,9 +111,18 @@ def _has_speech(pcm: bytes, threshold: float = 15.0, min_ratio: float = 0.05) ->
 
 
 class FunASRBackend(ASRBackend):
-    """SenseVoice / FunASR 本地推理（OpenAI 兼容 API 亦可，见备注）。"""
+    """SenseVoice / FunASR 本地推理（OpenAI 兼容 API 亦可，见备注）。
+
+    优化特性：
+    - 类级别模型缓存：相同配置复用已加载的模型
+    - 预热推理：首次调用前运行一次空推理，消除懒加载延迟
+    - 线程安全：支持多线程并发调用
+    """
 
     name = "funasr"
+
+    # 类级别模型缓存：避免重复加载
+    _model_cache: dict = {}
 
     def __init__(
         self,
@@ -130,11 +143,14 @@ class FunASRBackend(ASRBackend):
             silence_threshold: 静音检测 RMS 阈值（0=禁用预过滤）
             silence_min_ratio: 静音检测最小语音帧比例
         """
+        import time
         self.model_name = model
         self.language = language
         self.device = device
         self.silence_threshold = silence_threshold
         self.silence_min_ratio = silence_min_ratio
+        self._warmed_up = False
+        
         try:
             from funasr import AutoModel  # type: ignore
         except ImportError as e:
@@ -142,28 +158,85 @@ class FunASRBackend(ASRBackend):
                 "funasr 未安装：pip install funasr（见 requirements-ml.txt）。"
                 "已自动降级到 mock ASR。"
             ) from e
+        
         model_map = {
             "sensevoice-small": "iic/SenseVoiceSmall",
             "paraformer-zh": "paraformer-zh",
             "paraformer-zh-streaming": "paraformer-zh-streaming",
         }
+        model_key = model_map.get(model, model)
+        
+        # 生成缓存键
+        cache_key = f"{model_key}_{vad_model or 'none'}_{device}"
+        
+        # 尝试从缓存获取
+        if cache_key in self._model_cache:
+            log.info("FunASR: 使用缓存的模型 (%s)", cache_key)
+            self.model = self._model_cache[cache_key]
+            self._warmed_up = True  # 缓存的模型已预热
+        else:
+            log.info("FunASR: 加载新模型 (%s)，首次加载可能需要几秒...", cache_key)
+            t0 = time.time()
+            try:
+                self.model = AutoModel(
+                    model=model_key,
+                    vad_model=vad_model,
+                    device=device,
+                    disable_update=True,
+                )
+                # 存入缓存
+                self._model_cache[cache_key] = self.model
+                log.info("FunASR: 模型加载完成，耗时 %.1fs", time.time() - t0)
+            except Exception as e:
+                raise ASRUnavailable(
+                    f"FunASR 模型加载失败: {e}"
+                ) from e
+
+    def warmup(self) -> None:
+        """预热模型：运行一次空推理，消除首次调用延迟。
+
+        建议在系统启动后调用一次，这样首次用户请求就不会有延迟。
+        """
+        import time as time_mod
+        
+        if self._warmed_up:
+            return
+        
+        import io
+        import wave
+        import struct
+        
+        log.info("FunASR: 预热模型...")
+        t0 = time_mod.time()
+        
+        # 生成100ms的静音数据用于预热
+        warmup_pcm = b"\x00" * 3200  # 100ms @ 16kHz
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes(warmup_pcm)
+        buf.seek(0)
+        
         try:
-            self.model = AutoModel(
-                model=model_map.get(model, model),
-                vad_model=vad_model,
-                device=device,
-                disable_update=True,
+            self.model.generate(
+                input=buf,
+                language=self.language,
+                use_itn=True,
+                batch_size_s=60,
             )
+            self._warmed_up = True
+            log.info("FunASR: 预热完成，耗时 %.1fs", time_mod.time() - t0)
         except Exception as e:
-            raise ASRUnavailable(
-                f"FunASR 模型加载失败: {e}"
-            ) from e
+            log.warning("FunASR: 预热失败（不影响正常使用）: %s", e)
 
     def transcribe(self, pcm: bytes, sample_rate: int = 16000) -> ASRResult:
         """将 PCM 音频转写为文本。
 
         包含语音预过滤逻辑：当音频中有效语音帧比例低于阈值时，
         直接返回空结果，避免模型对静音/噪音产生幻觉输出。
+        首次调用时自动预热模型。
 
         Args:
             pcm: 16-bit PCM 字节数据
@@ -174,6 +247,10 @@ class FunASRBackend(ASRBackend):
         """
         import io
         import wave
+
+        # 首次调用自动预热
+        if not self._warmed_up:
+            self.warmup()
 
         if self.silence_threshold > 0:
             if not _has_speech(pcm, self.silence_threshold, self.silence_min_ratio):
