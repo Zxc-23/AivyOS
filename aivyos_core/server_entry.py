@@ -725,29 +725,24 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         避免假阳性 —— LLM 探测、记忆真实检索、语音模型就绪检查。
         """
         checks = []
-        # 1. LLM 路由（真实探测本地/云端可用性）
+        # 1. LLM 路由（真实 HTTP 探测：GET /models，带 TTL 缓存）
         try:
-            routes = engine.router.backends_status()
             local_ok = False
             cloud_ok = False
-            mock_only = True
-            for r in routes:
-                prov = str(r.get("mode", "")).lower()
-                avail = bool(r.get("available"))
-                if avail:
-                    if prov in ("ollama", "vllm"):
-                        local_ok = True
-                        mock_only = False
-                    elif prov != "mock":
-                        cloud_ok = True
-                        mock_only = False
+            try:
+                local_ok = engine.router._local_available()
+            except Exception:
+                local_ok = False
+            try:
+                cloud_ok = bool(engine.router._cloud_api_key())
+            except Exception:
+                cloud_ok = False
+            routes = engine.router.backends_status()
             detail = f"{len(routes)} 个后端"
             if local_ok:
-                detail += "（本地✓）"
+                detail += "（本地✓ 真实探测）"
             elif cloud_ok:
-                detail += "（云端✓）"
-            elif mock_only:
-                detail += "（仅 mock）"
+                detail += "（云端✓ 已配 Key）"
             else:
                 detail += "（均不可用→mock）"
             checks.append({"name": "LLM 路由", "ok": local_ok or cloud_ok, "detail": detail})
@@ -768,44 +763,57 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         except Exception as e:
             checks.append({"name": "记忆系统", "ok": False, "detail": str(e)})
 
-        # 3. 语音模块（检查模型就绪，不触发 VoiceSession 创建/麦克风打开）
+        # 3. 语音模块（真实加载 ASR 模型 + 真实 TTS 合成，不打开麦克风）
         try:
-            from aivyos_core.voice.session import VoiceSession
+            from aivyos_core.asr.manager import create_asr
+            from aivyos_core.tts.manager import create_tts
 
-            # 用轻量方式读取语音配置（不实例化，避免打开麦克风）
-            asr_cfg = cfg.get("asr", {})
-            tts_cfg = cfg.get("tts", {})
+            asr_cfg = dict(cfg.get("asr", {}))
+            tts_cfg = dict(cfg.get("tts", {}))
             asr_backend = asr_cfg.get("backend", "auto")
             tts_backend = tts_cfg.get("backend", "auto")
             detail = f"ASR={asr_backend}, TTS={tts_backend}"
-            # 真实就绪：ASR 模型（FunASR）是否已预热（仅当已创建 VoiceSession 时可知）
-            # 惰性检查：若 VoiceSession 已创建，读取就绪状态；未创建则视为待检查（不触发创建/开麦克风）
-            asr_ready = None
-            tts_ready = None
+            # ASR 真实加载（不创建 VoiceSession/不开麦克风）
+            asr_ok = True
             try:
-                existing = _voice_session
-                if existing is not None:
-                    asr_ready = bool(getattr(existing.asr, "_warmed_up", True)) or existing.asr.name == "mock-asr"
-                    tts_ready = bool(getattr(existing.tts, "_available", True)) or existing.tts.name == "mock-tts"
-                    if asr_ready is False:
+                asr = create_asr(asr_cfg)
+                if getattr(asr, "name", "") not in ("mock-asr",):
+                    # 真实模型：执行预热（加载模型 + 空推理）
+                    if hasattr(asr, "warmup"):
+                        await asyncio.get_running_loop().run_in_executor(None, asr.warmup)
+                    warmed = bool(getattr(asr, "_warmed_up", True))
+                    if not warmed:
                         detail += "（ASR 模型预热中）"
-            except Exception:
-                pass
-            if asr_ready is False:
-                checks.append({"name": "语音模块", "ok": False, "detail": detail})
-            else:
-                checks.append({"name": "语音模块", "ok": True, "detail": detail})
+                    asr_ok = warmed
+            except Exception as e:
+                detail += f"（ASR 加载失败: {str(e)[:60]}）"
+                asr_ok = False
+            # TTS 真实合成（验证网络可达/后端可用）
+            tts_ok = True
+            try:
+                tts = create_tts(tts_cfg)
+                if getattr(tts, "name", "") not in ("mock-tts",):
+                    audio = await asyncio.get_running_loop().run_in_executor(
+                        None, lambda: tts.synthesize("自检")
+                    )
+                    tts_ok = audio is not None and len(getattr(audio, "pcm", b"")) > 0
+                    if not tts_ok:
+                        detail += "（TTS 合成失败）"
+            except Exception as e:
+                detail += f"（TTS 失败: {str(e)[:60]}）"
+                tts_ok = False
+            checks.append({"name": "语音模块", "ok": asr_ok and tts_ok, "detail": detail})
         except Exception as e:
             checks.append({"name": "语音模块", "ok": False, "detail": str(e)})
 
-        # 4. 会话存储
+        # 4. 会话存储（真实 list）
         try:
             sessions = engine.list_sessions()
             checks.append({"name": "会话存储", "ok": True, "detail": f"{len(sessions)} 个会话"})
         except Exception as e:
             checks.append({"name": "会话存储", "ok": False, "detail": str(e)})
 
-        # 5. 调度器
+        # 5. 调度器（真实 status）
         try:
             sched = get_scheduler()
             jobs = sched.status()
@@ -813,10 +821,17 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         except Exception as e:
             checks.append({"name": "调度器", "ok": False, "detail": str(e)})
 
-        # 6. MemFS
+        # 6. MemFS（真实写读临时文件验证）
         try:
-            memfs_info = engine.memfs.summary()
-            checks.append({"name": "MemFS", "ok": True, "detail": str(memfs_info)[:100]})
+            import uuid
+
+            tmp_name = f".bootcheck_{uuid.uuid4().hex[:8]}.tmp"
+            engine.memfs.write(tmp_name, "ok")
+            content = engine.memfs.read(tmp_name)
+            engine.memfs.remove(tmp_name)
+            ok = content == "ok"
+            info = engine.memfs.summary()
+            checks.append({"name": "MemFS", "ok": ok, "detail": f"{str(info)[:60]}（读写✓）" if ok else "读写失败"})
         except Exception as e:
             checks.append({"name": "MemFS", "ok": False, "detail": str(e)})
 
@@ -839,10 +854,17 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         except Exception as e:
             checks.append({"name": "情感分析", "ok": False, "detail": str(e)})
 
-        # 10. 视觉
+        # 10. 视觉（真实检查后端类型；mock 标注未配置）
         try:
             vision_st = engine.vision.status()
-            checks.append({"name": "视觉模块", "ok": True, "detail": str(vision_st)[:100]})
+            v_ocr = str(vision_st.get("ocr", "mock"))
+            v_understand = str(vision_st.get("understand", "mock"))
+            # mock 后端 → 未配置真实视觉（诚实标注，不算 ok）
+            ok = v_ocr not in ("mock", "mock-ocr") or v_understand not in ("mock", "mock-vision")
+            detail = f"OCR={v_ocr}, 理解={v_understand}"
+            if not ok:
+                detail += "（未配置真实后端→mock）"
+            checks.append({"name": "视觉模块", "ok": ok, "detail": detail})
         except Exception as e:
             checks.append({"name": "视觉模块", "ok": False, "detail": str(e)})
 
