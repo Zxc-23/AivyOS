@@ -208,6 +208,22 @@ export default function App() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
 
+  // 语音播报播放句柄（供打断：PTT 开始 / 新播报 / 切页时停止当前播放）
+  const voicePlaybackRef = useRef<{ ctx: AudioContext | null; source: AudioBufferSourceNode | null }>({ ctx: null, source: null });
+
+  const stopVoicePlayback = useCallback(() => {
+    const p = voicePlaybackRef.current;
+    if (p.source) {
+      try { p.source.stop(); } catch {}
+      p.source.disconnect();
+      p.source = null;
+    }
+    if (p.ctx) {
+      try { p.ctx.close(); } catch {}
+      p.ctx = null;
+    }
+  }, []);
+
   /* ---- Voice screen state ---- */
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [voiceTurnResult, setVoiceTurnResult] = useState<VoiceTurnResult | null>(null);
@@ -679,13 +695,22 @@ export default function App() {
         const binary = atob(result.wav_b64);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        // 打断上一段播报（连续语音时）
+        stopVoicePlayback();
         const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
         const source = audioCtx.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(audioCtx.destination);
+        voicePlaybackRef.current = { ctx: audioCtx, source };
+        source.onended = () => {
+          if (voicePlaybackRef.current.source === source) {
+            voicePlaybackRef.current.source = null;
+          }
+          try { audioCtx.close(); } catch {}
+          if (voicePlaybackRef.current.ctx === audioCtx) voicePlaybackRef.current.ctx = null;
+        };
         source.start(0);
-        source.onended = () => { try { audioCtx.close(); } catch {} };
       } catch (e) {
         console.warn("语音播放失败:", e);
       }
@@ -730,6 +755,8 @@ export default function App() {
   const handlePttStart = useCallback(async () => {
     if (pttActiveRef.current) return;
     if (!voiceReady) return; // 核心未就绪/模型预热中：不进入聆听状态（显示加载门）
+    // 打断正在播报的语音（用户开始说话时立即停止 Aivy 播报）
+    stopVoicePlayback();
     pttActiveRef.current = true;
     setVoiceListening(true);
     updateTrayState("voice");
@@ -741,7 +768,7 @@ export default function App() {
       setVoiceListening(false);
       updateTrayState("idle");
     }
-  }, [voiceReady, updateTrayState]);
+  }, [voiceReady, updateTrayState, stopVoicePlayback]);
 
   const handlePttStop = useCallback(async () => {
     if (!pttActiveRef.current) return;
@@ -1223,7 +1250,11 @@ export default function App() {
     return () => clearInterval(timer);
   }, [nav, bridgeReady]);
 
-  const handleNav = (id: NavId) => { setNav(id); };
+  const handleNav = (id: NavId) => {
+    // 离开语音页时打断播报
+    if (id !== "voice") stopVoicePlayback();
+    setNav(id);
+  };
 
   const currentTitle: Record<NavId, string> = {
     chat: "对话", voice: "语音模式", task: "自主任务", sched: "定时任务",
