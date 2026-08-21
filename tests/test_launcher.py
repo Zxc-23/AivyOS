@@ -31,6 +31,14 @@ class TestLauncher(AivyTestCase):
         self.assertIn("cargo", content)                  # Rust 工具链检查
         self.assertIn("Ensure-NpmDeps", content)         # 依赖确保函数
 
+    def test_ps1_auto_locate_root(self):
+        """脚本自动定位项目根目录（从任意 cwd 可运行）。"""
+        path = os.path.join(ROOT, "scripts", "start_aivyos.ps1")
+        content = open(path, encoding="utf-8", errors="replace").read()
+        self.assertIn("aivyos_core", content)            # 以 aivyos_core 定位
+        self.assertIn("MyInvocation.MyCommand.Path", content)  # 基于脚本位置
+        self.assertIn("Resolve-Path", content)           # 规范化路径
+
     def test_bat_exists(self):
         """start_aivyos.bat 双击启动器存在。"""
         path = os.path.join(ROOT, "start_aivyos.bat")

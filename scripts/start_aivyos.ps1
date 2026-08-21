@@ -15,7 +15,29 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
+
+# ---- auto-locate repo root (works from any cwd) ----
+# 1) explicit override via -Root param
+# 2) fall back to script parent, then walk up until aivyos_core found
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = $null
+if (Test-Path (Join-Path $scriptDir "aivyos_core")) {
+    $root = $scriptDir
+} else {
+    $cur = $scriptDir
+    while ($cur) {
+        if (Test-Path (Join-Path $cur "aivyos_core")) { $root = $cur; break }
+        $parent = Split-Path -Parent $cur
+        if ($parent -eq $cur) { break }
+        $cur = $parent
+    }
+}
+if (-not $root) {
+    Write-Host "[x] Cannot locate aivyos repo root (aivyos_core not found above script)." -ForegroundColor Red
+    exit 1
+}
+$root = (Resolve-Path $root).Path
+
 Push-Location $root
 try {
     Write-Host ""
