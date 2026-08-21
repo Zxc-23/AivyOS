@@ -1504,6 +1504,107 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         except Exception as e:
             return {"ok": False, "error": f"连接失败: {str(e.reason)}"}
 
+    @server.method("models.test-cloud")
+    async def models_test_cloud(params):
+        """批量测试所有已配置 API Key 的云端提供商连通性。
+
+        逐个调用 /models 端点做真实探测，返回每个云端提供商的
+        可用状态与模型数（用于模型列表页"测试云端"一键检查）。
+        """
+        import os
+        import urllib.error
+        import urllib.request
+
+        results = []
+        try:
+            from aivyos_core.llm.provider_catalog import get_provider_catalog
+            providers = get_provider_catalog()
+        except Exception as e:
+            return {"ok": False, "error": f"目录加载失败: {e}", "results": []}
+
+        key_store = _api_key_store.list_keys()
+        for p in providers:
+            # 仅云端（非 local）提供商参与测试（catalog 为 dict 形态）
+            if p.get("category", "") == "local":
+                continue
+            base_url = p.get("base_url", "")
+            env_var = p.get("api_key_env", "")
+            # 真实 key 在环境变量中（ApiKeyStore.load() 已注入）；store 元信息仅用于判断已配置
+            has_configured = bool(key_store.get(env_var, {}).get("has_key")) if env_var else False
+            api_key = os.environ.get(env_var, "") if env_var else ""
+            if not api_key and not has_configured:
+                results.append({
+                    "provider": p.get("id", ""),
+                    "name": p.get("name", ""),
+                    "ok": False,
+                    "error": "未配置 API Key",
+                    "model_count": 0,
+                })
+                continue
+            if not base_url:
+                results.append({
+                    "provider": p.get("id", ""),
+                    "name": p.get("name", ""),
+                    "ok": False,
+                    "error": "未配置 Base URL",
+                    "model_count": 0,
+                })
+                continue
+            try:
+                req = urllib.request.Request(
+                    f"{base_url.rstrip('/')}/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    import json
+                    data = json.loads(resp.read().decode())
+                    models = data.get("data", [])
+                    results.append({
+                        "provider": p.get("id", ""),
+                        "name": p.get("name", ""),
+                        "ok": True,
+                        "model_count": len(models),
+                        "models": [m.get("id", "") for m in models][:10],
+                    })
+            except urllib.error.HTTPError as e:
+                body = ""
+                try:
+                    body = e.read().decode()[:150]
+                except Exception:
+                    pass
+                results.append({
+                    "provider": p.get("id", ""),
+                    "name": p.get("name", ""),
+                    "ok": False,
+                    "error": f"HTTP {e.code}: {body}",
+                    "model_count": 0,
+                })
+            except urllib.error.URLError as e:
+                results.append({
+                    "provider": p.get("id", ""),
+                    "name": p.get("name", ""),
+                    "ok": False,
+                    "error": f"连接失败: {str(e.reason)}",
+                    "model_count": 0,
+                })
+            except Exception as e:
+                results.append({
+                    "provider": p.get("id", ""),
+                    "name": p.get("name", ""),
+                    "ok": False,
+                    "error": str(e)[:150],
+                    "model_count": 0,
+                })
+
+        ok_count = sum(1 for r in results if r["ok"])
+        return {
+            "ok": True,
+            "total": len(results),
+            "passed": ok_count,
+            "failed": len(results) - ok_count,
+            "results": results,
+        }
+
     @server.method("models.preset-list")
     async def models_preset_list(params):
         """获取指定提供商的预设模型列表。

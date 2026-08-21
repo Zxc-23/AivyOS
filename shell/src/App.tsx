@@ -24,6 +24,7 @@ import {
   getModelCatalog, listApiKeys, setApiKey, removeApiKey,
   getVoiceEngines, configVoiceEngine,
   testModelConnection, listProviderModels,
+  testCloudModels, CloudTestSummary, CloudTestResult,
   addBackend, removeBackend,
   testTts,
   applyVoiceTts,
@@ -461,8 +462,9 @@ export default function App() {
   const [providerSearch, setProviderSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState<"all" | "configured" | "unconfigured" | "local" | "cloud">("all");
   const [providerSort, setProviderSort] = useState<"name" | "status" | "category">("name");
-  const [providerPage, setProviderPage] = useState(1);
-  const providerPageSize = 5;
+  // 云端模型批量连通性测试
+  const [cloudTesting, setCloudTesting] = useState(false);
+  const [cloudTestSummary, setCloudTestSummary] = useState<CloudTestSummary | null>(null);
   const [editingForm, setEditingForm] = useState<{
     providerId: string;
     apiKey: string;
@@ -1399,6 +1401,29 @@ export default function App() {
   useEffect(() => {
     if (bridgeReady) void loadModels();
   }, [bridgeReady, loadModels]);
+
+  // 一键测试所有已配置的云端提供商连通性
+  const handleTestCloud = useCallback(async () => {
+    if (!bridgeReady) {
+      showNotification("演示模式", "连接核心后可测试云端模型", "warning");
+      return;
+    }
+    setCloudTesting(true);
+    setCloudTestSummary(null);
+    try {
+      const res = await testCloudModels();
+      setCloudTestSummary(res);
+      showNotification(
+        "云端测试完成",
+        res.ok ? `${res.passed}/${res.total} 个云端可用，${res.failed} 个失败` : res.error || "测试失败",
+        res.ok && res.failed === 0 ? "success" : "warning"
+      );
+    } catch (e) {
+      showNotification("云端测试失败", e instanceof Error ? e.message : String(e), "danger");
+    } finally {
+      setCloudTesting(false);
+    }
+  }, [bridgeReady, showNotification]);
 
   const resetAddModelDialog = useCallback(() => {
     setAddModelProvider("");
@@ -3034,14 +3059,14 @@ export default function App() {
                       className="ml-search-input"
                       placeholder="搜索提供方名称或ID..."
                       value={providerSearch}
-                      onChange={e => { setProviderSearch(e.target.value); setProviderPage(1); }}
+                      onChange={e => { setProviderSearch(e.target.value); }}
                     />
                   </div>
                   <div className="ml-toolbar-actions">
                     <select
                       className="ml-select"
                       value={providerFilter}
-                      onChange={e => { setProviderFilter(e.target.value as any); setProviderPage(1); }}
+                      onChange={e => { setProviderFilter(e.target.value as any); }}
                     >
                       <option value="all">全部 ({catalog.length})</option>
                       <option value="configured">已配置</option>
@@ -3149,9 +3174,13 @@ export default function App() {
                     return 0;
                   });
 
-                  const totalPages = Math.max(1, Math.ceil(filtered.length / providerPageSize));
-                  const page = Math.min(providerPage, totalPages);
-                  const paged = filtered.slice((page - 1) * providerPageSize, page * providerPageSize);
+                  // 分组：本地模型 / 云端模型（category=local 归本地，其余归云端）
+                  const localList = filtered.filter(p => p.category === "local");
+                  const cloudList = filtered.filter(p => p.category !== "local");
+                  const groups = [
+                    { key: "local", icon: "🖥️", title: "本地模型", items: localList, cloud: false },
+                    { key: "cloud", icon: "☁️", title: "云端模型", items: cloudList, cloud: true },
+                  ];
 
                   return (
                     <>
@@ -3161,8 +3190,30 @@ export default function App() {
                           {providerSearch || providerFilter !== "all" ? "未找到匹配的提供方" : "暂无提供方"}
                         </div>
                       ) : (
-                        <div className="ml-provider-list">
-                          {paged.map(provider => {
+                        <div className="ml-groups">
+                          {groups.map(group => (
+                            <div key={group.key} className="ml-group">
+                              {/* 分组标题栏 */}
+                              <div className="ml-group-header">
+                                <span className="ml-group-title">{group.icon} {group.title}</span>
+                                <span className="ml-group-count">{group.items.length} 个</span>
+                                {group.cloud && (
+                                  <button
+                                    className="btn btn-skip ml-test-cloud-btn"
+                                    disabled={cloudTesting}
+                                    onClick={handleTestCloud}
+                                  >{cloudTesting ? "测试中..." : "🔍 测试云端连通性"}</button>
+                                )}
+                              </div>
+
+                              {/* 组内提供方列表 */}
+                              {group.items.length === 0 ? (
+                                <div className="ml-group-empty">
+                                  {group.cloud ? "暂无云端提供商，点击「+ 添加提供方」配置 API Key" : "暂无本地提供商"}
+                                </div>
+                              ) : (
+                                <div className="ml-provider-list">
+                                  {group.items.map(provider => {
                             const configured = isConfigured(provider);
                             const isEditing = editingProviderId === provider.id;
                             const keyEntry = apiKeys[provider.api_key_env] || apiKeys[provider.id];
@@ -3511,23 +3562,36 @@ export default function App() {
                               </div>
                             );
                           })}
-                        </div>
-                      )}
+                                </div>
+                              )}
 
-                      {/* 分页 */}
-                      {filtered.length > providerPageSize && (
-                        <div className="ml-pagination">
-                          <button
-                            className="ml-page-btn"
-                            disabled={page <= 1}
-                            onClick={() => setProviderPage(page - 1)}
-                          >上一页</button>
-                          <span className="ml-page-info">{page} / {totalPages}</span>
-                          <button
-                            className="ml-page-btn"
-                            disabled={page >= totalPages}
-                            onClick={() => setProviderPage(page + 1)}
-                          >下一页</button>
+                              {/* 云端测试结果面板 */}
+                              {group.cloud && cloudTestSummary && (
+                                <div className="ml-cloud-test">
+                                  <div className={`ml-cloud-test-summary ${cloudTestSummary.failed === 0 ? "ok" : "fail"}`}>
+                                    <span>
+                                      {cloudTestSummary.ok
+                                        ? `云端连通性：${cloudTestSummary.passed}/${cloudTestSummary.total} 可用`
+                                        : "云端测试异常"}
+                                    </span>
+                                    {cloudTestSummary.error && <span className="ml-cloud-test-err">{cloudTestSummary.error}</span>}
+                                  </div>
+                                  {cloudTestSummary.results.length > 0 && (
+                                    <div className="ml-cloud-test-list">
+                                      {cloudTestSummary.results.map(r => (
+                                        <div key={r.provider} className={`ml-cloud-test-row ${r.ok ? "ok" : "fail"}`}>
+                                          <span className="ml-cloud-test-name">{r.ok ? "✓" : "✗"} {r.name}</span>
+                                          <span className="ml-cloud-test-detail">
+                                            {r.ok ? `可用 · ${r.model_count} 个模型` : (r.error || "不可用")}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
                         </div>
                       )}
                     </>

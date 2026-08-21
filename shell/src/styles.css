@@ -972,6 +972,88 @@ body {
 }
 
 /* 提供方列表 */
+.ml-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.ml-group {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 12px;
+  padding: 14px;
+}
+.ml-group-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.ml-group-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink, #e5e9f0);
+}
+.ml-group-count {
+  font-size: 11px;
+  color: var(--muted2, #8b93a7);
+  background: rgba(255,255,255,0.06);
+  padding: 2px 10px;
+  border-radius: 12px;
+}
+.ml-test-cloud-btn {
+  margin-left: auto;
+  font-size: 11px !important;
+  padding: 4px 12px !important;
+}
+.ml-group-empty {
+  padding: 18px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted2, #8b93a7);
+  background: rgba(255,255,255,0.02);
+  border: 1px dashed rgba(255,255,255,0.1);
+  border-radius: 8px;
+}
+.ml-cloud-test {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.ml-cloud-test-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.ml-cloud-test-summary.ok { color: #10b981; }
+.ml-cloud-test-summary.fail { color: #f87171; }
+.ml-cloud-test-err { font-size: 11px; font-weight: 400; color: var(--muted2, #8b93a7); }
+.ml-cloud-test-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ml-cloud-test-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  background: rgba(255,255,255,0.03);
+}
+.ml-cloud-test-row.ok { border-left: 3px solid #10b981; }
+.ml-cloud-test-row.fail { border-left: 3px solid #f87171; }
+.ml-cloud-test-name { font-weight: 600; color: var(--ink, #e5e9f0); }
+.ml-cloud-test-detail { color: var(--muted2, #8b93a7); font-size: 10px; text-align: right; }
 .ml-provider-list {
   display: flex;
   flex-direction: column;

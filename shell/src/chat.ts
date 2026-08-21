@@ -922,6 +922,29 @@ export async function testModelConnection(
   return bridgeCall("models.test-connection", { provider, api_key: apiKey, base_url: baseUrl });
 }
 
+export interface CloudTestResult {
+  provider: string;
+  name: string;
+  ok: boolean;
+  error?: string;
+  model_count: number;
+  models?: string[];
+}
+
+export interface CloudTestSummary {
+  ok: boolean;
+  total: number;
+  passed: number;
+  failed: number;
+  error?: string;
+  results: CloudTestResult[];
+}
+
+/** 批量测试所有已配置 API Key 的云端提供商连通性。 */
+export async function testCloudModels(): Promise<CloudTestSummary> {
+  return bridgeCall<CloudTestSummary>("models.test-cloud", {});
+}
+
 export async function listProviderModels(
   provider: string,
   keyword?: string,
