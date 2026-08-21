@@ -249,11 +249,40 @@ class TestSkillMarketplace(AivyTestCase):
         inst = asyncio.run(handlers["skills.market-install"]({"id": "mkt-weather"}))
         self.assertTrue(inst["ok"])
         self.assertEqual(inst["skill"]["name"], "天气查询")
-        # 提示词包含 wttr.in 免费接口说明
-        self.assertIn("wttr.in", inst["skill"]["system_prompt"])
+        # 提示词包含 wttr.in 免费接口说明 + 图表 + 多城市
+        prompt = inst["skill"]["system_prompt"]
+        self.assertIn("wttr.in", prompt)
+        self.assertIn("_0p.png", prompt)  # 趋势图表
+        self.assertIn("多城市", prompt)
         # 匹配
         chat = asyncio.run(handlers["chat.send"]({"text": "今天北京天气怎么样", "session_id": None}))
         self.assertTrue(any("天气" in s for s in chat.get("skills", [])))
+
+    def test_currency_skill_in_market(self):
+        """汇率换算技能：市场可见、可安装、含免费 API 说明。"""
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["skills.market-browse"]({"source": "builtin", "keyword": "汇率"}))
+        self.assertTrue(result["ok"])
+        self.assertTrue(any(s["name"] == "汇率换算" for s in result["skills"]))
+        inst = asyncio.run(handlers["skills.market-install"]({"id": "mkt-currency"}))
+        self.assertTrue(inst["ok"])
+        self.assertIn("open.er-api.com", inst["skill"]["system_prompt"])
+        chat = asyncio.run(handlers["chat.send"]({"text": "100美元等于多少人民币", "session_id": None}))
+        self.assertTrue(any("汇率" in s for s in chat.get("skills", [])))
+
+    def test_world_time_skill_in_market(self):
+        """世界时间技能：市场可见、可安装、零网络依赖。"""
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["skills.market-browse"]({"source": "builtin", "keyword": "世界时间"}))
+        self.assertTrue(result["ok"])
+        self.assertTrue(any(s["name"] == "世界时间" for s in result["skills"]))
+        inst = asyncio.run(handlers["skills.market-install"]({"id": "mkt-world-time"}))
+        self.assertTrue(inst["ok"])
+        self.assertIn("timedelta", inst["skill"]["system_prompt"])
+        chat = asyncio.run(handlers["chat.send"]({"text": "东京现在几点", "session_id": None}))
+        self.assertTrue(any("时间" in s for s in chat.get("skills", [])))
 
     def test_market_install(self):
         """skills.market-install：安装后出现在我的技能且市场标注已安装。"""
