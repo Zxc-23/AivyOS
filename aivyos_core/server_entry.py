@@ -1900,6 +1900,48 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    @server.method("skills.market-list")
+    async def skills_market_list(params):
+        """技能市场目录（内置精选技能，标注已安装）。"""
+        try:
+            from aivyos_core.skills import SkillMarketplace
+
+            mkt = SkillMarketplace(get_skills())
+            items = mkt.list_market(str(params.get("keyword", "")))
+            return {"ok": True, "skills": items, "count": len(items)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("skills.market-install")
+    async def skills_market_install(params):
+        """从市场安装技能。"""
+        try:
+            from aivyos_core.skills import SkillMarketplace
+
+            skill = SkillMarketplace(get_skills()).install(str(params.get("id", "")))
+            if skill is None:
+                return {"ok": False, "error": "市场技能不存在"}
+            return {"ok": True, "skill": skill}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("skills.remote-import")
+    async def skills_remote_import(params):
+        """从远程 SKILL.md URL 导入技能（GitHub raw / 任意 URL）。
+
+        解析 Claude Code / OpenClaw 通用 SKILL.md 格式并安装到本地。
+        """
+        try:
+            from aivyos_core.skills import SkillMarketplace
+
+            url = str(params.get("url", "")).strip()
+            if not url:
+                return {"ok": False, "error": "缺少 URL"}
+            result = SkillMarketplace(get_skills()).fetch_remote_skill(url)
+            return result
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     # ================================================================
     #  Tools（MCP 工具管理）
     # ================================================================

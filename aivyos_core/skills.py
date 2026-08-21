@@ -176,10 +176,17 @@ class SkillManager:
         keywords: Optional[List[str]] = None,
         system_prompt: str = "",
         enabled: bool = True,
+        skill_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        skill_id = "sk_" + uuid.uuid4().hex[:8]
+        sid = skill_id or ("sk_" + uuid.uuid4().hex[:8])
+        if sid in self._skills:
+            # 已存在同名 id → 覆盖更新（幂等安装）
+            return self.update_skill(sid, {
+                "name": name, "description": description, "category": category,
+                "keywords": keywords or [], "system_prompt": system_prompt, "enabled": bool(enabled),
+            }) or dict(self._skills[sid])
         skill = {
-            "id": skill_id,
+            "id": sid,
             "name": name,
             "description": description or name,
             "category": category or "自定义",
@@ -189,7 +196,7 @@ class SkillManager:
             "builtin": False,
             "created_at": time.time(),
         }
-        self._skills[skill_id] = skill
+        self._skills[sid] = skill
         self._save()
         return dict(skill)
 
@@ -227,3 +234,360 @@ class SkillManager:
             if prompt:
                 blocks.append(f"## 技能[{s['name']}]\n{prompt}")
         return blocks
+
+
+# =====================================================================
+#  技能市场（Skill Marketplace）
+# =====================================================================
+
+# ---- 内置市场技能种子（可从市场一键安装到本地，含安装标记 source=market）----
+MARKET_SKILLS: List[Dict[str, Any]] = [
+    {
+        "id": "mkt-meeting-minutes",
+        "name": "会议纪要",
+        "category": "办公",
+        "description": "将会议内容整理为结构化纪要：结论、待办、责任人、截止时间",
+        "keywords": ["会议", "纪要", "会议记录", "meeting", "minutes"],
+        "system_prompt": "你是会议纪要助手。整理会议纪要时：1) 提取会议结论与决策；2) 列出待办事项并标注责任人与截止时间；3) 用「结论/待办/决议」三段式输出；4) 信息缺失时标注「待确认」。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-resume-optimizer",
+        "name": "简历优化",
+        "category": "职场",
+        "description": "优化简历：量化成果、突出亮点、适配目标岗位",
+        "keywords": ["简历", "优化简历", "求职", "resume", "cv"],
+        "system_prompt": "你是简历优化专家。优化简历时：1) 将描述转化为可量化的成果（数字+动词开头）；2) 针对目标岗位调整关键词；3) 控制单条经历 1-2 行；4) 给出修改理由。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-interview-coach",
+        "name": "面试模拟",
+        "category": "职场",
+        "description": "模拟面试官提问、评估回答、给出改进建议",
+        "keywords": ["面试", "模拟面试", "面试官", "interview"],
+        "system_prompt": "你是面试模拟教练。模拟面试时：1) 一次只问一个问题；2) 用 STAR 法则评估回答（情境-任务-行动-结果）；3) 回答后给出改进建议；4) 控制难度循序渐进。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-translator",
+        "name": "专业翻译",
+        "category": "语言",
+        "description": "中英互译，保留专业术语与语气风格",
+        "keywords": ["翻译", "translate", "英文翻译", "中文翻译"],
+        "system_prompt": "你是专业翻译。翻译时：1) 保持原文语气与专业术语；2) 技术文档保留术语一致性；3) 长句拆分为符合目标语言习惯的短句；4) 输出译文 + 关键术语对照表。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-english-tutor",
+        "name": "英语陪练",
+        "category": "语言",
+        "description": "英语对话陪练：纠错、扩展表达、分级难度",
+        "keywords": ["英语", "英语练习", "口语", "english", "tutor"],
+        "system_prompt": "你是英语陪练老师。陪练时：1) 用英语对话并纠正明显错误；2) 每次纠错后给出正确表达与 1 个扩展；3) 难度根据用户水平自适应；4) 会话结束总结新学表达。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-data-analysis",
+        "name": "数据分析",
+        "category": "数据",
+        "description": "分析数据：找趋势、异常、相关性，输出结论建议",
+        "keywords": ["数据分析", "数据", "统计", "图表", "analysis"],
+        "system_prompt": "你是数据分析师。分析数据时：1) 先明确指标与口径；2) 描述趋势与异常点；3) 区分相关性与因果性；4) 输出「结论-证据-建议」结构；5) 数据不足时明确说明。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-excel-helper",
+        "name": "Excel 公式助手",
+        "category": "数据",
+        "description": "Excel/表格公式、函数、数据清洗技巧",
+        "keywords": ["excel", "表格", "公式", "函数", "vlookup"],
+        "system_prompt": "你是 Excel 助手。解答表格问题时：1) 给出可直接使用的公式与说明；2) 复杂场景给出分步操作；3) 标注公式适用版本；4) 提供替代方案（Power Query/透视表）。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-code-review",
+        "name": "代码审查",
+        "category": "开发",
+        "description": "审查代码：可读性、性能、安全、边界条件",
+        "keywords": ["代码审查", "review", "code review", "审查代码"],
+        "system_prompt": "你是资深代码审查员。审查代码时：1) 按「严重性」分级列出问题（阻断/主要/建议）；2) 每个问题给出修复示例；3) 关注安全（注入/越权）与边界条件；4) 肯定写得好的部分。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-debug-expert",
+        "name": "Bug 定位专家",
+        "category": "开发",
+        "description": "根据报错信息与代码定位 bug，给出排查思路",
+        "keywords": ["bug", "报错", "异常", "排错", "调试", "debug"],
+        "system_prompt": "你是调试专家。定位 Bug 时：1) 先解读完整报错栈；2) 缩小范围：输入→处理→输出的二分法；3) 给出可执行的排查步骤；4) 修复后建议补充的回归测试。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-api-docs",
+        "name": "API 文档编写",
+        "category": "开发",
+        "description": "为接口生成规范文档：参数、示例、错误码",
+        "keywords": ["api", "接口文档", "openapi", "swagger", "文档"],
+        "system_prompt": "你是 API 文档工程师。编写接口文档时：1) 说明用途与权限要求；2) 列出请求/响应参数含类型与必填；3) 给出 curl 与 Python/JS 示例；4) 列出常见错误码与排查提示。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-ppt-outline",
+        "name": "PPT 大纲生成",
+        "category": "创意",
+        "description": "根据主题生成演示文稿大纲与演讲要点",
+        "keywords": ["ppt", "演示文稿", "幻灯片", "大纲", "presentation"],
+        "system_prompt": "你是演示设计助手。生成 PPT 大纲时：1) 先定核心结论（一页一观点）；2) 用「开场-问题-方案-案例-行动」结构；3) 每页给出标题与要点及建议配图；4) 附带演讲时间分配。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-story-writer",
+        "name": "故事创作",
+        "category": "创意",
+        "description": "创作故事：人物、冲突、节奏、多风格切换",
+        "keywords": ["故事", "小说", "创作", "写作", "story"],
+        "system_prompt": "你是故事创作助手。创作时：1) 先确认题材、篇幅与目标读者；2) 用「人物-目标-冲突-转折」构建骨架；3) 描写用动词与感官细节；4) 章节结尾留钩子。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-image-prompt",
+        "name": "绘图提示词",
+        "category": "创意",
+        "description": "生成高质量 AI 绘图提示词（Midjourney/Stable Diffusion）",
+        "keywords": ["绘图", "提示词", "midjourney", "stable diffusion", "绘画"],
+        "system_prompt": "你是 AI 绘画提示词工程师。生成提示词时：1) 结构：主体+环境+风格+光照+画质词；2) 给出 2-3 个变体（不同风格）；3) 附反向提示词；4) 说明关键参数（比例/镜头）。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-meditation",
+        "name": "冥想引导",
+        "category": "健康",
+        "description": "冥想与放松引导：呼吸练习、正念、减压",
+        "keywords": ["冥想", "放松", "减压", "呼吸", "meditation"],
+        "system_prompt": "你是冥想引导师。引导时：1) 语速缓慢、每句停顿；2) 先引导呼吸（吸气4秒-屏息2秒-呼气6秒）；3) 用身体扫描帮助放松；4) 结束时给回到当下的过渡。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-meal-plan",
+        "name": "健康食谱",
+        "category": "健康",
+        "description": "定制食谱：营养均衡、卡路里控制、食材替换",
+        "keywords": ["食谱", "健康餐", "卡路里", "营养", "meal"],
+        "system_prompt": "你是营养师。定制食谱时：1) 先确认目标（减脂/增肌/均衡）与忌口；2) 每日三餐+加餐，标注热量；3) 提供食材替换选项；4) 给出采购清单。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-finance-tips",
+        "name": "理财建议",
+        "category": "生活",
+        "description": "个人理财规划：预算、储蓄、投资基础知识",
+        "keywords": ["理财", "预算", "储蓄", "投资", "记账"],
+        "system_prompt": "你是理财顾问（合规提醒：不构成投资建议）。规划时：1) 先了解收入/支出/负债结构；2) 建议 50/30/20 预算法则起步；3) 风险提示前置；4) 推荐前说明各类资产的风险等级。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-travel-planner",
+        "name": "旅行规划",
+        "category": "生活",
+        "description": "行程规划：路线、预算、美食、注意事项",
+        "keywords": ["旅行", "行程", "旅游", "攻略", "travel"],
+        "system_prompt": "你是旅行规划师。规划行程时：1) 先确认天数、预算、偏好（人文/自然/美食）；2) 每日行程控制 2-3 个核心点避免赶路；3) 附交通方式与时间；4) 给出备选方案应对天气变化。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-legal-basics",
+        "name": "法律常识",
+        "category": "生活",
+        "description": "常见法律问题科普：合同、劳动、消费维权",
+        "keywords": ["法律", "合同", "维权", "劳动法", "legal"],
+        "system_prompt": "你是法律科普助手（不构成正式法律意见）。回答时：1) 用通俗语言解释法条；2) 标注「以最新法律法规为准」；3) 涉及重大权益建议咨询专业律师；4) 给出维权步骤与证据留存建议。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-study-planner",
+        "name": "学习计划",
+        "category": "教育",
+        "description": "制定学习计划：目标拆解、时间安排、复习策略",
+        "keywords": ["学习", "计划", "备考", "复习", "study"],
+        "system_prompt": "你是学习规划师。制定计划时：1) 先定目标与现有时间；2) 用「预习-学习-复习-测试」循环；3) 结合艾宾浩斯遗忘曲线安排复习；4) 每周留出弹性时间。",
+        "source": "market",
+    },
+    {
+        "id": "mkt-paper-summary",
+        "name": "论文解读",
+        "category": "教育",
+        "description": "解读学术论文：核心贡献、方法、实验、局限",
+        "keywords": ["论文", "文献", "paper", "解读论文"],
+        "system_prompt": "你是学术解读助手。解读论文时：1) 用 3 句话概括核心贡献；2) 拆解方法与创新点；3) 评估实验设计有效性；4) 指出局限与后续方向；5) 术语首次出现附中文解释。",
+        "source": "market",
+    },
+]
+
+
+class SkillMarketplace:
+    """技能市场：内置精选技能 + 远程 SKILL.md 接入。
+
+    远程接入：解析 Claude Code / OpenClaw 通用的 SKILL.md 格式
+    （YAML frontmatter：name/description，正文为 system_prompt），
+    支持从 GitHub raw URL 拉取安装。
+    """
+
+    def __init__(self, local: SkillManager) -> None:
+        self.local = local
+
+    # ---- 市场目录 ----
+    def list_market(self, keyword: str = "") -> List[Dict[str, Any]]:
+        """列出市场技能；keyword 过滤名称/描述/关键词。"""
+        out = []
+        for s in MARKET_SKILLS:
+            item = dict(s)
+            item["installed"] = self.local.get_skill(item["id"]) is not None
+            out.append(item)
+        if keyword:
+            k = keyword.lower()
+            out = [s for s in out if k in s["name"].lower() or k in s["description"].lower()
+                   or any(k in str(x).lower() for x in s.get("keywords", []))]
+        return out
+
+    def install(self, skill_id: str) -> Optional[Dict[str, Any]]:
+        """从市场安装技能到本地（幂等：已存在则更新，不存在则创建）。"""
+        spec = next((s for s in MARKET_SKILLS if s["id"] == skill_id), None)
+        if spec is None:
+            return None
+        existing = self.local.get_skill(skill_id)
+        fields = {
+            "name": spec["name"],
+            "description": spec["description"],
+            "category": spec["category"],
+            "keywords": spec["keywords"],
+            "system_prompt": spec["system_prompt"],
+            "enabled": True,
+        }
+        if existing:
+            return self.local.update_skill(skill_id, fields)
+        created = self.local.create_skill(
+            name=fields["name"], description=fields["description"],
+            category=fields["category"], keywords=fields["keywords"],
+            system_prompt=fields["system_prompt"], enabled=True,
+            skill_id=skill_id,
+        )
+        return self.local.get_skill(skill_id) or created
+
+    def install_by_id(self, skill_id: str) -> Optional[Dict[str, Any]]:
+        """按 id 安装（保持与 MARKET_SKILLS 中 id 一致）。"""
+        spec = next((s for s in MARKET_SKILLS if s["id"] == skill_id), None)
+        if spec is None:
+            return None
+        return self.install(skill_id)
+
+    # ---- 远程 SKILL.md 接入 ----
+    def fetch_remote_skill(self, url: str, timeout: float = 15.0) -> Dict[str, Any]:
+        """从远程 URL 拉取 SKILL.md 并解析为技能。
+
+        支持：GitHub raw / 任意返回 SKILL.md 文本的 URL。
+        SKILL.md 格式（Claude Code / OpenClaw 通用）：
+            ---
+            name: xxx
+            description: xxx
+            ---
+            正文（作为 system_prompt）
+        解析失败时 name 回退为 URL 文件名，正文作为 system_prompt。
+        """
+        import urllib.request
+
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "AivyOS-SkillMarket"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                text = resp.read().decode("utf-8", errors="replace")
+        except Exception as e:
+            return {"ok": False, "error": f"拉取失败: {e}"}
+
+        parsed = parse_skill_md(text, fallback_name=_url_skill_name(url))
+        if not parsed.get("ok"):
+            return parsed
+        return {
+            "ok": True,
+            "preview": parsed["skill"],
+            "install": self._import_parsed(parsed["skill"]),
+        }
+
+    def _import_parsed(self, skill: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """把解析出的技能写入本地（来源 remote），保留稳定 id（如 doc-writer）。"""
+        sid = str(skill.get("id") or skill.get("name", "")).strip().lower().replace(" ", "-")
+        if not sid or sid in ("远程技能",):
+            sid = "sk_" + uuid.uuid4().hex[:8]
+        return self.local.create_skill(
+            name=skill["name"],
+            description=skill.get("description", ""),
+            category=skill.get("category", "远程导入"),
+            keywords=skill.get("keywords", []),
+            system_prompt=skill.get("system_prompt", ""),
+            enabled=True,
+            skill_id=sid,
+        )
+
+    def import_skill_md(self, skill: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """直接导入已解析的技能字典（IPC 用）。"""
+        return self._import_parsed(skill)
+
+
+def parse_skill_md(text: str, fallback_name: str = "远程技能") -> Dict[str, Any]:
+    """解析 SKILL.md（YAML frontmatter + 正文）。
+
+    返回 {"ok": True, "skill": {...}} 或 {"ok": False, "error": ...}
+    """
+    import re
+
+    text = (text or "").strip()
+    if not text:
+        return {"ok": False, "error": "内容为空"}
+    m = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", text, re.DOTALL)
+    if not m:
+        # 无 frontmatter → 全文作为 system_prompt
+        return {
+            "ok": True,
+            "skill": {
+                "name": fallback_name,
+                "description": "",
+                "keywords": [],
+                "system_prompt": text[:4000],
+            },
+        }
+    front_raw, body = m.group(1), m.group(2).strip()
+    fields: Dict[str, Any] = {}
+    for line in front_raw.splitlines():
+        if ":" not in line:
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip().lower()
+        val = val.strip().strip("\"'")
+        if key == "name":
+            fields["name"] = val
+        elif key == "description":
+            fields["description"] = val
+        elif key == "category":
+            fields["category"] = val
+        elif key in ("keywords", "tags"):
+            # 支持逗号分隔或列表
+            if val.startswith("["):
+                val = val.strip("[]")
+            fields["keywords"] = [k.strip().strip("\"'") for k in val.split(",") if k.strip()]
+    return {
+        "ok": True,
+        "skill": {
+            "name": fields.get("name") or fallback_name,
+            "description": fields.get("description", ""),
+            "category": fields.get("category", "远程导入"),
+            "keywords": fields.get("keywords", []),
+            "system_prompt": body[:4000],
+        },
+    }
+
+
+def _url_skill_name(url: str) -> str:
+    """从 URL 推导技能名（如 .../skills/translate/SKILL.md → translate）。"""
+    name = url.rstrip("/").split("/")[-1]
+    if name.upper() == "SKILL.MD":
+        name = url.rstrip("/").split("/")[-2] if "/" in url.rstrip("/") else "远程技能"
+    return name.replace("-", " ").replace("_", " ").strip() or "远程技能"

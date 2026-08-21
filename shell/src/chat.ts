@@ -1054,6 +1054,45 @@ export async function setSkillEnabled(id: string, enabled: boolean): Promise<Ski
   return bridgeCall<SkillResult>("skills.set-enabled", { id, enabled });
 }
 
+// ---- 技能市场 ----
+export interface MarketSkill {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  keywords: string[];
+  system_prompt: string;
+  source: string;
+  installed: boolean;
+}
+
+export interface MarketListResult {
+  ok: boolean;
+  error?: string;
+  skills?: MarketSkill[];
+  count?: number;
+}
+
+export async function listMarketSkills(keyword?: string): Promise<MarketListResult> {
+  return bridgeCall<MarketListResult>("skills.market-list", { keyword: keyword || "" });
+}
+
+export async function installMarketSkill(id: string): Promise<SkillResult> {
+  return bridgeCall<SkillResult>("skills.market-install", { id });
+}
+
+export interface RemoteImportResult {
+  ok: boolean;
+  error?: string;
+  preview?: Skill;
+  install?: Skill;
+}
+
+/** 从远程 SKILL.md URL 导入技能（GitHub raw / 任意 URL）。 */
+export async function importRemoteSkill(url: string): Promise<RemoteImportResult> {
+  return bridgeCall<RemoteImportResult>("skills.remote-import", { url });
+}
+
 // ================================================================
 //  Tools（MCP 工具管理）
 // ================================================================

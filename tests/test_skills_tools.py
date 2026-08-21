@@ -104,6 +104,128 @@ class TestSkills(AivyTestCase):
         self.assertTrue(any("邮件" in s for s in result.get("skills", [])))
 
 
+class TestSkillMarketplace(AivyTestCase):
+    def _build_server(self):
+        from aivyos_core.chat.engine import ChatEngine
+        from aivyos_core.server_entry import build_server
+
+        cfg = make_config()
+        cfg["ipc"]["port"] = 0
+        import uuid
+        home = os.path.join(os.getcwd(), ".aivyos_test", "mkt_" + uuid.uuid4().hex[:8])
+        os.makedirs(home, exist_ok=True)
+        cfg["home"] = home
+        engine = ChatEngine(cfg)
+        server = build_server(engine, cfg)
+        return server, engine
+
+    def test_market_list(self):
+        """skills.market-list：返回市场技能并标注已安装。"""
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["skills.market-list"]({}))
+        self.assertTrue(result["ok"])
+        self.assertGreaterEqual(result["count"], 10)
+        names = {s["name"] for s in result["skills"]}
+        self.assertIn("会议纪要", names)
+        self.assertIn("简历优化", names)
+        for s in result["skills"]:
+            self.assertIn("installed", s)
+            self.assertFalse(s["installed"])  # 初始未安装
+
+    def test_market_list_search(self):
+        """市场搜索：按关键词过滤。"""
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["skills.market-list"]({"keyword": "简历"}))
+        self.assertTrue(result["ok"])
+        self.assertTrue(all("简历" in s["name"] or "简历" in s["description"] for s in result["skills"]))
+        self.assertGreaterEqual(result["count"], 1)
+
+    def test_market_install(self):
+        """skills.market-install：安装后出现在我的技能且市场标注已安装。"""
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["skills.market-install"]({"id": "mkt-meeting-minutes"}))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["skill"]["name"], "会议纪要")
+        # 我的技能列表包含
+        mine = asyncio.run(handlers["skills.list"]({}))
+        self.assertTrue(any(s["id"] == "mkt-meeting-minutes" for s in mine["skills"]))
+        # 市场标注已安装
+        market = asyncio.run(handlers["skills.market-list"]({}))
+        item = next(s for s in market["skills"] if s["id"] == "mkt-meeting-minutes")
+        self.assertTrue(item["installed"])
+
+    def test_market_install_unknown(self):
+        """安装不存在的市场技能 → 失败。"""
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["skills.market-install"]({"id": "mkt-unknown"}))
+        self.assertFalse(result["ok"])
+
+    def test_parse_skill_md(self):
+        """解析 SKILL.md（YAML frontmatter + 正文）。"""
+        from aivyos_core.skills import parse_skill_md
+
+        md = """---
+name: translate
+description: 专业翻译助手
+keywords: [翻译, translate, 中英互译]
+---
+你是专业翻译。翻译时保持术语一致。
+"""
+        parsed = parse_skill_md(md, fallback_name="fallback")
+        self.assertTrue(parsed["ok"])
+        skill = parsed["skill"]
+        self.assertEqual(skill["name"], "translate")
+        self.assertEqual(skill["description"], "专业翻译助手")
+        self.assertIn("翻译", skill["keywords"])
+        self.assertIn("专业翻译", skill["system_prompt"])
+
+    def test_parse_skill_md_no_frontmatter(self):
+        """无 frontmatter → 全文作为 system_prompt。"""
+        from aivyos_core.skills import parse_skill_md
+
+        parsed = parse_skill_md("直接是提示词内容", fallback_name="plain")
+        self.assertTrue(parsed["ok"])
+        self.assertEqual(parsed["skill"]["name"], "plain")
+        self.assertEqual(parsed["skill"]["system_prompt"], "直接是提示词内容")
+
+    def test_remote_import_mocked(self):
+        """skills.remote-import：mock 拉取 SKILL.md → 安装到本地。"""
+        from unittest.mock import patch
+
+        from aivyos_core.server_entry import build_server
+
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        md = "---\nname: doc-writer\ndescription: 文档写作\n---\n你是文档写作助手。"
+        fake_resp = unittest.mock.MagicMock()
+        fake_resp.read.return_value = md.encode("utf-8")
+        fake_cm = unittest.mock.MagicMock()
+        fake_cm.__enter__.return_value = fake_resp
+        with patch("urllib.request.urlopen", return_value=fake_cm):
+            result = asyncio.run(handlers["skills.remote-import"]({
+                "url": "https://raw.githubusercontent.com/x/y/main/skills/doc-writer/SKILL.md",
+            }))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["install"]["name"], "doc-writer")
+        self.assertIn("文档写作", result["install"]["system_prompt"])
+
+    def test_remote_import_fetch_failure(self):
+        """远程拉取失败 → 返回错误。"""
+        from aivyos_core.server_entry import build_server
+
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["skills.remote-import"]({
+            "url": "http://127.0.0.1:1/nonexistent/SKILL.md",
+        }))
+        self.assertFalse(result["ok"])
+        self.assertIn("拉取失败", result["error"])
+
+
 class TestTools(AivyTestCase):
     def _build_server(self):
         from aivyos_core.chat.engine import ChatEngine

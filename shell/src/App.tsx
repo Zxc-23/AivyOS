@@ -36,6 +36,8 @@ import {
   readImagePreview, loadVisionModel, releaseVisionModel,
   listSkills, createSkill, updateSkill, deleteSkill, setSkillEnabled,
   Skill as SkillType, SkillResult,
+  listMarketSkills, installMarketSkill, importRemoteSkill,
+  MarketSkill as MarketSkillType, MarketListResult, RemoteImportResult,
   listTools, setToolEnabled, ManagedTool, ToolsResult,
 } from "./chat";
 import {
@@ -477,6 +479,14 @@ export default function App() {
     id: string | null; name: string; description: string; category: string;
     keywords: string; system_prompt: string; enabled: boolean;
   }>({ id: null, name: "", description: "", category: "自定义", keywords: "", system_prompt: "", enabled: true });
+  // 技能市场
+  const [skillsTab, setSkillsTab] = useState<"mine" | "market">("mine");
+  const [marketSkills, setMarketSkills] = useState<MarketSkillType[]>([]);
+  const [marketLoading, setMarketLoading] = useState(false);
+  const [marketSearch, setMarketSearch] = useState("");
+  const [marketCategory, setMarketCategory] = useState("全部");
+  const [remoteUrl, setRemoteUrl] = useState("");
+  const [remoteImporting, setRemoteImporting] = useState(false);
   // 工具管理
   const [managedTools, setManagedTools] = useState<ManagedTool[]>([]);
   const [toolsLoading, setToolsLoading] = useState(false);
@@ -1454,6 +1464,50 @@ export default function App() {
     finally { setSkillsLoading(false); }
   }, [bridgeReady]);
 
+  // ---- 技能市场 ----
+  const loadMarket = useCallback(async (keyword = "") => {
+    setMarketLoading(true);
+    try {
+      if (!bridgeReady) { setMarketSkills([]); return; }
+      const res = await listMarketSkills(keyword);
+      if (res.ok && res.skills) setMarketSkills(res.skills);
+    } catch { /* 静默 */ }
+    finally { setMarketLoading(false); }
+  }, [bridgeReady]);
+
+  const installMarket = useCallback(async (id: string, name: string) => {
+    if (!bridgeReady) { showNotification("演示模式", "连接核心后可从市场安装技能", "warning"); return; }
+    const res = await installMarketSkill(id);
+    if (res.ok) {
+      showNotification("安装成功", `技能「${name}」已安装到我的技能`, "success");
+      setMarketSkills(prev => prev.map(s => s.id === id ? { ...s, installed: true } : s));
+      void loadSkills();
+    } else {
+      showNotification("安装失败", res.error || "未知错误", "danger");
+    }
+  }, [bridgeReady, showNotification, loadSkills]);
+
+  const handleRemoteImport = useCallback(async () => {
+    const url = remoteUrl.trim();
+    if (!url) { showNotification("缺少 URL", "请输入 SKILL.md 的 GitHub raw 链接", "warning"); return; }
+    if (!bridgeReady) { showNotification("演示模式", "连接核心后可从远程导入技能", "warning"); return; }
+    setRemoteImporting(true);
+    try {
+      const res = await importRemoteSkill(url);
+      if (res.ok && res.install) {
+        showNotification("导入成功", `技能「${res.install.name}」已安装`, "success");
+        setRemoteUrl("");
+        void loadSkills();
+      } else {
+        showNotification("导入失败", res.error || "无法解析该链接", "danger");
+      }
+    } catch (e) {
+      showNotification("导入失败", e instanceof Error ? e.message : String(e), "danger");
+    } finally {
+      setRemoteImporting(false);
+    }
+  }, [remoteUrl, bridgeReady, showNotification, loadSkills]);
+
   const toggleSkill = useCallback(async (id: string, enabled: boolean) => {
     if (!bridgeReady) { showNotification("演示模式", "连接核心后可启停技能", "warning"); return; }
     const res = await setSkillEnabled(id, enabled);
@@ -1807,11 +1861,11 @@ export default function App() {
       case "voiceset": loadVoiceSettings(); break;
       case "models": loadModels(); break;
       case "memory": loadMemory(); loadKnowledge(); break;
-      case "skills": loadSkills(); break;
+      case "skills": loadSkills(); void loadMarket(""); break;
       case "tools": loadTools(); break;
       default: break;
     }
-  }, [nav, loadVoiceStatus, loadTasks, loadSchedules, runBoot, loadVoiceSettings, loadModels, loadMemory, loadKnowledge, loadSkills, loadTools]);
+  }, [nav, loadVoiceStatus, loadTasks, loadSchedules, runBoot, loadVoiceSettings, loadModels, loadMemory, loadKnowledge, loadSkills, loadTools, loadMarket]);
 
   useEffect(() => {
     if (nav !== "voice" || bridgeReady) return;
@@ -3921,16 +3975,34 @@ export default function App() {
                         : "演示模式 · 连接核心后显示技能列表"}
                     </div>
                   </div>
-                  <button
-                    className="btn btn-approve"
-                    style={{ fontSize: 11, padding: "6px 14px" }}
-                    onClick={() => {
-                      setSkillForm({ id: null, name: "", description: "", category: "自定义", keywords: "", system_prompt: "", enabled: true });
-                      setSkillFormOpen(true);
-                    }}
-                  >➕ 新建技能</button>
+                  {skillsTab === "mine" && (
+                    <button
+                      className="btn btn-approve"
+                      style={{ fontSize: 11, padding: "6px 14px" }}
+                      onClick={() => {
+                        setSkillForm({ id: null, name: "", description: "", category: "自定义", keywords: "", system_prompt: "", enabled: true });
+                        setSkillFormOpen(true);
+                      }}
+                    >➕ 新建技能</button>
+                  )}
                 </div>
 
+                {/* 双 Tab：我的技能 / 技能市场 */}
+                <div className="models-tabs" style={{ marginBottom: 14 }}>
+                  {([
+                    { id: "mine", label: "📚 我的技能" },
+                    { id: "market", label: "🛍️ 技能市场" },
+                  ] as const).map(tab => (
+                    <button
+                      key={tab.id}
+                      className={`models-tab ${skillsTab === tab.id ? "active" : ""}`}
+                      onClick={() => setSkillsTab(tab.id)}
+                    >{tab.label}</button>
+                  ))}
+                </div>
+
+                {skillsTab === "mine" && (
+                <>
                 {/* 新建/编辑表单 */}
                 {skillFormOpen && (
                   <div className="ml-edit-panel" style={{ marginBottom: 14 }}>
@@ -4076,6 +4148,109 @@ export default function App() {
                       );
                     })}
                   </div>
+                )}
+                </>
+                )}
+
+                {skillsTab === "market" && (
+                <div className="ml-groups" style={{ gap: 12 }}>
+                  {/* 远程 SKILL.md 导入（GitHub raw / 任意 URL） */}
+                  <div className="ml-group">
+                    <div className="ml-group-header">
+                      <span className="ml-group-title">🌐 从远程导入技能</span>
+                      <span className="ml-group-count">SKILL.md 格式 · Claude Code / OpenClaw 兼容</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <input
+                        className="ml-input"
+                        style={{ flex: 1, minWidth: 260 }}
+                        placeholder="https://raw.githubusercontent.com/.../SKILL.md"
+                        value={remoteUrl}
+                        onChange={e => setRemoteUrl(e.target.value)}
+                      />
+                      <button
+                        className="btn btn-approve"
+                        style={{ fontSize: 11, padding: "6px 14px" }}
+                        disabled={remoteImporting}
+                        onClick={handleRemoteImport}
+                      >{remoteImporting ? "导入中..." : "导入安装"}</button>
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: 10, color: "var(--muted2)" }}>
+                      支持从任意公开技能仓库拉取（如 agentskillexchange/skills、dukelyuu/skills-marketplace 的 raw 链接）
+                    </div>
+                  </div>
+
+                  {/* 市场搜索与分类 */}
+                  <div className="ml-group">
+                    <div className="ml-group-header">
+                      <span className="ml-group-title">🛍️ 精选技能</span>
+                      <span className="ml-group-count">{marketSkills.length} 个</span>
+                      <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                        <select
+                          className="ml-select"
+                          style={{ fontSize: 11 }}
+                          value={marketCategory}
+                          onChange={e => { setMarketCategory(e.target.value); }}
+                        >
+                          {["全部", "办公", "职场", "语言", "数据", "开发", "创意", "健康", "生活", "教育"].map(c => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                        <input
+                          className="ml-search-input"
+                          style={{ width: 160 }}
+                          placeholder="搜索市场技能..."
+                          value={marketSearch}
+                          onChange={e => { setMarketSearch(e.target.value); void loadMarket(e.target.value); }}
+                        />
+                      </div>
+                    </div>
+
+                    {marketLoading ? (
+                      <div className="models-empty"><div className="big">⏳</div>加载市场中...</div>
+                    ) : marketSkills.length === 0 ? (
+                      <div className="models-empty">
+                        <div className="big">🛍️</div>
+                        {bridgeReady ? "未找到匹配技能" : "演示模式：连接核心后显示技能市场"}
+                      </div>
+                    ) : (
+                      <div className="ml-provider-list">
+                        {marketSkills
+                          .filter(s => marketCategory === "全部" || s.category === marketCategory)
+                          .map(s => (
+                            <div key={s.id} className="ml-provider-item configured">
+                              <div className="ml-provider-row">
+                                <div className="ml-provider-info">
+                                  <span className="ml-status-dot" style={{ background: s.installed ? "#10b981" : "#6b7280" }}></span>
+                                  <span className="ml-provider-name">{s.name}</span>
+                                  <span className="ml-cat-tag cloud">{s.category}</span>
+                                  {s.installed && <span className="ml-config-tag">已安装</span>}
+                                </div>
+                                <div className="ml-provider-actions">
+                                  <button
+                                    className="btn btn-approve"
+                                    style={{ fontSize: 10, padding: "3px 10px" }}
+                                    disabled={s.installed}
+                                    onClick={() => installMarket(s.id, s.name)}
+                                  >{s.installed ? "✓ 已安装" : "安装"}</button>
+                                </div>
+                              </div>
+                              <div style={{ padding: "0 16px 12px 16px", fontSize: 11, color: "var(--muted2)" }}>
+                                {s.description}
+                                {s.keywords && s.keywords.length > 0 && (
+                                  <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                    {s.keywords.slice(0, 5).map((k, i) => (
+                                      <span key={i} className="ml-added-tag">{k}</span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
                 )}
               </div>
             </div>
