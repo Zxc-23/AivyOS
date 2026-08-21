@@ -191,11 +191,19 @@ try {
             $still = Get-Process -Name "aivyos-shell" -ErrorAction SilentlyContinue
             if ($still) {
                 Write-Host "  [i] Stop-Process insufficient, escalating to taskkill /F /T..." -ForegroundColor DarkYellow
+                # try by PID first
                 $still | ForEach-Object {
                     & taskkill.exe /PID $_.Id /F /T 2>$null | Out-Null
                 }
-                Start-Sleep -Seconds 2
+                Start-Sleep -Seconds 1
+                # 3) if still alive, try by image name (/IM) - often succeeds where /PID fails
                 $still = Get-Process -Name "aivyos-shell" -ErrorAction SilentlyContinue
+                if ($still) {
+                    Write-Host "  [i] taskkill /PID failed, trying taskkill /IM (image name)..." -ForegroundColor DarkYellow
+                    & taskkill.exe /IM aivyos-shell.exe /F /T 2>$null | Out-Null
+                    Start-Sleep -Seconds 2
+                    $still = Get-Process -Name "aivyos-shell" -ErrorAction SilentlyContinue
+                }
             }
             if ($still) {
                 Write-Host "  [x] Could not stop $($still.Count) AivyOS instance(s) (access denied)." -ForegroundColor Red
