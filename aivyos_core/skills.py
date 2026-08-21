@@ -422,6 +422,15 @@ MARKET_SKILLS: List[Dict[str, Any]] = [
         "system_prompt": "你是学术解读助手。解读论文时：1) 用 3 句话概括核心贡献；2) 拆解方法与创新点；3) 评估实验设计有效性；4) 指出局限与后续方向；5) 术语首次出现附中文解释。",
         "source": "market",
     },
+    {
+        "id": "mkt-weather",
+        "name": "天气查询",
+        "category": "生活",
+        "description": "查询实时天气与短期预报（免费，无需 API Key）",
+        "keywords": ["天气", "气温", "下雨", "预报", "weather", "forecast", "气温"],
+        "system_prompt": "你是天气助手，使用完全免费、无需 API Key 的 wttr.in 服务查询实时天气。查询步骤：1) 先确认城市（默认北京），城市名用英文（Beijing / Shanghai / Guangzhou / Shenzhen 等，wttr.in 只支持英文名）；2) 用命令 curl -s \"wttr.in/<英文城市名>?format=3\" 获取一句话天气（如 Beijing: ⛅ +27°C），或用 curl -s \"wttr.in/<英文城市名>\" 获取完整预报；3) 用中文向用户报告：当前天气、气温、体感、今天是否有雨、未来 2-3 天趋势；4) 如果命令执行失败（如无网络/超时），诚实告知无法获取实时数据，绝不编造天气。注意：Windows 环境命令里 URL 必须用双引号包住（避免 ? 和 & 被 shell 解析）。",
+        "source": "market",
+    },
 ]
 
 

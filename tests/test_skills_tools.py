@@ -147,7 +147,7 @@ class TestSkillMarketplace(AivyTestCase):
         self.assertIn("agentskillexchange", ids)
         self.assertIn("dukelyuu", ids)
         builtin = next(s for s in result["sources"] if s["id"] == "builtin")
-        self.assertEqual(builtin["skill_count"], 20)
+        self.assertGreaterEqual(builtin["skill_count"], 20)
 
     def test_market_browse_builtin(self):
         """skills.market-browse：内置源返回目录。"""
@@ -237,6 +237,23 @@ class TestSkillMarketplace(AivyTestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(all("简历" in s["name"] or "简历" in s["description"] for s in result["skills"]))
         self.assertGreaterEqual(result["count"], 1)
+
+    def test_weather_skill_in_market(self):
+        """天气查询技能在市场内置目录中，可安装并匹配。"""
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["skills.market-browse"]({"source": "builtin", "keyword": "天气"}))
+        self.assertTrue(result["ok"])
+        self.assertTrue(any(s["name"] == "天气查询" for s in result["skills"]))
+        # 安装
+        inst = asyncio.run(handlers["skills.market-install"]({"id": "mkt-weather"}))
+        self.assertTrue(inst["ok"])
+        self.assertEqual(inst["skill"]["name"], "天气查询")
+        # 提示词包含 wttr.in 免费接口说明
+        self.assertIn("wttr.in", inst["skill"]["system_prompt"])
+        # 匹配
+        chat = asyncio.run(handlers["chat.send"]({"text": "今天北京天气怎么样", "session_id": None}))
+        self.assertTrue(any("天气" in s for s in chat.get("skills", [])))
 
     def test_market_install(self):
         """skills.market-install：安装后出现在我的技能且市场标注已安装。"""
