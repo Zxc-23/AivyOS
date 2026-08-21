@@ -184,12 +184,24 @@ try {
         $running = Get-Process -Name "aivyos-shell" -ErrorAction SilentlyContinue
         if ($running) {
             Write-Host "  [i] Stopping $($running.Count) running AivyOS instance(s) to unlock the exe..." -ForegroundColor DarkYellow
+            # 1) try Stop-Process
             $running | Stop-Process -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 2
+            Start-Sleep -Seconds 1
+            # 2) if still alive, escalate to taskkill /F /T (kills process tree, better with permissions)
             $still = Get-Process -Name "aivyos-shell" -ErrorAction SilentlyContinue
             if ($still) {
+                Write-Host "  [i] Stop-Process insufficient, escalating to taskkill /F /T..." -ForegroundColor DarkYellow
+                $still | ForEach-Object {
+                    & taskkill.exe /PID $_.Id /F /T 2>$null | Out-Null
+                }
+                Start-Sleep -Seconds 2
+                $still = Get-Process -Name "aivyos-shell" -ErrorAction SilentlyContinue
+            }
+            if ($still) {
                 Write-Host "  [x] Could not stop $($still.Count) AivyOS instance(s) (access denied)." -ForegroundColor Red
-                Write-Host "      Please close the AivyOS window (or taskkill /IM aivyos-shell.exe /F) and rerun." -ForegroundColor Red
+                Write-Host "      Please close the AivyOS window, or run as Administrator:" -ForegroundColor Red
+                Write-Host "        taskkill /IM aivyos-shell.exe /F /T" -ForegroundColor Red
+                Write-Host "      Then rerun this command." -ForegroundColor Red
                 exit 1
             }
             Write-Host "  [ok] Stopped. Building..." -ForegroundColor Green
