@@ -94,32 +94,67 @@ try {
     }
 
     # ---- Desktop mode (Tauri) ----
-    $exe = Join-Path $root "shell\src-tauri\target\debug\aivyos-shell.exe"
+    $debugExe = Join-Path $root "shell\src-tauri\target\debug\aivyos-shell.exe"
+    $releaseExe = Join-Path $root "shell\src-tauri\target\release\aivyos-shell.exe"
+    $exe = $null
+    if (Test-Path $releaseExe) {
+        $exe = $releaseExe
+    } elseif (Test-Path $debugExe) {
+        $exe = $debugExe
+    }
 
-    if ($Rebuild -or -not (Test-Path "shell\dist\index.html")) {
-        Write-Host "[2/4] Building frontend (npm run build)..." -ForegroundColor Yellow
+    # dist presence: release exe embeds dist; debug exe needs Vite dev server
+    $needVite = $false
+    if ($exe -eq $debugExe) {
+        # debug build loads frontend via devUrl (127.0.0.1:1420), Vite required
+        $needVite = $true
+        Write-Host "[2/4] Debug build detected - needs Vite dev server for frontend." -ForegroundColor Yellow
         if (-not (Test-Path "shell\node_modules")) {
             Write-Host "  [i] First run: installing frontend deps..." -ForegroundColor DarkYellow
             Push-Location shell
             npm.cmd install 2>$null
             Pop-Location
         }
-        Push-Location shell
-        npm.cmd run build
-        $buildExit = $LASTEXITCODE
-        Pop-Location
-        if ($buildExit -ne 0) {
-            Write-Host "  [x] Frontend build failed." -ForegroundColor Red
-            exit 1
+        # probe if 1420 already has Vite
+        $viteAlive = $false
+        try {
+            $viteAlive = Test-NetConnection -ComputerName 127.0.0.1 -Port 1420 -WarningAction SilentlyContinue -InformationLevel Quiet
+        } catch { }
+        if (-not $viteAlive) {
+            Write-Host "  [i] Starting Vite dev server (127.0.0.1:1420)..." -ForegroundColor DarkYellow
+            $vite = Start-Process -FilePath "npm.cmd" -ArgumentList "run", "dev" -WorkingDirectory (Join-Path $root "shell") -PassThru -WindowStyle Minimized
+            Start-Sleep -Seconds 6
+            Write-Host "  [ok] Vite started." -ForegroundColor Green
+        } else {
+            Write-Host "  [ok] Vite already running." -ForegroundColor Green
         }
-        Write-Host "  [ok] Frontend build done." -ForegroundColor Green
+    } elseif ($exe -eq $releaseExe) {
+        if ($Rebuild -or -not (Test-Path "shell\dist\index.html")) {
+            Write-Host "[2/4] Building frontend (npm run build)..." -ForegroundColor Yellow
+            if (-not (Test-Path "shell\node_modules")) {
+                Push-Location shell
+                npm.cmd install 2>$null
+                Pop-Location
+            }
+            Push-Location shell
+            npm.cmd run build
+            $buildExit = $LASTEXITCODE
+            Pop-Location
+            if ($buildExit -ne 0) {
+                Write-Host "  [x] Frontend build failed." -ForegroundColor Red
+                exit 1
+            }
+            Write-Host "  [ok] Frontend build done." -ForegroundColor Green
+        } else {
+            Write-Host "[2/4] dist exists, skip build." -ForegroundColor Green
+        }
     } else {
-        Write-Host "[2/4] dist exists, skip build." -ForegroundColor Green
+        Write-Host "[2/4] No built app found, will use dev mode (npm run tauri dev)." -ForegroundColor Yellow
     }
 
-    if (Test-Path $exe) {
+    if ($exe) {
         # ---- Launch built desktop shell ----
-        Write-Host "[3/4] Launching desktop app (aivyos-shell.exe)..." -ForegroundColor Yellow
+        Write-Host "[3/4] Launching desktop app: $(Split-Path -Leaf $exe)..." -ForegroundColor Yellow
         if ($Mode -ne "auto") { $env:AIVYOS_LLM_MODE = $Mode }
         Write-Host "[4/4] Done! AivyOS starting (core auto-spawned)." -ForegroundColor Green
         Write-Host ""

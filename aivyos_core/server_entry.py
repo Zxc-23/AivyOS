@@ -2138,7 +2138,12 @@ async def amain(args) -> None:
         try:
             from aivyos_core.voice.session import VoiceSession
 
-            vs = VoiceSession(_voice_cfg(), engine)
+            # 与 build_server 内 _voice_cfg 相同的配置：Tauri 场景禁用后端播放
+            import copy as _copy
+
+            vc = _copy.deepcopy(cfg)
+            vc.setdefault("voice", {})["backend_play"] = False
+            vs = VoiceSession(vc, engine)
             asr = getattr(vs, "asr", None)
             if asr is not None and hasattr(asr, "warmup") and getattr(asr, "name", "") not in ("mock-asr",):
                 log.info("启动预热 ASR 模型（%s）...", getattr(asr, "name", "?"))
