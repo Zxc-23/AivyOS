@@ -137,6 +137,21 @@ try {
         Write-Host "[2/4] Building RELEASE desktop app (tauri build)..." -ForegroundColor Magenta
         Write-Host "  [i] This compiles Rust + bundles frontend, may take several minutes." -ForegroundColor DarkYellow
 
+        # Stop running AivyOS instances first (Windows locks the exe, build cannot overwrite)
+        $running = Get-Process -Name "aivyos-shell" -ErrorAction SilentlyContinue
+        if ($running) {
+            Write-Host "  [i] Stopping $($running.Count) running AivyOS instance(s) to unlock the exe..." -ForegroundColor DarkYellow
+            $running | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            $still = Get-Process -Name "aivyos-shell" -ErrorAction SilentlyContinue
+            if ($still) {
+                Write-Host "  [x] Could not stop $($still.Count) AivyOS instance(s) (access denied)." -ForegroundColor Red
+                Write-Host "      Please close the AivyOS window (or taskkill /IM aivyos-shell.exe /F) and rerun." -ForegroundColor Red
+                exit 1
+            }
+            Write-Host "  [ok] Stopped. Building..." -ForegroundColor Green
+        }
+
         # Rust toolchain check
         $cargo = Get-Command cargo -ErrorAction SilentlyContinue
         if (-not $cargo) {

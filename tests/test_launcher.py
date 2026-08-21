@@ -39,6 +39,18 @@ class TestLauncher(AivyTestCase):
         self.assertIn("MyInvocation.MyCommand.Path", content)  # 基于脚本位置
         self.assertIn("Resolve-Path", content)           # 规范化路径
 
+    def test_ps1_stops_running_instance_before_build(self):
+        """构建前停止运行中的应用（解锁 exe，避免 Windows 文件占用）。"""
+        path = os.path.join(ROOT, "scripts", "start_aivyos.ps1")
+        content = open(path, encoding="utf-8", errors="replace").read()
+        self.assertIn('Get-Process -Name "aivyos-shell"', content)  # 检测实例
+        self.assertIn("Stop-Process", content)                     # 停止实例
+        self.assertIn("taskkill /IM aivyos-shell.exe", content)    # 无法停止时的提示
+        # 停止逻辑必须在 -Build 分支内（构建命令之前）
+        build_idx = content.index("npm.cmd run tauri build")
+        stop_idx = content.index("Stop-Process")
+        self.assertLess(stop_idx, build_idx)  # 先停再构建
+
     def test_bat_exists(self):
         """start_aivyos.bat 双击启动器存在。"""
         path = os.path.join(ROOT, "start_aivyos.bat")
