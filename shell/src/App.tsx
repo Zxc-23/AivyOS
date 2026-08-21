@@ -34,6 +34,9 @@ import {
   startWakeLoop, stopWakeLoop, getWakeLoopStatus, listenWakeEvents,
   WakeLoopStatus, WakeEvent,
   readImagePreview, loadVisionModel, releaseVisionModel,
+  listSkills, createSkill, updateSkill, deleteSkill, setSkillEnabled,
+  Skill as SkillType, SkillResult,
+  listTools, setToolEnabled, ManagedTool, ToolsResult,
 } from "./chat";
 import {
   TrayStateName,
@@ -53,7 +56,8 @@ const TRAY_LABEL: Record<string, string> = {
 
 type NavId =
   | "chat" | "voice" | "task" | "sched" | "vibe"
-  | "memory" | "boot" | "voiceset" | "models" | "settings";
+  | "memory" | "boot" | "voiceset" | "models" | "settings"
+  | "skills" | "tools";
 
 interface Msg {
   role: "user" | "assistant";
@@ -465,6 +469,18 @@ export default function App() {
   // 云端模型批量连通性测试
   const [cloudTesting, setCloudTesting] = useState(false);
   const [cloudTestSummary, setCloudTestSummary] = useState<CloudTestSummary | null>(null);
+  // 技能管理
+  const [skills, setSkills] = useState<SkillType[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillFormOpen, setSkillFormOpen] = useState(false);
+  const [skillForm, setSkillForm] = useState<{
+    id: string | null; name: string; description: string; category: string;
+    keywords: string; system_prompt: string; enabled: boolean;
+  }>({ id: null, name: "", description: "", category: "自定义", keywords: "", system_prompt: "", enabled: true });
+  // 工具管理
+  const [managedTools, setManagedTools] = useState<ManagedTool[]>([]);
+  const [toolsLoading, setToolsLoading] = useState(false);
+  const [toolFilter, setToolFilter] = useState<"all" | "enabled" | "disabled">("all");
   const [editingForm, setEditingForm] = useState<{
     providerId: string;
     apiKey: string;
@@ -1425,6 +1441,94 @@ export default function App() {
     }
   }, [bridgeReady, showNotification]);
 
+  /* ================================================================
+   *  Skills（技能管理）
+   * ================================================================ */
+  const loadSkills = useCallback(async () => {
+    setSkillsLoading(true);
+    try {
+      if (!bridgeReady) { setSkills([]); return; }
+      const res = await listSkills();
+      if (res.ok && res.skills) setSkills(res.skills);
+    } catch { /* 静默 */ }
+    finally { setSkillsLoading(false); }
+  }, [bridgeReady]);
+
+  const toggleSkill = useCallback(async (id: string, enabled: boolean) => {
+    if (!bridgeReady) { showNotification("演示模式", "连接核心后可启停技能", "warning"); return; }
+    const res = await setSkillEnabled(id, enabled);
+    if (res.ok && res.skill) {
+      setSkills(prev => prev.map(s => s.id === id ? res.skill! : s));
+      showNotification("技能已更新", `${res.skill!.name} ${enabled ? "已启用" : "已停用"}`, "success");
+    } else {
+      showNotification("更新失败", res.error || "未知错误", "danger");
+    }
+  }, [bridgeReady, showNotification]);
+
+  const saveSkill = useCallback(async () => {
+    const name = skillForm.name.trim();
+    if (!name) { showNotification("缺少名称", "请填写技能名称", "warning"); return; }
+    const keywords = skillForm.keywords.split(/[,，、\s]+/).filter(Boolean);
+    const fields = {
+      name,
+      description: skillForm.description.trim(),
+      category: skillForm.category.trim() || "自定义",
+      keywords,
+      system_prompt: skillForm.system_prompt,
+      enabled: skillForm.enabled,
+    };
+    try {
+      const res = skillForm.id
+        ? await updateSkill(skillForm.id, fields)
+        : await createSkill(fields);
+      if (res.ok) {
+        showNotification("保存成功", `技能「${name}」已保存`, "success");
+        setSkillFormOpen(false);
+        setSkillForm({ id: null, name: "", description: "", category: "自定义", keywords: "", system_prompt: "", enabled: true });
+        void loadSkills();
+      } else {
+        showNotification("保存失败", res.error || "未知错误", "danger");
+      }
+    } catch (e) {
+      showNotification("保存失败", e instanceof Error ? e.message : String(e), "danger");
+    }
+  }, [skillForm, loadSkills, showNotification]);
+
+  const removeSkill = useCallback(async (id: string, name: string) => {
+    if (!bridgeReady) { showNotification("演示模式", "连接核心后可删除技能", "warning"); return; }
+    const res = await deleteSkill(id);
+    if (res.ok) {
+      setSkills(prev => prev.filter(s => s.id !== id));
+      showNotification("已删除", `技能「${name}」已删除`, "success");
+    } else {
+      showNotification("删除失败", res.error || "未知错误", "danger");
+    }
+  }, [bridgeReady, showNotification]);
+
+  /* ================================================================
+   *  Tools（MCP 工具管理）
+   * ================================================================ */
+  const loadTools = useCallback(async () => {
+    setToolsLoading(true);
+    try {
+      if (!bridgeReady) { setManagedTools([]); return; }
+      const res = await listTools();
+      if (res.ok && res.tools) setManagedTools(res.tools);
+    } catch { /* 静默 */ }
+    finally { setToolsLoading(false); }
+  }, [bridgeReady]);
+
+  const toggleTool = useCallback(async (name: string, enabled: boolean) => {
+    if (!bridgeReady) { showNotification("演示模式", "连接核心后可启停工具", "warning"); return; }
+    const res = await setToolEnabled(name, enabled);
+    if (res.ok) {
+      setManagedTools(prev => prev.map(t => t.name === name ? { ...t, enabled } : t));
+      showNotification("工具已更新", `${name} ${enabled ? "已启用" : "已停用"}`, "success");
+    } else {
+      showNotification("更新失败", res.error || "未知错误", "danger");
+    }
+  }, [bridgeReady, showNotification]);
+
   const resetAddModelDialog = useCallback(() => {
     setAddModelProvider("");
     setAddModelName("");
@@ -1703,9 +1807,11 @@ export default function App() {
       case "voiceset": loadVoiceSettings(); break;
       case "models": loadModels(); break;
       case "memory": loadMemory(); loadKnowledge(); break;
+      case "skills": loadSkills(); break;
+      case "tools": loadTools(); break;
       default: break;
     }
-  }, [nav, loadVoiceStatus, loadTasks, loadSchedules, runBoot, loadVoiceSettings, loadModels, loadMemory, loadKnowledge]);
+  }, [nav, loadVoiceStatus, loadTasks, loadSchedules, runBoot, loadVoiceSettings, loadModels, loadMemory, loadKnowledge, loadSkills, loadTools]);
 
   useEffect(() => {
     if (nav !== "voice" || bridgeReady) return;
@@ -1728,6 +1834,7 @@ export default function App() {
     chat: "对话", voice: "语音模式", task: "自主任务", sched: "定时任务",
     vibe: "Vibe Coding", memory: "知识卡片", boot: "系统自检",
     voiceset: "语音设置", models: "模型管理", settings: "设置",
+    skills: "技能管理", tools: "工具管理",
   };
 
   /* ================================================================
@@ -1756,6 +1863,8 @@ export default function App() {
     { id: "boot" as NavId, label: "系统自检", desc: "启动时自动检测各模块状态", icon: "🔒" },
     { id: "voiceset" as NavId, label: "语音设置", desc: "TTS 音色选择与 ASR 引擎", icon: "🎛️" },
     { id: "models" as NavId, label: "模型管理", desc: "模型部署、路由与切换策略", icon: "🧩" },
+    { id: "skills" as NavId, label: "技能管理", desc: "配置艾薇的专属技能与提示词", icon: "🎯" },
+    { id: "tools" as NavId, label: "工具管理", desc: "MCP 工具开关与权限查看", icon: "🔧" },
   ];
 
   /* ================================================================
@@ -3800,7 +3909,265 @@ export default function App() {
               </div>
             </div>
 
-            {/* ============ 10. 设置 (settings) ============ */}
+            {/* ============ 10. 技能管理 (skills) ============ */}
+            <div className={`screen ${nav === "skills" ? "active" : ""}`}>
+              <div className="models-screen">
+                <div className="models-header">
+                  <div>
+                    <h2>🎯 技能管理</h2>
+                    <div className="sub">
+                      {bridgeReady
+                        ? "为艾薇配置专属技能：对话命中触发词时自动注入对应提示词"
+                        : "演示模式 · 连接核心后显示技能列表"}
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-approve"
+                    style={{ fontSize: 11, padding: "6px 14px" }}
+                    onClick={() => {
+                      setSkillForm({ id: null, name: "", description: "", category: "自定义", keywords: "", system_prompt: "", enabled: true });
+                      setSkillFormOpen(true);
+                    }}
+                  >➕ 新建技能</button>
+                </div>
+
+                {/* 新建/编辑表单 */}
+                {skillFormOpen && (
+                  <div className="ml-edit-panel" style={{ marginBottom: 14 }}>
+                    <div className="ml-form-group">
+                      <label className="ml-label">技能名称 *</label>
+                      <input
+                        className="ml-input"
+                        placeholder="如：邮件起草"
+                        value={skillForm.name}
+                        onChange={e => setSkillForm({ ...skillForm, name: e.target.value })}
+                      />
+                    </div>
+                    <div className="ml-form-group">
+                      <label className="ml-label">描述</label>
+                      <input
+                        className="ml-input"
+                        placeholder="这个技能是做什么的？"
+                        value={skillForm.description}
+                        onChange={e => setSkillForm({ ...skillForm, description: e.target.value })}
+                      />
+                    </div>
+                    <div className="ml-form-group">
+                      <label className="ml-label">分类</label>
+                      <input
+                        className="ml-input"
+                        placeholder="办公 / 开发 / 自动化 / 智能 / 自定义"
+                        value={skillForm.category}
+                        onChange={e => setSkillForm({ ...skillForm, category: e.target.value })}
+                      />
+                    </div>
+                    <div className="ml-form-group">
+                      <label className="ml-label">触发词（逗号分隔）</label>
+                      <input
+                        className="ml-input"
+                        placeholder="邮件, 起草, email"
+                        value={skillForm.keywords}
+                        onChange={e => setSkillForm({ ...skillForm, keywords: e.target.value })}
+                      />
+                    </div>
+                    <div className="ml-form-group">
+                      <label className="ml-label">系统提示词（注入 LLM 上下文）</label>
+                      <textarea
+                        className="ml-input"
+                        rows={4}
+                        placeholder="你是邮件助手。处理邮件请求时：1) ..."
+                        value={skillForm.system_prompt}
+                        onChange={e => setSkillForm({ ...skillForm, system_prompt: e.target.value })}
+                      />
+                    </div>
+                    <div className="ml-form-group" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <label className="ml-label" style={{ margin: 0 }}>启用</label>
+                      <div className={`toggle ${skillForm.enabled ? "on" : ""}`} onClick={() => setSkillForm({ ...skillForm, enabled: !skillForm.enabled })}>
+                        <div className="toggle-thumb" />
+                      </div>
+                    </div>
+                    <div className="ml-edit-actions">
+                      <button className="btn btn-skip" onClick={() => setSkillFormOpen(false)}>取消</button>
+                      <button className="btn btn-approve" onClick={saveSkill}>保存技能</button>
+                    </div>
+                  </div>
+                )}
+
+                {skillsLoading ? (
+                  <div className="models-empty"><div className="big">⏳</div>加载技能中...</div>
+                ) : skills.length === 0 ? (
+                  <div className="models-empty">
+                    <div className="big">🎯</div>
+                    {bridgeReady ? "暂无技能，点击「➕ 新建技能」创建" : "演示模式：连接核心后显示技能"}
+                  </div>
+                ) : (
+                  <div className="ml-groups">
+                    {(["办公", "开发", "自动化", "智能", "自定义"] as const).map(cat => {
+                      const items = skills.filter(s => (s.category || "自定义") === cat);
+                      if (items.length === 0) return null;
+                      return (
+                        <div key={cat} className="ml-group">
+                          <div className="ml-group-header">
+                            <span className="ml-group-title">{cat}</span>
+                            <span className="ml-group-count">{items.length} 个</span>
+                          </div>
+                          <div className="ml-provider-list">
+                            {items.map(s => (
+                              <div key={s.id} className="ml-provider-item configured">
+                                <div className="ml-provider-row">
+                                  <div className="ml-provider-info">
+                                    <span className="ml-status-dot" style={{ background: s.enabled ? "#10b981" : "#6b7280" }}></span>
+                                    <span className="ml-provider-name">{s.name}</span>
+                                    {s.builtin && <span className="ml-config-tag">内置</span>}
+                                    <span className="ml-config-tag" style={{ background: s.enabled ? "rgba(16,185,129,0.12)" : "rgba(107,114,128,0.12)", color: s.enabled ? "#10b981" : "#8b93a7" }}>
+                                      {s.enabled ? "已启用" : "已停用"}
+                                    </span>
+                                  </div>
+                                  <div className="ml-provider-actions">
+                                    <button
+                                      className="btn btn-skip"
+                                      style={{ fontSize: 10, padding: "3px 10px" }}
+                                      onClick={() => {
+                                        setSkillForm({
+                                          id: s.id,
+                                          name: s.name,
+                                          description: s.description || "",
+                                          category: s.category || "自定义",
+                                          keywords: (s.keywords || []).join(", "),
+                                          system_prompt: s.system_prompt || "",
+                                          enabled: s.enabled,
+                                        });
+                                        setSkillFormOpen(true);
+                                      }}
+                                    >编辑</button>
+                                    <button
+                                      className="btn btn-skip"
+                                      style={{ fontSize: 10, padding: "3px 10px" }}
+                                      onClick={() => toggleSkill(s.id, !s.enabled)}
+                                    >{s.enabled ? "停用" : "启用"}</button>
+                                    {!s.builtin && (
+                                      <button
+                                        className="btn btn-skip"
+                                        style={{ fontSize: 10, padding: "3px 10px", color: "#ef4444", borderColor: "rgba(239,68,68,0.4)" }}
+                                        onClick={() => removeSkill(s.id, s.name)}
+                                      >删除</button>
+                                    )}
+                                  </div>
+                                </div>
+                                <div style={{ padding: "0 16px 12px 16px", fontSize: 11, color: "var(--muted2)" }}>
+                                  {s.description || "（无描述）"}
+                                  {s.keywords && s.keywords.length > 0 && (
+                                    <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                      {s.keywords.map((k, i) => (
+                                        <span key={i} className="ml-added-tag">{k}</span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {s.system_prompt && (
+                                    <div style={{ marginTop: 6, padding: 8, borderRadius: 6, background: "rgba(255,255,255,0.03)", fontFamily: "monospace", fontSize: 10, whiteSpace: "pre-wrap" }}>
+                                      {s.system_prompt}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ============ 11. 工具管理 (tools) ============ */}
+            <div className={`screen ${nav === "tools" ? "active" : ""}`}>
+              <div className="models-screen">
+                <div className="models-header">
+                  <div>
+                    <h2>🔧 工具管理</h2>
+                    <div className="sub">
+                      {bridgeReady
+                        ? `MCP 工具注册表 · ${managedTools.length} 个工具（权限级别 L0 只读 ~ L3 危险）`
+                        : "演示模式 · 连接核心后显示工具列表"}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <select
+                      className="ml-select"
+                      value={toolFilter}
+                      onChange={e => setToolFilter(e.target.value as any)}
+                    >
+                      <option value="all">全部</option>
+                      <option value="enabled">已启用</option>
+                      <option value="disabled">已停用</option>
+                    </select>
+                    <button className="btn btn-approve" style={{ fontSize: 11, padding: "6px 14px" }} onClick={loadTools}>刷新</button>
+                  </div>
+                </div>
+
+                {toolsLoading ? (
+                  <div className="models-empty"><div className="big">⏳</div>加载工具中...</div>
+                ) : managedTools.length === 0 ? (
+                  <div className="models-empty">
+                    <div className="big">🔧</div>
+                    {bridgeReady ? "暂无可用工具" : "演示模式：连接核心后显示工具"}
+                  </div>
+                ) : (
+                  <div className="ml-groups">
+                    {(() => {
+                      const servers = Array.from(new Set(managedTools.map(t => t.server || "其他")));
+                      return servers.map(srv => {
+                        const items = managedTools.filter(t => (t.server || "其他") === srv).filter(t => {
+                          if (toolFilter === "enabled") return t.enabled;
+                          if (toolFilter === "disabled") return !t.enabled;
+                          return true;
+                        });
+                        if (items.length === 0) return null;
+                        return (
+                          <div key={srv} className="ml-group">
+                            <div className="ml-group-header">
+                              <span className="ml-group-title">📦 {srv}</span>
+                              <span className="ml-group-count">{items.length} 个</span>
+                            </div>
+                            <div className="ml-provider-list">
+                              {items.map(t => (
+                                <div key={t.name} className="ml-provider-item configured">
+                                  <div className="ml-provider-row">
+                                    <div className="ml-provider-info">
+                                      <span className="ml-status-dot" style={{ background: t.enabled ? "#10b981" : "#6b7280" }}></span>
+                                      <span className="ml-provider-name" style={{ fontFamily: "monospace" }}>{t.name}</span>
+                                      <span className={`ml-cat-tag ${t.permission === "L0" ? "local" : "cloud"}`} style={{ fontSize: 9 }}>
+                                        L{t.permission.replace("L", "")}
+                                      </span>
+                                      <span className="ml-config-tag" style={{ background: t.enabled ? "rgba(16,185,129,0.12)" : "rgba(107,114,128,0.12)", color: t.enabled ? "#10b981" : "#8b93a7" }}>
+                                        {t.enabled ? "已启用" : "已停用"}
+                                      </span>
+                                    </div>
+                                    <div className="ml-provider-actions">
+                                      <button
+                                        className="btn btn-skip"
+                                        style={{ fontSize: 10, padding: "3px 10px" }}
+                                        onClick={() => toggleTool(t.name, !t.enabled)}
+                                      >{t.enabled ? "停用" : "启用"}</button>
+                                    </div>
+                                  </div>
+                                  <div style={{ padding: "0 16px 12px 16px", fontSize: 11, color: "var(--muted2)" }}>
+                                    {t.description}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ============ 12. 设置 (settings) ============ */}
             <div className={`screen ${nav === "settings" ? "active" : ""}`}>
               <div className="settings-screen">
                 <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>设置</div>

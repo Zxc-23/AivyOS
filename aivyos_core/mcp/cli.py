@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+log = logging.getLogger(__name__)
+
 from aivyos_core.config import ensure_home, load_config
 from aivyos_core.mcp.manager import ToolManager
 from aivyos_core.mcp.server import McpServer
@@ -63,8 +65,12 @@ def build_manager(cfg: dict, engine=None) -> ToolManager:
     for name in enabled:
         if name not in SERVERS:
             continue
-        server = SERVERS[name](mcp_cfg, home) if name != "memory" else MemoryServer(engine.memory)
-        mgr.add_server(server)
+        try:
+            server = SERVERS[name](mcp_cfg, home) if name != "memory" else MemoryServer(engine.memory)
+            mgr.add_server(server)
+        except Exception as e:
+            # 优雅降级：单个 server 构建失败（如权限/依赖缺失）不阻塞其他工具
+            log.warning("MCP server %s 构建失败，已跳过: %s", name, e)
     return mgr
 
 

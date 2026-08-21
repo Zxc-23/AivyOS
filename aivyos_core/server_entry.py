@@ -166,6 +166,31 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             ).KnowledgeExtractor(router=engine.router))
         return _knowledge
 
+    # ---- 技能系统（Skills）----
+    _skills = None
+
+    def get_skills():
+        nonlocal _skills
+        if _skills is None:
+            from pathlib import Path
+
+            from aivyos_core.skills import SkillManager
+
+            home = Path(cfg.get("home", "."))
+            _skills = SkillManager(home / "skills.json")
+        return _skills
+
+    # ---- 工具系统（MCP ToolManager，面向用户的管理视图）----
+    _tool_mgr = None
+
+    def get_tools():
+        nonlocal _tool_mgr
+        if _tool_mgr is None:
+            from aivyos_core.mcp.cli import build_manager
+
+            _tool_mgr = build_manager(cfg, engine=engine)
+        return _tool_mgr
+
     # ---- Task registry (in-memory, demo-grade) ----
     _tasks: Dict[str, Dict[str, Any]] = {}
     _task_counter = 0
@@ -206,10 +231,22 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
                 ))
             except Exception as e:
                 log.debug("知识调用失败: %s", e)
+        # 技能匹配：命中启用技能 → 注入 System Prompt 上下文块（技能提示词）
+        skill_blocks: List[str] = []
+        skill_names: List[str] = []
+        try:
+            skill_blocks = get_skills().context_blocks(text)
+            skill_names = [s["name"] for s in get_skills().match(text)]
+        except Exception as e:
+            log.debug("技能匹配失败: %s", e)
+
         if image_bytes is not None:
-            reply = await engine.send_multimodal(text=text, image=image_bytes, session_id=params.get("session_id"))
+            reply = await engine.send_multimodal(
+                text=text, image=image_bytes, session_id=params.get("session_id"),
+                extra_blocks=skill_blocks or None,
+            )
         else:
-            reply = await engine.send(text, session_id=params.get("session_id"))
+            reply = await engine.send(text, session_id=params.get("session_id"), extra_blocks=skill_blocks or None)
         # 对话知识沉淀（后台任务，不阻塞响应）
         if cfg.get("knowledge", {}).get("auto_extract", True):
             async def _ingest():
@@ -227,6 +264,7 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             "memory_hits": reply.memory_hits,
             "knowledge_hits": [{"card": h["card"], "score": h["score"]} for h in recalled],
             "vision_used": image_bytes is not None,
+            "skills": skill_names,
         }
 
     @server.method("session.list")
@@ -1802,6 +1840,126 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             return await mcp.call_tool_async(tool_name, tool_params)
         except Exception as e:
             return {"error": str(e)}
+
+    # ================================================================
+    #  Skills（技能管理）
+    # ================================================================
+
+    @server.method("skills.list")
+    async def skills_list(params):
+        """列出全部技能（含内置与自定义）。"""
+        try:
+            return {"ok": True, "skills": get_skills().list_skills()}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("skills.create")
+    async def skills_create(params):
+        """新建自定义技能。"""
+        try:
+            skill = get_skills().create_skill(
+                name=str(params.get("name", "")).strip(),
+                description=str(params.get("description", "")).strip(),
+                category=str(params.get("category", "自定义")).strip() or "自定义",
+                keywords=params.get("keywords") or [],
+                system_prompt=str(params.get("system_prompt", "")),
+                enabled=bool(params.get("enabled", True)),
+            )
+            return {"ok": True, "skill": skill}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("skills.update")
+    async def skills_update(params):
+        """更新技能字段（名称/描述/分类/关键词/提示词/启停）。"""
+        try:
+            skill = get_skills().update_skill(str(params.get("id", "")), params.get("changes", {}))
+            if skill is None:
+                return {"ok": False, "error": "技能不存在"}
+            return {"ok": True, "skill": skill}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("skills.delete")
+    async def skills_delete(params):
+        """删除技能。"""
+        try:
+            ok = get_skills().delete_skill(str(params.get("id", "")))
+            return {"ok": ok, "error": "" if ok else "技能不存在"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("skills.set-enabled")
+    async def skills_set_enabled(params):
+        """启停技能。"""
+        try:
+            skill = get_skills().set_enabled(str(params.get("id", "")), bool(params.get("enabled", True)))
+            if skill is None:
+                return {"ok": False, "error": "技能不存在"}
+            return {"ok": True, "skill": skill}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    # ================================================================
+    #  Tools（MCP 工具管理）
+    # ================================================================
+
+    @server.method("tools.list")
+    async def tools_list(params):
+        """列出所有已注册 MCP 工具（含权限级别、来源服务器、启停状态）。
+
+        enabled 状态持久化在 tools.json（默认全部启用）。
+        """
+        from pathlib import Path
+
+        from aivyos_core.mcp.types import PermissionLevel
+
+        mgr = get_tools()
+        tools = []
+        for t in mgr.tools.values():
+            tools.append({
+                "name": t.name,
+                "description": t.description,
+                "permission": t.permission.value if isinstance(t.permission, PermissionLevel) else str(t.permission),
+                "server": t.server or "",
+                "input_schema": t.input_schema,
+            })
+        # 启停状态：tools.json 持久化（键=工具名，值=bool）
+        state_path = Path(cfg.get("home", ".")) / "tools.json"
+        enabled_state: Dict[str, bool] = {}
+        if state_path.exists():
+            try:
+                import json as _json
+                enabled_state = _json.loads(state_path.read_text(encoding="utf-8")).get("tools", {})
+            except Exception:
+                enabled_state = {}
+        for t in tools:
+            t["enabled"] = bool(enabled_state.get(t["name"], True))
+        tools.sort(key=lambda t: (t["server"], t["name"]))
+        return {"ok": True, "tools": tools, "count": len(tools)}
+
+    @server.method("tools.set-enabled")
+    async def tools_set_enabled(params):
+        """启停工具（持久化到 tools.json）。"""
+        from pathlib import Path
+
+        import json as _json
+
+        name = str(params.get("name", ""))
+        enabled = bool(params.get("enabled", True))
+        state_path = Path(cfg.get("home", ".")) / "tools.json"
+        enabled_state: Dict[str, bool] = {}
+        if state_path.exists():
+            try:
+                enabled_state = _json.loads(state_path.read_text(encoding="utf-8")).get("tools", {})
+            except Exception:
+                enabled_state = {}
+        enabled_state[name] = enabled
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = state_path.with_suffix(".tmp")
+        tmp.write_text(_json.dumps({"version": 1, "tools": enabled_state}, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(state_path)
+        return {"ok": True, "name": name, "enabled": enabled}
 
     # ================================================================
     #  Fallback Chain (Phase 3)

@@ -1000,6 +1000,88 @@ export async function listMcpTools(): Promise<{ tools: McpTool[] }> {
   return bridgeCall("mcp.tools", {});
 }
 
+// ================================================================
+//  Skills（技能管理）
+// ================================================================
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  keywords: string[];
+  system_prompt: string;
+  enabled: boolean;
+  builtin?: boolean;
+  created_at?: number;
+  updated_at?: number;
+}
+
+export interface SkillResult {
+  ok: boolean;
+  error?: string;
+  skills?: Skill[];
+  skill?: Skill;
+}
+
+export async function listSkills(): Promise<SkillResult> {
+  return bridgeCall<SkillResult>("skills.list", {});
+}
+
+export async function createSkill(fields: {
+  name: string; description?: string; category?: string;
+  keywords?: string[]; system_prompt?: string; enabled?: boolean;
+}): Promise<SkillResult> {
+  return bridgeCall<SkillResult>("skills.create", {
+    name: fields.name,
+    description: fields.description || "",
+    category: fields.category || "自定义",
+    keywords: fields.keywords || [],
+    system_prompt: fields.system_prompt || "",
+    enabled: fields.enabled ?? true,
+  });
+}
+
+export async function updateSkill(id: string, changes: Record<string, unknown>): Promise<SkillResult> {
+  return bridgeCall<SkillResult>("skills.update", { id, changes });
+}
+
+export async function deleteSkill(id: string): Promise<SkillResult> {
+  return bridgeCall<SkillResult>("skills.delete", { id });
+}
+
+export async function setSkillEnabled(id: string, enabled: boolean): Promise<SkillResult> {
+  return bridgeCall<SkillResult>("skills.set-enabled", { id, enabled });
+}
+
+// ================================================================
+//  Tools（MCP 工具管理）
+// ================================================================
+
+export interface ManagedTool {
+  name: string;
+  description: string;
+  permission: string;
+  server: string;
+  input_schema: Record<string, unknown>;
+  enabled: boolean;
+}
+
+export interface ToolsResult {
+  ok: boolean;
+  error?: string;
+  tools?: ManagedTool[];
+  count?: number;
+}
+
+export async function listTools(): Promise<ToolsResult> {
+  return bridgeCall<ToolsResult>("tools.list", {});
+}
+
+export async function setToolEnabled(name: string, enabled: boolean): Promise<{ ok: boolean; name?: string; enabled?: boolean; error?: string }> {
+  return bridgeCall("tools.set-enabled", { name, enabled });
+}
+
 export async function callMcpTool(tool: string, params: Record<string, unknown>): Promise<unknown> {
   return bridgeCall("mcp.call", { tool, params });
 }

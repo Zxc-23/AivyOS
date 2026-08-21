@@ -126,8 +126,8 @@ class ChatEngine:
 
     # ---- 核心对话 ----
 
-    async def send(self, text: str, session_id: Optional[str] = None) -> AssistantReply:
-        return await self._send(text, session_id=session_id, extra_blocks=None)
+    async def send(self, text: str, session_id: Optional[str] = None, extra_blocks: Optional[List[str]] = None) -> AssistantReply:
+        return await self._send(text, session_id=session_id, extra_blocks=extra_blocks)
 
     async def send_multimodal(
         self,
@@ -135,11 +135,17 @@ class ChatEngine:
         image: Optional[bytes] = None,
         audio_text: str = "",
         session_id: Optional[str] = None,
+        extra_blocks: Optional[List[str]] = None,
     ) -> AssistantReply:
-        """多模态输入（§3.4 晚期融合，T1.8）：文本/图像/语音文本 → 统一上下文 → LLM。"""
+        """多模态输入（§3.4 晚期融合，T1.8）：文本/图像/语音文本 → 统一上下文 → LLM。
+
+        extra_blocks：附加上下文块（如技能提示词），追加到融合块之后。
+        """
         fused = await self.fusion.fuse(text=text, audio_text=audio_text, image=image)
         main_text = fused.text or (audio_text or text)
         blocks = fused.system_blocks()
+        if extra_blocks:
+            blocks = blocks + list(extra_blocks)
         reply = await self._send(main_text, session_id=session_id, extra_blocks=blocks)
         return reply
 
