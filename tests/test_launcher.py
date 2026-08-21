@@ -51,6 +51,23 @@ class TestLauncher(AivyTestCase):
         stop_idx = content.index("Stop-Process")
         self.assertLess(stop_idx, build_idx)  # 先停再构建
 
+    def test_ps1_exit_cleanup(self):
+        """关闭终端/脚本退出时自动清理进程并关闭桌面端。"""
+        path = os.path.join(ROOT, "scripts", "start_aivyos.ps1")
+        content = open(path, encoding="utf-8", errors="replace").read()
+        # Exiting 事件注册（终端关闭触发）
+        self.assertIn("Register-EngineEvent", content)
+        self.assertIn("PowerShell.Exiting", content)
+        # 清理函数：杀脚本启动的进程 + aivyos-shell + 31701 核心
+        self.assertIn("Stop-AivyCleanup", content)
+        self.assertIn("Add-AivyPid", content)
+        self.assertIn("AivyCleanupPids", content)
+        self.assertIn("Get-NetTCPConnection -LocalPort 31701", content)  # 杀核心
+        self.assertIn('Get-Process -Name "aivyos-shell"', content)       # 杀桌面端
+        # 桌面模式跟踪 app PID
+        self.assertIn("Start-Process -FilePath $exe -PassThru", content)
+        self.assertIn("Add-AivyPid $appProc.Id", content)
+
     def test_bat_exists(self):
         """start_aivyos.bat 双击启动器存在。"""
         path = os.path.join(ROOT, "start_aivyos.bat")

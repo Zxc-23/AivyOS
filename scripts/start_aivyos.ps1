@@ -16,6 +16,47 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# ---- process cleanup registry (terminal close / script exit) ----
+# PIDs spawned by this script (python core, vite, desktop app).
+# Stored in $global so the PowerShell.Exiting action (separate runspace) can read them.
+$global:AivyCleanupPids = @()
+
+function Add-AivyPid([int]$PidToTrack) {
+    if ($PidToTrack -gt 0 -and $global:AivyCleanupPids -notcontains $PidToTrack) {
+        $global:AivyCleanupPids += $PidToTrack
+    }
+}
+
+function Stop-AivyCleanup {
+    # 1) kill processes this script spawned
+    foreach ($p in $global:AivyCleanupPids) {
+        Stop-Process -Id $p -Force -ErrorAction SilentlyContinue
+    }
+    # 2) kill all desktop app instances
+    Get-Process -Name "aivyos-shell" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    # 3) kill core listening on 31701 (spawned by Tauri as its child)
+    try {
+        Get-NetTCPConnection -LocalPort 31701 -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+        }
+    } catch { }
+    Start-Sleep -Milliseconds 500
+}
+
+# Register exit hook: fires when the terminal window is closed or the script ends.
+# Action runs in its own runspace, so it reads $global:AivyCleanupPids.
+Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
+    foreach ($p in $global:AivyCleanupPids) {
+        Stop-Process -Id $p -Force -ErrorAction SilentlyContinue
+    }
+    Get-Process -Name "aivyos-shell" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    try {
+        Get-NetTCPConnection -LocalPort 31701 -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+        }
+    } catch { }
+} | Out-Null
+
 # ---- auto-locate repo root (works from any cwd) ----
 # 1) explicit override via -Root param
 # 2) fall back to script parent, then walk up until aivyos_core found
@@ -92,7 +133,8 @@ try {
         Write-Host "[2/4] Starting Python core (IPC :31701)..." -ForegroundColor Yellow
         if (-not $coreAlive) {
             if ($Mode -ne "auto") { $env:AIVYOS_LLM_MODE = $Mode }
-            Start-Process -FilePath "python" -ArgumentList "-m", "aivyos_core.server_entry", "--mode", $Mode -WorkingDirectory $root -WindowStyle Minimized
+            $coreProc = Start-Process -FilePath "python" -ArgumentList "-m", "aivyos_core.server_entry", "--mode", $Mode -WorkingDirectory $root -WindowStyle Minimized -PassThru
+            Add-AivyPid $coreProc.Id
             Start-Sleep -Seconds 3
         } else {
             Write-Host "  [ok] Core already running, skip." -ForegroundColor Green
@@ -106,6 +148,7 @@ try {
             Pop-Location
         }
         $vite = Start-Process -FilePath "npm.cmd" -ArgumentList "run", "dev" -WorkingDirectory (Join-Path $root "shell") -PassThru -WindowStyle Minimized
+        Add-AivyPid $vite.Id
         Start-Sleep -Seconds 6
 
         Write-Host "[4/4] Opening browser..." -ForegroundColor Yellow
@@ -216,8 +259,15 @@ try {
         Write-Host "[4/4] Done! AivyOS starting (core auto-spawned)." -ForegroundColor Green
         Write-Host ""
         Write-Host "  Note: first launch takes a few seconds for core warm-up." -ForegroundColor DarkGray
-        & $exe
-        exit $LASTEXITCODE
+        Write-Host "  Closing this terminal will stop AivyOS (app + core)." -ForegroundColor DarkGray
+        $appProc = Start-Process -FilePath $exe -PassThru
+        Add-AivyPid $appProc.Id
+        try { Wait-Process -Id $appProc.Id -ErrorAction SilentlyContinue } catch { }
+        Write-Host ""
+        Write-Host "  [i] AivyOS window closed. Cleaning up processes..." -ForegroundColor DarkYellow
+        Stop-AivyCleanup
+        Write-Host "  [ok] Cleaned up. Goodbye!" -ForegroundColor Green
+        exit 0
     } else {
         # ---- Dev mode (tauri dev, needs Rust toolchain) ----
         Write-Host "[2/4] No built app found, using dev mode (npm run tauri dev)..." -ForegroundColor Yellow
@@ -231,4 +281,8 @@ try {
     }
 } finally {
     Pop-Location
+    # Normal-exit cleanup (the PowerShell.Exiting event handles terminal-close)
+    if ($global:AivyCleanupPids.Count -gt 0) {
+        Stop-AivyCleanup
+    }
 }
