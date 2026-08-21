@@ -425,16 +425,94 @@ MARKET_SKILLS: List[Dict[str, Any]] = [
 ]
 
 
+# ---- 技能市场源（内置 + 远程平台）----
+MARKET_SOURCES: List[Dict[str, Any]] = [
+    {
+        "id": "builtin",
+        "name": "内置精选",
+        "desc": "AivyOS 预置的 20 个精选技能（离线可用）",
+        "type": "builtin",
+        "icon": "🛍️",
+    },
+    {
+        "id": "agentskillexchange",
+        "name": "AgentSkillExchange",
+        "desc": "精选开放目录，支持 OpenClaw / Claude Code / Codex 等 40+ agent",
+        "type": "github",
+        "repo": "agentskillexchange/skills",
+        "branch": "main",
+        "icon": "🌐",
+        "homepage": "https://github.com/agentskillexchange/skills",
+    },
+    {
+        "id": "dukelyuu",
+        "name": "Skills Marketplace",
+        "desc": "首个开源技能市场（Claude Code / Cline / Cursor / Copilot）",
+        "type": "github",
+        "repo": "dukelyuu/skills-marketplace",
+        "branch": "main",
+        "icon": "🌐",
+        "homepage": "https://github.com/dukelyuu/skills-marketplace",
+    },
+    {
+        "id": "claude-skills",
+        "name": "Claude Skills",
+        "desc": "Claude Code 生态技能（skills.sh / 社区仓库）",
+        "type": "github",
+        "repo": "hoveychen/claude-skills",
+        "branch": "main",
+        "icon": "🌐",
+        "homepage": "https://github.com/hoveychen/claude-skills",
+    },
+    {
+        "id": "openclaw-skills",
+        "name": "OpenClaw Skills",
+        "desc": "OpenClaw 生态技能（兼容 agentskills.io）",
+        "type": "github",
+        "repo": "dAAAb/openclaw-skills",
+        "branch": "main",
+        "icon": "🌐",
+        "homepage": "https://github.com/dAAAb/openclaw-skills",
+    },
+    {
+        "id": "ai-skills",
+        "name": "AI Skills Hub",
+        "desc": "Claude Code / Manus / OpenClaw 等多 agent 技能合集",
+        "type": "github",
+        "repo": "bytesagain/ai-skills",
+        "branch": "main",
+        "icon": "🌐",
+        "homepage": "https://github.com/bytesagain/ai-skills",
+    },
+]
+
+
 class SkillMarketplace:
-    """技能市场：内置精选技能 + 远程 SKILL.md 接入。
+    """技能市场：内置精选技能 + 多平台远程接入。
 
     远程接入：解析 Claude Code / OpenClaw 通用的 SKILL.md 格式
     （YAML frontmatter：name/description，正文为 system_prompt），
-    支持从 GitHub raw URL 拉取安装。
+    支持从 GitHub 仓库浏览（git trees API 索引 + raw 拉取解析）与安装。
     """
 
     def __init__(self, local: SkillManager) -> None:
         self.local = local
+
+    # ---- 市场源 ----
+    def list_sources(self) -> List[Dict[str, Any]]:
+        """返回全部市场源（含技能数）。"""
+        out = []
+        for s in MARKET_SOURCES:
+            item = dict(s)
+            if s["type"] == "builtin":
+                item["skill_count"] = len(MARKET_SKILLS)
+            else:
+                item["skill_count"] = 0  # 远程源计数需浏览后获取
+            out.append(item)
+        return out
+
+    def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
+        return next((s for s in MARKET_SOURCES if s["id"] == source_id), None)
 
     # ---- 市场目录 ----
     def list_market(self, keyword: str = "") -> List[Dict[str, Any]]:
@@ -481,6 +559,101 @@ class SkillMarketplace:
             return None
         return self.install(skill_id)
 
+    # ---- 远程市场浏览（GitHub 仓库索引）----
+    def browse_source(
+        self,
+        source_id: str,
+        keyword: str = "",
+        limit: int = 60,
+        timeout: float = 20.0,
+    ) -> Dict[str, Any]:
+        """浏览市场源：内置返回本地目录；GitHub 源用 trees API 索引 SKILL.md。
+
+        返回 {"ok", "source", "skills": [...], "total"}
+        远程技能的 installed 通过本地是否已有同名（name 归一化 id）判断。
+        """
+        src = self.get_source(source_id)
+        if src is None:
+            return {"ok": False, "error": f"未知市场源: {source_id}"}
+        if src["type"] == "builtin":
+            skills = self.list_market(keyword)
+            return {"ok": True, "source": src, "skills": skills, "total": len(skills)}
+
+        if src["type"] == "github":
+            try:
+                items = self._browse_github(src, limit=limit, timeout=timeout)
+            except Exception as e:
+                return {"ok": False, "error": f"浏览失败: {e}", "source": src, "skills": []}
+            if keyword:
+                k = keyword.lower()
+                items = [s for s in items if k in s["name"].lower() or k in s["description"].lower()
+                         or any(k in str(x).lower() for x in s.get("keywords", []))]
+            return {"ok": True, "source": src, "skills": items, "total": len(items)}
+        return {"ok": False, "error": f"不支持的市场类型: {src.get('type')}", "source": src, "skills": []}
+
+    def _browse_github(
+        self,
+        src: Dict[str, Any],
+        limit: int = 60,
+        timeout: float = 20.0,
+    ) -> List[Dict[str, Any]]:
+        """用 GitHub git trees API 递归列出仓库文件，过滤 SKILL.md 并解析。"""
+        import urllib.request
+
+        repo = src.get("repo", "")
+        branch = src.get("branch", "main")
+        api_url = f"https://api.github.com/repos/{repo}/git/trees/{branch}?recursive=1"
+        req = urllib.request.Request(api_url, headers={"User-Agent": "AivyOS-SkillMarket", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        tree = data.get("tree", [])
+        skill_paths = [t["path"] for t in tree if t.get("type") == "blob" and t.get("path", "").upper().endswith("SKILL.MD")]
+
+        out: List[Dict[str, Any]] = []
+        for path in skill_paths[:limit]:
+            raw_url = f"https://raw.githubusercontent.com/{repo}/{branch}/{path}"
+            try:
+                parsed = self.fetch_remote_skill_preview(raw_url, timeout=6.0)
+                if parsed.get("ok"):
+                    skill = parsed["skill"]
+                    skill["source_url"] = raw_url
+                    skill["source_path"] = path
+                    sid = str(skill.get("name", "")).strip().lower().replace(" ", "-")
+                    skill["installed"] = self.local.get_skill(sid) is not None
+                    out.append(skill)
+                    continue
+            except Exception:
+                pass
+            # raw 拉取失败（限速/网络）→ 用路径生成最小条目，安装时再拉取
+            name = _path_skill_name(path)
+            sid = name.lower().replace(" ", "-")
+            out.append({
+                "id": sid,
+                "name": name,
+                "category": "远程",
+                "description": f"来自 {repo}（点击预览可加载详细提示词）",
+                "keywords": [],
+                "system_prompt": "",
+                "installed": self.local.get_skill(sid) is not None,
+                "source_url": raw_url,
+                "source_path": path,
+                "needs_fetch": True,
+            })
+        return out
+
+    def fetch_remote_skill_preview(self, url: str, timeout: float = 10.0) -> Dict[str, Any]:
+        """拉取 SKILL.md 并解析（不安装，返回预览）。"""
+        import urllib.request
+
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "AivyOS-SkillMarket"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                text = resp.read().decode("utf-8", errors="replace")
+        except Exception as e:
+            return {"ok": False, "error": f"拉取失败: {e}"}
+        parsed = parse_skill_md(text, fallback_name=_url_skill_name(url))
+        return parsed
+
     # ---- 远程 SKILL.md 接入 ----
     def fetch_remote_skill(self, url: str, timeout: float = 15.0) -> Dict[str, Any]:
         """从远程 URL 拉取 SKILL.md 并解析为技能。
@@ -494,16 +667,7 @@ class SkillMarketplace:
             正文（作为 system_prompt）
         解析失败时 name 回退为 URL 文件名，正文作为 system_prompt。
         """
-        import urllib.request
-
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "AivyOS-SkillMarket"})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                text = resp.read().decode("utf-8", errors="replace")
-        except Exception as e:
-            return {"ok": False, "error": f"拉取失败: {e}"}
-
-        parsed = parse_skill_md(text, fallback_name=_url_skill_name(url))
+        parsed = self.fetch_remote_skill_preview(url, timeout=timeout)
         if not parsed.get("ok"):
             return parsed
         return {
@@ -590,4 +754,13 @@ def _url_skill_name(url: str) -> str:
     name = url.rstrip("/").split("/")[-1]
     if name.upper() == "SKILL.MD":
         name = url.rstrip("/").split("/")[-2] if "/" in url.rstrip("/") else "远程技能"
+    return name.replace("-", " ").replace("_", " ").strip() or "远程技能"
+
+
+def _path_skill_name(path: str) -> str:
+    """从仓库路径推导技能显示名（.../skills/xxx/SKILL.md → xxx）。"""
+    parts = [p for p in path.split("/") if p]
+    if parts and parts[-1].upper() == "SKILL.MD":
+        parts = parts[:-1]
+    name = parts[-1] if parts else "远程技能"
     return name.replace("-", " ").replace("_", " ").strip() or "远程技能"

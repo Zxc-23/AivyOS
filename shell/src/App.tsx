@@ -38,6 +38,7 @@ import {
   Skill as SkillType, SkillResult,
   listMarketSkills, installMarketSkill, importRemoteSkill,
   MarketSkill as MarketSkillType, MarketListResult, RemoteImportResult,
+  listMarketSources, browseMarketSource, MarketSource as MarketSourceType,
   listTools, setToolEnabled, ManagedTool, ToolsResult,
 } from "./chat";
 import {
@@ -481,12 +482,20 @@ export default function App() {
   }>({ id: null, name: "", description: "", category: "自定义", keywords: "", system_prompt: "", enabled: true });
   // 技能市场
   const [skillsTab, setSkillsTab] = useState<"mine" | "market">("mine");
+  const [marketSources, setMarketSources] = useState<MarketSourceType[]>([]);
+  const [activeMarketSource, setActiveMarketSource] = useState("builtin");
   const [marketSkills, setMarketSkills] = useState<MarketSkillType[]>([]);
   const [marketLoading, setMarketLoading] = useState(false);
   const [marketSearch, setMarketSearch] = useState("");
   const [marketCategory, setMarketCategory] = useState("全部");
   const [remoteUrl, setRemoteUrl] = useState("");
   const [remoteImporting, setRemoteImporting] = useState(false);
+  // 预览提示词弹窗
+  const [previewSkill, setPreviewSkill] = useState<{
+    id: string; name: string; category?: string; description?: string;
+    keywords?: string[]; system_prompt?: string; installed?: boolean;
+    source_url?: string;
+  } | null>(null);
   // 工具管理
   const [managedTools, setManagedTools] = useState<ManagedTool[]>([]);
   const [toolsLoading, setToolsLoading] = useState(false);
@@ -1465,18 +1474,59 @@ export default function App() {
   }, [bridgeReady]);
 
   // ---- 技能市场 ----
-  const loadMarket = useCallback(async (keyword = "") => {
+  const loadMarketSources = useCallback(async () => {
+    try {
+      if (!bridgeReady) { setMarketSources([]); return; }
+      const res = await listMarketSources();
+      if (res.ok && res.sources) setMarketSources(res.sources);
+    } catch { /* 静默 */ }
+  }, [bridgeReady]);
+
+  const loadMarket = useCallback(async (source = "", keyword = "") => {
+    const src = source || activeMarketSource;
     setMarketLoading(true);
     try {
       if (!bridgeReady) { setMarketSkills([]); return; }
-      const res = await listMarketSkills(keyword);
-      if (res.ok && res.skills) setMarketSkills(res.skills);
-    } catch { /* 静默 */ }
-    finally { setMarketLoading(false); }
-  }, [bridgeReady]);
+      const res = await browseMarketSource(src, keyword);
+      if (res.ok && res.skills) {
+        setMarketSkills(res.skills);
+      } else {
+        setMarketSkills([]);
+        if (res.error) showNotification("市场加载失败", res.error, "warning");
+      }
+    } catch (e) {
+      setMarketSkills([]);
+      showNotification("市场加载失败", e instanceof Error ? e.message : String(e), "danger");
+    } finally {
+      setMarketLoading(false);
+    }
+  }, [bridgeReady, activeMarketSource, showNotification]);
 
-  const installMarket = useCallback(async (id: string, name: string) => {
+  const switchMarketSource = useCallback((sourceId: string) => {
+    setActiveMarketSource(sourceId);
+    setMarketSearch("");
+    setMarketCategory("全部");
+    void loadMarket(sourceId, "");
+  }, [loadMarket]);
+
+  const installMarket = useCallback(async (id: string, name: string, skill?: MarketSkillType) => {
     if (!bridgeReady) { showNotification("演示模式", "连接核心后可从市场安装技能", "warning"); return; }
+    // 远程技能（GitHub 源）：走 source_url 拉取安装
+    if (skill?.source_url) {
+      try {
+        const res = await importRemoteSkill(skill.source_url);
+        if (res.ok && res.install) {
+          showNotification("安装成功", `技能「${res.install.name}」已安装到我的技能`, "success");
+          setMarketSkills(prev => prev.map(s => s.id === id ? { ...s, installed: true } : s));
+          void loadSkills();
+        } else {
+          showNotification("安装失败", res.error || "无法拉取该技能", "danger");
+        }
+      } catch (e) {
+        showNotification("安装失败", e instanceof Error ? e.message : String(e), "danger");
+      }
+      return;
+    }
     const res = await installMarketSkill(id);
     if (res.ok) {
       showNotification("安装成功", `技能「${name}」已安装到我的技能`, "success");
@@ -1861,11 +1911,11 @@ export default function App() {
       case "voiceset": loadVoiceSettings(); break;
       case "models": loadModels(); break;
       case "memory": loadMemory(); loadKnowledge(); break;
-      case "skills": loadSkills(); void loadMarket(""); break;
+      case "skills": loadSkills(); void loadMarketSources(); void loadMarket("builtin", ""); break;
       case "tools": loadTools(); break;
       default: break;
     }
-  }, [nav, loadVoiceStatus, loadTasks, loadSchedules, runBoot, loadVoiceSettings, loadModels, loadMemory, loadKnowledge, loadSkills, loadTools, loadMarket]);
+  }, [nav, loadVoiceStatus, loadTasks, loadSchedules, runBoot, loadVoiceSettings, loadModels, loadMemory, loadKnowledge, loadSkills, loadTools, loadMarket, loadMarketSources]);
 
   useEffect(() => {
     if (nav !== "voice" || bridgeReady) return;
@@ -4099,6 +4149,15 @@ export default function App() {
                                     <button
                                       className="btn btn-skip"
                                       style={{ fontSize: 10, padding: "3px 10px" }}
+                                      onClick={() => setPreviewSkill({
+                                        id: s.id, name: s.name, category: s.category,
+                                        description: s.description, keywords: s.keywords,
+                                        system_prompt: s.system_prompt, installed: true,
+                                      })}
+                                    >👁 预览</button>
+                                    <button
+                                      className="btn btn-skip"
+                                      style={{ fontSize: 10, padding: "3px 10px" }}
                                       onClick={() => {
                                         setSkillForm({
                                           id: s.id,
@@ -4180,10 +4239,47 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* 市场源选择（内置 + 远程平台） */}
+                  <div className="ml-group">
+                    <div className="ml-group-header">
+                      <span className="ml-group-title">🏪 选择市场源</span>
+                      <span className="ml-group-count">{marketSources.length} 个平台</span>
+                    </div>
+                    <div className="ml-source-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+                      {marketSources.map(src => (
+                        <div
+                          key={src.id}
+                          className={`ml-source-card ${activeMarketSource === src.id ? "active" : ""}`}
+                          onClick={() => switchMarketSource(src.id)}
+                          style={{
+                            padding: 12, borderRadius: 10, cursor: "pointer",
+                            border: `1px solid ${activeMarketSource === src.id ? "var(--accent)" : "var(--glass-border)"}`,
+                            background: activeMarketSource === src.id ? "var(--accent-light)" : "rgba(255,255,255,0.03)",
+                            transition: "all 0.2s",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                            <span style={{ fontSize: 18 }}>{src.icon || "🌐"}</span>
+                            <span style={{ fontSize: 13, fontWeight: 600 }}>{src.name}</span>
+                            {src.skill_count !== undefined && (
+                              <span className="ml-group-count">{src.skill_count} 技能</span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 10, color: "var(--muted2)", lineHeight: 1.5 }}>{src.desc}</div>
+                          {src.type === "github" && src.homepage && (
+                            <div style={{ marginTop: 6, fontSize: 9, color: "var(--accent)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {src.homepage}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* 市场搜索与分类 */}
                   <div className="ml-group">
                     <div className="ml-group-header">
-                      <span className="ml-group-title">🛍️ 精选技能</span>
+                      <span className="ml-group-title">🛍️ {marketSources.find(s => s.id === activeMarketSource)?.name || "精选技能"}</span>
                       <span className="ml-group-count">{marketSkills.length} 个</span>
                       <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
                         <select
@@ -4201,7 +4297,7 @@ export default function App() {
                           style={{ width: 160 }}
                           placeholder="搜索市场技能..."
                           value={marketSearch}
-                          onChange={e => { setMarketSearch(e.target.value); void loadMarket(e.target.value); }}
+                          onChange={e => { setMarketSearch(e.target.value); void loadMarket("", e.target.value); }}
                         />
                       </div>
                     </div>
@@ -4228,10 +4324,15 @@ export default function App() {
                                 </div>
                                 <div className="ml-provider-actions">
                                   <button
+                                    className="btn btn-skip"
+                                    style={{ fontSize: 10, padding: "3px 10px" }}
+                                    onClick={() => setPreviewSkill(s)}
+                                  >👁 预览提示词</button>
+                                  <button
                                     className="btn btn-approve"
                                     style={{ fontSize: 10, padding: "3px 10px" }}
                                     disabled={s.installed}
-                                    onClick={() => installMarket(s.id, s.name)}
+                                    onClick={() => installMarket(s.id, s.name, s)}
                                   >{s.installed ? "✓ 已安装" : "安装"}</button>
                                 </div>
                               </div>
@@ -4254,6 +4355,71 @@ export default function App() {
                 )}
               </div>
             </div>
+
+            {/* 技能提示词预览弹窗 */}
+            {previewSkill && (
+              <div className="modal-overlay" style={{
+                position: "fixed", inset: 0, zIndex: 100,
+                background: "rgba(0,0,0,0.55)", display: "flex",
+                alignItems: "center", justifyContent: "center", padding: 20,
+              }} onClick={() => setPreviewSkill(null)}>
+                <div className="modal-card" style={{
+                  maxWidth: 560, width: "100%", maxHeight: "80vh",
+                  background: "var(--bg2)", border: "1px solid var(--glass-border)",
+                  borderRadius: 14, padding: 20, overflowY: "auto",
+                  boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+                }} onClick={e => e.stopPropagation()}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                    <span style={{ fontSize: 20 }}>🎯</span>
+                    <span style={{ fontSize: 16, fontWeight: 700 }}>{previewSkill.name}</span>
+                    <span className="ml-cat-tag cloud">{previewSkill.category || "技能"}</span>
+                    {previewSkill.installed && <span className="ml-config-tag">已安装</span>}
+                    <button
+                      className="btn btn-skip"
+                      style={{ marginLeft: "auto", fontSize: 10, padding: "3px 10px" }}
+                      onClick={() => setPreviewSkill(null)}
+                    >✕ 关闭</button>
+                  </div>
+                  {previewSkill.description && (
+                    <div style={{ fontSize: 12, color: "var(--muted2)", marginBottom: 10 }}>
+                      {previewSkill.description}
+                    </div>
+                  )}
+                  {previewSkill.keywords && previewSkill.keywords.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                      {previewSkill.keywords.slice(0, 8).map((k, i) => (
+                        <span key={i} className="ml-added-tag">{k}</span>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 11, color: "var(--muted2)", marginBottom: 6 }}>系统提示词（将注入 LLM 上下文）：</div>
+                  <pre style={{
+                    whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 11,
+                    lineHeight: 1.6, background: "rgba(255,255,255,0.04)",
+                    border: "1px solid var(--glass-border)", borderRadius: 8,
+                    padding: 12, margin: 0, fontFamily: "monospace",
+                  }}>{previewSkill.system_prompt || "（无提示词）"}</pre>
+                  {previewSkill.source_url && (
+                    <div style={{ marginTop: 10, fontSize: 9, color: "var(--accent)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      来源: {previewSkill.source_url}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+                    <button className="btn btn-skip" style={{ fontSize: 11, padding: "5px 14px" }} onClick={() => setPreviewSkill(null)}>关闭</button>
+                    {!previewSkill.installed && (
+                      <button
+                        className="btn btn-approve"
+                        style={{ fontSize: 11, padding: "5px 14px" }}
+                        onClick={() => {
+                          installMarket(previewSkill.id, previewSkill.name, previewSkill as MarketSkillType);
+                          setPreviewSkill(null);
+                        }}
+                      >安装此技能</button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* ============ 11. 工具管理 (tools) ============ */}
             <div className={`screen ${nav === "tools" ? "active" : ""}`}>

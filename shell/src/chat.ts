@@ -1064,6 +1064,8 @@ export interface MarketSkill {
   system_prompt: string;
   source: string;
   installed: boolean;
+  source_url?: string;
+  source_path?: string;
 }
 
 export interface MarketListResult {
@@ -1073,8 +1075,49 @@ export interface MarketListResult {
   count?: number;
 }
 
+export interface MarketSource {
+  id: string;
+  name: string;
+  desc: string;
+  type: "builtin" | "github";
+  icon: string;
+  homepage?: string;
+  skill_count?: number;
+  repo?: string;
+  branch?: string;
+}
+
+export interface MarketSourcesResult {
+  ok: boolean;
+  error?: string;
+  sources?: MarketSource[];
+  count?: number;
+}
+
+export interface MarketBrowseResult {
+  ok: boolean;
+  error?: string;
+  source?: MarketSource;
+  skills?: MarketSkill[];
+  total?: number;
+}
+
 export async function listMarketSkills(keyword?: string): Promise<MarketListResult> {
   return bridgeCall<MarketListResult>("skills.market-list", { keyword: keyword || "" });
+}
+
+/** 列出全部技能市场源（内置 + 远程平台）。 */
+export async function listMarketSources(): Promise<MarketSourcesResult> {
+  return bridgeCall<MarketSourcesResult>("skills.market-sources", {});
+}
+
+/** 浏览指定市场源（内置返回目录；GitHub 源拉取仓库 SKILL.md 索引）。 */
+export async function browseMarketSource(source: string, keyword?: string, limit?: number): Promise<MarketBrowseResult> {
+  return bridgeCall<MarketBrowseResult>("skills.market-browse", {
+    source,
+    keyword: keyword || "",
+    limit: limit || 60,
+  });
 }
 
 export async function installMarketSkill(id: string): Promise<SkillResult> {

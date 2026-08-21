@@ -1912,6 +1912,32 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    @server.method("skills.market-sources")
+    async def skills_market_sources(params):
+        """列出全部技能市场源（内置精选 + 远程平台）。"""
+        try:
+            from aivyos_core.skills import SkillMarketplace
+
+            sources = SkillMarketplace(get_skills()).list_sources()
+            return {"ok": True, "sources": sources, "count": len(sources)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("skills.market-browse")
+    async def skills_market_browse(params):
+        """浏览市场源：内置返回本地目录；GitHub 源拉取仓库索引（SKILL.md）。"""
+        try:
+            from aivyos_core.skills import SkillMarketplace
+
+            result = SkillMarketplace(get_skills()).browse_source(
+                source_id=str(params.get("source", "builtin")),
+                keyword=str(params.get("keyword", "")),
+                limit=int(params.get("limit", 60)),
+            )
+            return result
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     @server.method("skills.market-install")
     async def skills_market_install(params):
         """从市场安装技能。"""

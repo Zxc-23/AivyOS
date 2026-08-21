@@ -4,6 +4,8 @@ import asyncio
 import os
 import shutil
 import unittest
+import urllib.request
+from unittest.mock import MagicMock, patch
 
 from tests import AivyTestCase, make_config
 
@@ -133,6 +135,100 @@ class TestSkillMarketplace(AivyTestCase):
             self.assertIn("installed", s)
             self.assertFalse(s["installed"])  # 初始未安装
 
+    def test_market_sources(self):
+        """skills.market-sources：返回内置 + 远程平台列表。"""
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["skills.market-sources"]({}))
+        self.assertTrue(result["ok"])
+        self.assertGreaterEqual(result["count"], 5)
+        ids = {s["id"] for s in result["sources"]}
+        self.assertIn("builtin", ids)
+        self.assertIn("agentskillexchange", ids)
+        self.assertIn("dukelyuu", ids)
+        builtin = next(s for s in result["sources"] if s["id"] == "builtin")
+        self.assertEqual(builtin["skill_count"], 20)
+
+    def test_market_browse_builtin(self):
+        """skills.market-browse：内置源返回目录。"""
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["skills.market-browse"]({"source": "builtin"}))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"]["id"], "builtin")
+        self.assertGreaterEqual(result["total"], 10)
+
+    def test_market_browse_builtin_search(self):
+        """内置源浏览 + 关键词过滤。"""
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["skills.market-browse"]({"source": "builtin", "keyword": "简历"}))
+        self.assertTrue(result["ok"])
+        self.assertTrue(all("简历" in s["name"] or "简历" in s["description"] for s in result["skills"]))
+
+    def test_market_browse_github_mocked(self):
+        """skills.market-browse：GitHub 源用 mock trees API + raw 拉取。"""
+        import json as _json
+
+        from aivyos_core.server_entry import build_server
+
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+
+        fake_tree = MagicMock()
+        fake_tree.read.return_value = _json.dumps({"tree": [
+            {"type": "blob", "path": "skills/translate/SKILL.md"},
+            {"type": "blob", "path": "skills/code-review/SKILL.md"},
+            {"type": "tree", "path": "skills"},
+        ]}).encode("utf-8")
+        tree_cm = MagicMock()
+        tree_cm.__enter__.return_value = fake_tree
+
+        fake_md = MagicMock()
+        fake_md.read.return_value = (
+            "---\nname: translate\ndescription: 专业翻译\nkeywords: [翻译, translate]\n---\n你是专业翻译助手。"
+        ).encode("utf-8")
+        md_cm = MagicMock()
+        md_cm.__enter__.return_value = fake_md
+
+        def fake_urlopen(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "git/trees" in url:
+                return tree_cm
+            if "raw.githubusercontent" in url:
+                return md_cm
+            raise OSError("unexpected url: " + url)
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            result = asyncio.run(handlers["skills.market-browse"]({"source": "agentskillexchange", "limit": 5}))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"]["id"], "agentskillexchange")
+        self.assertGreaterEqual(len(result["skills"]), 1)
+        translate = next(s for s in result["skills"] if s["name"] == "translate")
+        self.assertEqual(translate["description"], "专业翻译")
+        self.assertIn("source_url", translate)
+        self.assertIn("installed", translate)
+        self.assertFalse(translate["installed"])
+
+    def test_market_browse_github_error(self):
+        """GitHub 源浏览失败（网络异常）→ 返回错误信息。"""
+        from aivyos_core.server_entry import build_server
+
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        with patch("urllib.request.urlopen", side_effect=OSError("connection failed")):
+            result = asyncio.run(handlers["skills.market-browse"]({"source": "agentskillexchange"}))
+        self.assertFalse(result["ok"])
+        self.assertIn("浏览失败", result["error"])
+
+    def test_market_browse_unknown_source(self):
+        """浏览未知市场源 → 失败。"""
+        server, _ = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["skills.market-browse"]({"source": "unknown-market"}))
+        self.assertFalse(result["ok"])
+        self.assertIn("未知市场源", result["error"])
+
     def test_market_list_search(self):
         """市场搜索：按关键词过滤。"""
         server, _ = self._build_server()
@@ -201,9 +297,9 @@ keywords: [翻译, translate, 中英互译]
         server, _ = self._build_server()
         handlers = {m: h for m, h in server._handlers.items()}
         md = "---\nname: doc-writer\ndescription: 文档写作\n---\n你是文档写作助手。"
-        fake_resp = unittest.mock.MagicMock()
+        fake_resp = MagicMock()
         fake_resp.read.return_value = md.encode("utf-8")
-        fake_cm = unittest.mock.MagicMock()
+        fake_cm = MagicMock()
         fake_cm.__enter__.return_value = fake_resp
         with patch("urllib.request.urlopen", return_value=fake_cm):
             result = asyncio.run(handlers["skills.remote-import"]({
