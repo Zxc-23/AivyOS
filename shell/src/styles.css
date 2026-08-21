@@ -1503,3 +1503,119 @@ body {
     right: 0;
   }
 }
+
+/* ================================================================
+ * 自适应布局增强（内容随窗口大小平滑调整）
+ * ================================================================ */
+
+/* ---- 中档窗口（900px 以下）：收紧间距、收缩复杂网格 ---- */
+@media (max-width: 900px) {
+  /* 通用屏幕内容 padding 收紧 */
+  .task-layout, .sched-layout, .settings-layout, .memory-layout,
+  .vibe-layout, .vset-layout, .model-layout {
+    padding: 14px 16px;
+  }
+  .chat-messages { padding: 16px; }
+  .chat-input-area { padding: 10px 16px 14px; }
+
+  /* 模型管理 */
+  .models-screen { gap: 10px; }
+  .models-section { padding: 12px; }
+  .models-header h2 { font-size: 16px; }
+  .models-health-grid { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+  .models-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  .models-table-row { gap: 8px; padding: 8px 10px; }
+
+  /* 提供商管理（ml-*） */
+  .ml-group { padding: 10px; }
+  .ml-toolbar { flex-wrap: wrap; }
+  .ml-toolbar-actions { flex-wrap: wrap; }
+  .ml-source-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)) !important; }
+
+  /* 设置页主题卡片 */
+  .settings-screen [style*="gridTemplateColumns: repeat(3"] {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important;
+  }
+
+  /* 语音 */
+  .voice-orb { width: 110px !important; height: 110px !important; }
+  .voice-text { max-width: 420px; }
+
+  /* 侧栏在中档窗口适度收缩（仍并排） */
+  .task-sidebar { width: 190px; }
+  .sched-list { width: 240px; }
+  .vibe-preview { width: 260px; }
+
+  /* 弹窗 */
+  .modal-card { max-width: 92vw !important; }
+}
+
+/* ---- 窄窗口（768px 以下）：单列布局 ---- */
+@media (max-width: 768px) {
+  /* 消息气泡更宽利用 */
+  .msg-bubble { max-width: 85%; font-size: 13px; }
+
+  /* 聊天输入区：模型下拉与按钮换行 */
+  .chat-input-row { flex-wrap: wrap; }
+  .chat-input { flex: 1 1 100%; order: 1; }
+  .voice-model-stack { order: 2; }
+  .btn-send { order: 3; margin-left: auto; }
+
+  /* 快速指令 chips 收缩 */
+  .chat-quick { gap: 6px; }
+  .quick-chip { font-size: 11px; padding: 3px 10px; }
+
+  /* 功能卡片单列 */
+  .feature-grid { grid-template-columns: 1fr; gap: 8px; }
+
+  /* 标题栏状态隐藏细节 */
+  .titlebar-status span { font-size: 10px; }
+
+  /* 设置页：系统卡片内部列布局 */
+  .settings-screen .glass-card [style*="justifyContent: space-between"] {
+    flex-wrap: wrap; gap: 8px;
+  }
+
+  /* 表格行：纵向堆叠（API Key/成本/引擎） */
+  .models-table-row { grid-template-columns: 1fr !important; }
+  .models-table-row .row-actions { justify-content: flex-start; }
+
+  /* 模型 tab 导航可滚动 */
+  .models-tabs { max-width: 100%; overflow-x: auto; }
+
+  /* 市场/工具 组头部换行 */
+  .ml-group-header { flex-wrap: wrap; }
+  .ml-group-header [style*="marginLeft"] { margin-left: 0 !important; }
+
+  /* 语音设置卡片 */
+  .vset-slider-row { flex-direction: column; align-items: stretch; }
+}
+
+/* ---- 超窄窗口（560px 以下）：极致紧凑 ---- */
+@media (max-width: 560px) {
+  .titlebar-title { font-size: 12px; }
+  .titlebar-status span { display: none; }
+  .titlebar-status { gap: 4px; }
+  .models-header { flex-direction: column; align-items: flex-start; }
+  .models-tabs { width: 100%; }
+  .models-tab { flex: 1; text-align: center; padding: 6px 8px; }
+  .models-stats { grid-template-columns: 1fr 1fr; }
+  .models-stat .value { font-size: 16px; }
+  .ml-provider-row { flex-direction: column; align-items: flex-start; }
+  .ml-provider-actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
+  .ml-edit-panel { padding: 10px !important; }
+  .ml-source-grid { grid-template-columns: 1fr !important; }
+  .chat-attach { width: 100%; }
+  .chat-attach-name { max-width: 140px; }
+  .boot-progress-text { font-size: 10px; }
+}
+
+/* ---- 低高度窗口（560px 以下高度）：减少纵向冗余 ---- */
+@media (max-height: 560px) {
+  .chat-input-area { padding: 8px 12px 10px; }
+  .chat-quick { display: none; }  /* 高度紧张时隐藏快捷指令，聚焦聊天 */
+  .models-header { gap: 6px; }
+  .models-section { padding: 10px; }
+  .task-layout, .sched-layout, .settings-layout, .memory-layout,
+  .vibe-layout, .vset-layout, .model-layout { padding: 10px 12px; }
+}

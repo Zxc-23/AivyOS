@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "AivyOS",
-        "width": 900,
-        "height": 650,
-        "minWidth": 640,
-        "minHeight": 480,
+        "width": 960,
+        "height": 680,
+        "minWidth": 480,
+        "minHeight": 380,
         "resizable": true,
         "center": true
       }

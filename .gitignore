@@ -42,3 +42,6 @@ out.wav
 /test_*.txt
 test_reports/
 *.wav
+
+# Windows 快捷方式（用户本地创建，不入库）
+*.lnk
