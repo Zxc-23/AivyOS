@@ -268,6 +268,17 @@ body {
   transition: all var(--transition-base);
 }
 .btn-voice:hover { background: rgba(77,184,199,0.25); }
+.voice-model-stack { display: flex; flex-direction: column; gap: 5px; align-items: center; }
+.chat-model-select {
+  width: 92px; height: 24px; padding: 0 4px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px; color: var(--ink); font-size: 11px;
+  outline: none; cursor: pointer; font-family: var(--font);
+  transition: border-color var(--transition-fast);
+}
+.chat-model-select:hover { border-color: var(--accent); }
+.chat-model-select option { background: var(--bg2); color: var(--ink); font-size: 11px; }
 .chat-quick { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .quick-chip {
   padding: 4px 12px; border-radius: 16px; font-size: 12px;
@@ -841,4 +852,428 @@ body {
   .models-form-row { grid-template-columns: 1fr; gap: 4px; }
   .models-stats { grid-template-columns: repeat(2, 1fr); }
   .models-health-grid { grid-template-columns: 1fr; }
+}
+
+/* ============================== 模型列表（截图对齐版） ============================== */
+.ml-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 16px 20px;
+  background: var(--glass-bg2, rgba(255,255,255,0.03));
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+.ml-header-left h2 {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0 0 4px 0;
+  color: var(--ink);
+}
+.ml-subtitle {
+  font-size: 12px;
+  color: var(--muted2);
+  margin: 0;
+}
+.ml-config-btn {
+  font-size: 12px !important;
+  padding: 6px 14px !important;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 工具栏 */
+.ml-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  background: var(--glass-bg2, rgba(255,255,255,0.03));
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+}
+.ml-search {
+  flex: 1;
+  min-width: 180px;
+}
+.ml-search-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 12px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease;
+  font-family: inherit;
+}
+.ml-search-input:focus {
+  border-color: var(--accent, #6c8cff);
+  box-shadow: 0 0 0 2px rgba(108,140,255,0.15);
+}
+.ml-search-input::placeholder {
+  color: var(--muted2);
+}
+.ml-toolbar-actions {
+  display: flex;
+  gap: 8px;
+}
+.ml-select {
+  height: 34px;
+  padding: 0 28px 0 10px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+  font-family: inherit;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%236b7280' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+.ml-select:focus {
+  border-color: var(--accent, #6c8cff);
+}
+.ml-select option {
+  background: var(--bg2, #1a1a2e);
+  color: var(--ink);
+}
+
+/* 提供方列表 */
+.ml-provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ml-provider-item {
+  background: var(--glass-bg2, rgba(255,255,255,0.03));
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+.ml-provider-item:hover {
+  border-color: rgba(255,255,255,0.15);
+}
+.ml-provider-item.expanded {
+  border-color: var(--accent, #6c8cff);
+  box-shadow: 0 0 0 1px rgba(108,140,255,0.15);
+}
+.ml-provider-item.configured {
+  border-left: 3px solid #10b981;
+}
+.ml-provider-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+.ml-provider-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+.ml-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background 0.2s ease;
+}
+.ml-provider-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ml-config-tag {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(16,185,129,0.15);
+  color: #10b981;
+  font-weight: 500;
+}
+.ml-config-tag.muted {
+  background: rgba(107,114,128,0.15);
+  color: #6b7280;
+}
+.ml-cat-tag {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.ml-cat-tag.local {
+  background: rgba(34,211,238,0.15);
+  color: #22d3ee;
+}
+.ml-cat-tag.cloud {
+  background: rgba(108,140,255,0.15);
+  color: var(--accent, #6c8cff);
+}
+.ml-provider-actions {
+  display: flex;
+  gap: 6px;
+}
+.ml-edit-btn {
+  font-size: 12px !important;
+  padding: 5px 14px !important;
+}
+
+/* 展开编辑面板 */
+.ml-edit-panel {
+  padding: 16px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: ml-slide-down 0.2s ease;
+}
+@keyframes ml-slide-down {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ml-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ml-label {
+  font-size: 12px;
+  color: var(--muted2);
+  font-weight: 500;
+}
+.ml-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.ml-input:focus {
+  border-color: var(--accent, #6c8cff);
+  box-shadow: 0 0 0 2px rgba(108,140,255,0.15);
+}
+.ml-input::placeholder {
+  color: var(--muted2);
+}
+
+/* 折叠/展开 */
+.ml-collapse-toggle {
+  background: none;
+  border: none;
+  color: var(--muted2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  font-family: inherit;
+}
+.ml-collapse-toggle:hover {
+  color: var(--ink);
+}
+.ml-collapse-content {
+  padding-left: 4px;
+  border-left: 2px solid rgba(255,255,255,0.1);
+  margin-left: 6px;
+  padding: 8px 12px;
+  background: rgba(0,0,0,0.1);
+  border-radius: 6px;
+}
+
+/* 模型目录区 */
+.ml-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.ml-fetch-btn {
+  flex-shrink: 0;
+}
+.ml-model-status {
+  font-size: 12px;
+  color: var(--muted2);
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 6px;
+}
+.ml-model-hint {
+  font-size: 11px;
+  color: var(--muted2);
+  padding: 8px 12px;
+  border: 1px dashed rgba(255,255,255,0.15);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.02);
+  line-height: 1.5;
+}
+.ml-added-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 0;
+}
+.ml-added-label {
+  font-size: 11px;
+  color: var(--muted2);
+}
+.ml-added-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  background: rgba(108,140,255,0.15);
+  color: var(--accent, #6c8cff);
+  border-radius: 4px;
+}
+.ml-add-model-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+/* 操作按钮 */
+.ml-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.ml-edit-actions .btn {
+  font-size: 12px !important;
+  padding: 6px 20px !important;
+}
+
+/* 分页 */
+.ml-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  margin-top: 8px;
+}
+.ml-page-btn {
+  font-size: 12px;
+  padding: 5px 14px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  color: var(--ink);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+.ml-page-btn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.2);
+}
+.ml-page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ml-page-info {
+  font-size: 12px;
+  color: var(--muted2);
+  min-width: 60px;
+  text-align: center;
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+  .ml-header {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .ml-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ml-toolbar-actions {
+    justify-content: space-between;
+  }
+  .ml-search {
+    min-width: 100%;
+  }
+  .ml-provider-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .ml-provider-info {
+    flex-wrap: wrap;
+  }
+  .ml-edit-actions {
+    flex-direction: column-reverse;
+  }
+  .ml-edit-actions .btn {
+    width: 100%;
+  }
+}
+
+/* 测试结果显示 */
+.ml-test-result {
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-top: 6px;
+}
+.ml-test-result.ok {
+  background: rgba(16,185,129,0.12);
+  color: #10b981;
+  border: 1px solid rgba(16,185,129,0.25);
+}
+.ml-test-result.fail {
+  background: rgba(239,68,68,0.12);
+  color: #ef4444;
+  border: 1px solid rgba(239,68,68,0.25);
+}
+
+/* 模型列表 (获取到的模型) */
+.ml-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+.ml-model-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 10px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 5px;
+  font-size: 12px;
+}
+.ml-model-name {
+  color: var(--ink);
+  font-family: monospace;
+}
+.ml-model-more {
+  font-size: 11px;
+  color: var(--muted2);
+  padding: 4px 0;
 }

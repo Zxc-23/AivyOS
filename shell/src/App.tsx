@@ -447,6 +447,23 @@ export default function App() {
   const [addModelTestResult, setAddModelTestResult] = useState<TestConnectionResult | null>(null);
   const [addModelPresetModels, setAddModelPresetModels] = useState<ListModelsResult | null>(null);
   const [addModelFetchingModels, setAddModelFetchingModels] = useState(false);
+  const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [providerSearch, setProviderSearch] = useState("");
+  const [providerFilter, setProviderFilter] = useState<"all" | "configured" | "unconfigured" | "local" | "cloud">("all");
+  const [providerSort, setProviderSort] = useState<"name" | "status" | "category">("name");
+  const [providerPage, setProviderPage] = useState(1);
+  const providerPageSize = 5;
+  const [editingForm, setEditingForm] = useState<{
+    providerId: string;
+    apiKey: string;
+    baseUrl: string;
+    fetchedModels: any[];
+    fetching: boolean;
+    customSettingsOpen: boolean;
+    addedModels: string[];
+    testing: boolean;
+    testResult: TestConnectionResult | null;
+  } | null>(null);
   const [vsetDoubaoSpeed, setVsetDoubaoSpeed] = useState(1.0);
   const [vsetDoubaoVolume, setVsetDoubaoVolume] = useState(1.0);
   const [vsetDoubaoPitch, setVsetDoubaoPitch] = useState(1.0);
@@ -1278,6 +1295,11 @@ export default function App() {
     finally { setModelsLoading(false); }
   }, [bridgeReady]);
 
+  // 启动就绪后自动加载模型列表（主界面右下角模型下拉框需要）
+  useEffect(() => {
+    if (bridgeReady) void loadModels();
+  }, [bridgeReady, loadModels]);
+
   const resetAddModelDialog = useCallback(() => {
     setAddModelProvider("");
     setAddModelName("");
@@ -1702,7 +1724,50 @@ export default function App() {
                       onChange={e => setInput(e.target.value)}
                       onKeyDown={e => { if (e.key === "Enter") handleSend(); }}
                     />
-                    <button className="btn-voice" onClick={() => handleNav("voice")} title="语音模式">🎙️</button>
+                    <div className="voice-model-stack">
+                      <button className="btn-voice" onClick={() => handleNav("voice")} title="语音模式">🎙️</button>
+                      <select
+                        className="chat-model-select"
+                        value={activeModelName ?? ""}
+                        title="选择当前模型（热切换）"
+                        onChange={async e => {
+                          const picked = e.target.value;
+                          if (!bridgeReady) {
+                            showNotification("演示模式", "连接核心后可切换模型", "warning");
+                            return;
+                          }
+                          try {
+                            if (!picked) {
+                              const result = await setActiveModel(null);
+                              if (result.ok) {
+                                setActiveModelName(null);
+                                showNotification("已恢复", "自动路由模式已启用", "success");
+                              } else {
+                                showNotification("切换失败", result.message || "未知错误", "danger");
+                              }
+                            } else {
+                              const result = await setActiveModel(picked);
+                              if (result.ok) {
+                                setActiveModelName(picked);
+                                showNotification("模型已切换", `当前使用 ${picked}`, "success");
+                              } else {
+                                showNotification("切换失败", result.message || "未知错误", "danger");
+                              }
+                            }
+                          } catch (err) {
+                            showNotification("切换失败", err instanceof Error ? err.message : String(err), "danger");
+                          }
+                        }}
+                      >
+                        <option value="">🤖 自动路由</option>
+                        {models.map((m, i) => (
+                          <option key={`${m.model}-${i}`} value={m.model}>
+                            {m.available ? "🟢" : "⚪"} {m.mode === "local" ? "本地" : "云端"} · {m.model}
+                            {m.active ? "（当前）" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     <button className="btn-send" onClick={handleSend}>➤</button>
                   </div>
                   <div className="chat-quick">
@@ -2830,460 +2895,435 @@ export default function App() {
                 {/* Tab: 模型列表 */}
                 {modelsTab === "list" && (
                   <>
-                {modelsLoading && <div style={{ fontSize: 12, color: "var(--muted)", padding: 20, textAlign: "center" }}>加载中...</div>}
-                {!modelsLoading && models.length === 0 && (
-                  <div className="models-empty">
-                    <div className="big">📋</div>
-                    暂无模型 · 使用「添加新模型」接入提供商
+                {/* 标题与描述 */}
+                <div className="ml-header">
+                  <div className="ml-header-left">
+                    <h2>模型</h2>
+                    <p className="ml-subtitle">填入各提供方的 API 密钥即可使用其模型。</p>
                   </div>
-                )}
-                {!modelsLoading && models.length > 0 && (
-                  <div className="models-grid">
-                    {models.map((m, i) => {
-                      const meta = getModelIcon(m.mode, m.model);
-                      const tags = getModelTags(m.mode, m.available);
-                      const isActive = activeModelName === m.model;
-                      return (
-                        <div key={i} className={`glass-card model-card ${isActive ? "active" : ""}`} style={{ padding: 14 }}>
-                          <div className="model-head">
-                            <div className="model-icon" style={{ background: meta.iconBg }}>{meta.icon}</div>
-                            <div style={{ minWidth: 0 }}>
-                              <div className="model-title">{m.model}</div>
-                              <div className="model-desc">{meta.desc}</div>
-                            </div>
-                          </div>
-                          <div className="model-tags">
-                            {tags.map((t, j) => (
-                              <span key={j} className="models-badge" style={{ background: `${t.color}22`, color: t.color }}>{t.text}</span>
-                            ))}
-                            {isActive && <span className="models-badge ok">✓ 当前使用中</span>}
-                          </div>
-                          <div className="model-actions">
-                            <button
-                              className={`btn ${isActive ? "btn-approve" : "btn-skip"}`}
-                              onClick={async () => {
-                                if (!bridgeReady) { showNotification("演示模式", "连接核心后才能切换模型", "warning"); return; }
-                                try {
-                                  const result = await setActiveModel(m.model);
-                                  if (result.ok) {
-                                    setActiveModelName(m.model);
-                                    showNotification("切换成功", result.message || `已切换到 ${m.model}`, "success");
-                                  } else {
-                                    showNotification("切换失败", result.message || "未知错误", "danger");
-                                  }
-                                } catch (e) {
-                                  showNotification("切换失败", e instanceof Error ? e.message : String(e), "danger");
-                                }
-                              }}
-                            >
-                              {isActive ? "使用中" : (m.available ? "切换到此模型" : "连接模型")}
-                            </button>
-                            <button className="btn btn-skip" style={{ opacity: isActive ? 0.7 : 1 }}>配置</button>
-                          </div>
+                  <button
+                    className="btn btn-skip ml-config-btn"
+                    onClick={() => {
+                      showNotification("配置文件", "路径: ~/.aivyos/config.yaml", "success");
+                    }}
+                  >打开配置文件</button>
+                </div>
+
+                {/* 工具栏: 搜索 + 筛选 + 排序 */}
+                <div className="ml-toolbar">
+                  <div className="ml-search">
+                    <input
+                      type="text"
+                      className="ml-search-input"
+                      placeholder="搜索提供方名称或ID..."
+                      value={providerSearch}
+                      onChange={e => { setProviderSearch(e.target.value); setProviderPage(1); }}
+                    />
+                  </div>
+                  <div className="ml-toolbar-actions">
+                    <select
+                      className="ml-select"
+                      value={providerFilter}
+                      onChange={e => { setProviderFilter(e.target.value as any); setProviderPage(1); }}
+                    >
+                      <option value="all">全部 ({catalog.length})</option>
+                      <option value="configured">已配置</option>
+                      <option value="unconfigured">未配置</option>
+                      <option value="local">本地</option>
+                      <option value="cloud">云端</option>
+                    </select>
+                    <select
+                      className="ml-select"
+                      value={providerSort}
+                      onChange={e => setProviderSort(e.target.value as any)}
+                    >
+                      <option value="name">按名称排序</option>
+                      <option value="status">按状态排序</option>
+                      <option value="category">按类型排序</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* 提供方列表 */}
+                {(() => {
+                  const getConfiguredCount = (p: ProviderCatalogEntry) => {
+                    const key = apiKeys[p.api_key_env] || apiKeys[p.id];
+                    return key?.has_key ? 1 : 0;
+                  };
+                  const isConfigured = (p: ProviderCatalogEntry) => getConfiguredCount(p) > 0;
+
+                  let filtered = catalog.filter(p => {
+                    if (providerSearch) {
+                      const s = providerSearch.toLowerCase();
+                      if (!p.name.toLowerCase().includes(s) && !p.id.toLowerCase().includes(s)) return false;
+                    }
+                    switch (providerFilter) {
+                      case "configured": return isConfigured(p);
+                      case "unconfigured": return !isConfigured(p);
+                      case "local": return p.category === "local";
+                      case "cloud": return p.category !== "local";
+                      default: return true;
+                    }
+                  });
+
+                  filtered.sort((a, b) => {
+                    if (providerSort === "name") return a.name.localeCompare(b.name);
+                    if (providerSort === "status") return (isConfigured(b) ? 1 : 0) - (isConfigured(a) ? 1 : 0);
+                    if (providerSort === "category") return a.category.localeCompare(b.category);
+                    return 0;
+                  });
+
+                  const totalPages = Math.max(1, Math.ceil(filtered.length / providerPageSize));
+                  const page = Math.min(providerPage, totalPages);
+                  const paged = filtered.slice((page - 1) * providerPageSize, page * providerPageSize);
+
+                  return (
+                    <>
+                      {filtered.length === 0 ? (
+                        <div className="models-empty">
+                          <div className="big">📭</div>
+                          {providerSearch || providerFilter !== "all" ? "未找到匹配的提供方" : "暂无提供方"}
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                      ) : (
+                        <div className="ml-provider-list">
+                          {paged.map(provider => {
+                            const configured = isConfigured(provider);
+                            const isEditing = editingProviderId === provider.id;
+                            const keyEntry = apiKeys[provider.api_key_env] || apiKeys[provider.id];
+
+                            return (
+                              <div key={provider.id} className={`ml-provider-item ${isEditing ? "expanded" : ""} ${configured ? "configured" : ""}`}>
+                                {/* 提供方行 */}
+                                <div className="ml-provider-row" onClick={() => {
+                                  if (isEditing) {
+                                    setEditingProviderId(null);
+                                    setEditingForm(null);
+                                  } else {
+                                    setEditingProviderId(provider.id);
+                                    setEditingForm({
+                                      providerId: provider.id,
+                                      apiKey: keyEntry?.has_key ? "********" : "",
+                                      baseUrl: provider.base_url,
+                                      fetchedModels: [],
+                                      fetching: false,
+                                      customSettingsOpen: false,
+                                      addedModels: [],
+                                      testing: false,
+                                      testResult: null,
+                                    });
+                                  }
+                                }}>
+                                  <div className="ml-provider-info">
+                                    <span className="ml-status-dot" style={{ background: configured ? "#10b981" : "#6b7280" }}></span>
+                                    <span className="ml-provider-name">{provider.name}</span>
+                                    {configured && <span className="ml-config-tag">已配置</span>}
+                                    {!configured && <span className="ml-config-tag muted">未配置</span>}
+                                    {provider.category === "local" && <span className="ml-cat-tag local">本地</span>}
+                                    {provider.category !== "local" && <span className="ml-cat-tag cloud">云端</span>}
+                                  </div>
+                                  <div className="ml-provider-actions">
+                                    <button
+                                      className="btn btn-approve ml-edit-btn"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (isEditing) {
+                                          setEditingProviderId(null);
+                                          setEditingForm(null);
+                                        } else {
+                                          setEditingProviderId(provider.id);
+                                          setEditingForm({
+                                            providerId: provider.id,
+                                            apiKey: keyEntry?.has_key ? "********" : "",
+                                            baseUrl: provider.base_url,
+                                            fetchedModels: [],
+                                            fetching: false,
+                                            customSettingsOpen: false,
+                                            addedModels: [],
+                                            testing: false,
+                                            testResult: null,
+                                          });
+                                        }
+                                      }}
+                                    >{isEditing ? "收起" : "编辑"}</button>
+                                  </div>
+                                </div>
+
+                                {/* 展开编辑面板 */}
+                                {isEditing && editingForm && (
+                                  <div className="ml-edit-panel">
+                                    {/* 提供方选择 */}
+                                    <div className="ml-form-group">
+                                      <label className="ml-label">提供方</label>
+                                      <select
+                                        className="ml-input"
+                                        value={editingForm.providerId}
+                                        onChange={e => {
+                                          const p = catalog.find(c => c.id === e.target.value);
+                                          if (p) {
+                                            setEditingForm({
+                                              ...editingForm,
+                                              providerId: e.target.value,
+                                              baseUrl: p.base_url,
+                                              fetchedModels: [],
+                                              addedModels: [],
+                                              testResult: null,
+                                            });
+                                          }
+                                        }}
+                                      >
+                                        {catalog.map(c => (
+                                          <option key={c.id} value={c.id}>{c.id}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+
+                                    {/* API 密钥 */}
+                                    <div className="ml-form-group">
+                                      <label className="ml-label">API 密钥</label>
+                                      <input
+                                        className="ml-input"
+                                        type="password"
+                                        placeholder="输入 API 密钥，或留空使用环境认证"
+                                        value={editingForm.apiKey}
+                                        onChange={e => setEditingForm({ ...editingForm, apiKey: e.target.value, testResult: null })}
+                                      />
+                                    </div>
+
+                                    {/* 自定义设置 - 折叠 (API 地址 + 测试连接) */}
+                                    <div className="ml-form-group">
+                                      <button
+                                        className="ml-collapse-toggle"
+                                        onClick={() => setEditingForm({ ...editingForm, customSettingsOpen: !editingForm.customSettingsOpen })}
+                                      >
+                                        {editingForm.customSettingsOpen ? "▼" : "▶"} 自定义设置
+                                      </button>
+                                      {editingForm.customSettingsOpen && (
+                                        <div className="ml-collapse-content">
+                                          <div className="ml-form-group">
+                                            <div className="ml-section-header">
+                                              <label className="ml-label">API 地址</label>
+                                              <button
+                                                className="btn btn-skip ml-fetch-btn"
+                                                style={{ fontSize: 11, padding: "4px 12px" }}
+                                                disabled={editingForm.testing || !editingForm.baseUrl}
+                                                onClick={async () => {
+                                                  setEditingForm({ ...editingForm, testing: true, testResult: null });
+                                                  try {
+                                                    const keyToTest = editingForm.apiKey === "********" ? "" : editingForm.apiKey;
+                                                    const result = await testModelConnection(
+                                                      editingForm.providerId,
+                                                      keyToTest,
+                                                      editingForm.baseUrl
+                                                    );
+                                                    setEditingForm({
+                                                      ...editingForm,
+                                                      testing: false,
+                                                      testResult: result,
+                                                    });
+                                                    if (result.ok) {
+                                                      showNotification("连接成功", `发现 ${result.model_count} 个模型`, "success");
+                                                    } else {
+                                                      showNotification("连接失败", result.error || "未知错误", "danger");
+                                                    }
+                                                  } catch (e) {
+                                                    setEditingForm({
+                                                      ...editingForm,
+                                                      testing: false,
+                                                      testResult: { ok: false, error: e instanceof Error ? e.message : String(e), model_count: 0, models: [] },
+                                                    });
+                                                    showNotification("连接失败", e instanceof Error ? e.message : String(e), "danger");
+                                                  }
+                                                }}
+                                              >{editingForm.testing ? "测试中..." : "测试连接"}</button>
+                                            </div>
+                                            <input
+                                              className="ml-input"
+                                              placeholder="提供方默认"
+                                              value={editingForm.baseUrl}
+                                              onChange={e => setEditingForm({ ...editingForm, baseUrl: e.target.value, testResult: null })}
+                                            />
+                                            {editingForm.testResult && (
+                                              <div className={`ml-test-result ${editingForm.testResult.ok ? "ok" : "fail"}`}>
+                                                {editingForm.testResult.ok
+                                                  ? `✓ 连接成功 · 发现 ${editingForm.testResult.model_count} 个模型`
+                                                  : `✗ ${editingForm.testResult.error}`}
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* 模型目录 */}
+                                    <div className="ml-form-group">
+                                      <div className="ml-section-header">
+                                        <label className="ml-label">模型目录</label>
+                                        <button
+                                          className="btn btn-skip ml-fetch-btn"
+                                          style={{ fontSize: 11, padding: "4px 12px" }}
+                                          disabled={editingForm.fetching}
+                                          onClick={async () => {
+                                            if (!bridgeReady) {
+                                              showNotification("演示模式", "连接核心后才能获取模型列表", "warning");
+                                              return;
+                                            }
+                                            setEditingForm({ ...editingForm, fetching: true });
+                                            try {
+                                              const models = await listProviderModels(editingForm.providerId);
+                                              setEditingForm({
+                                                ...editingForm,
+                                                fetchedModels: models.models || [],
+                                                fetching: false,
+                                              });
+                                              showNotification("获取成功", `发现 ${models.models?.length || 0} 个模型`, "success");
+                                            } catch {
+                                              setEditingForm({ ...editingForm, fetching: false });
+                                              showNotification("获取失败", "无法获取模型列表", "danger");
+                                            }
+                                          }}
+                                        >{editingForm.fetching ? "获取中..." : "获取可用模型"}</button>
+                                      </div>
+                                      <div className="ml-model-status">
+                                        {editingForm.fetchedModels.length > 0
+                                          ? `已获取 ${editingForm.fetchedModels.length} 个模型`
+                                          : "正在使用适配器默认模型"}
+                                      </div>
+                                      {editingForm.fetchedModels.length > 0 && (
+                                        <div className="ml-model-list">
+                                          {editingForm.fetchedModels.slice(0, 8).map((m: any, i: number) => (
+                                            <div key={i} className="ml-model-item">
+                                              <span className="ml-model-name">{m.id || m.name || `模型 ${i + 1}`}</span>
+                                              <button
+                                                className="btn btn-skip"
+                                                style={{ fontSize: 10, padding: "2px 8px" }}
+                                                disabled={!bridgeReady}
+                                                onClick={async () => {
+                                                  try {
+                                                    const result = await setActiveModel(m.id || m.name);
+                                                    if (result.ok) {
+                                                      setActiveModelName(m.id || m.name);
+                                                      showNotification("切换成功", `已切换到 ${m.id || m.name}`, "success");
+                                                    } else {
+                                                      showNotification("切换失败", result.message || "未知错误", "danger");
+                                                    }
+                                                  } catch (e) {
+                                                    showNotification("切换失败", e instanceof Error ? e.message : String(e), "danger");
+                                                  }
+                                                }}
+                                              >切换</button>
+                                            </div>
+                                          ))}
+                                          {editingForm.fetchedModels.length > 8 && (
+                                            <span className="ml-model-more">还有 {editingForm.fetchedModels.length - 8} 个模型...</span>
+                                          )}
+                                        </div>
+                                      )}
+                                      {editingForm.fetchedModels.length === 0 && (
+                                        <div className="ml-model-hint">
+                                          模型选择器中将不显示任何模型；目录外 ID 仍可直接发送。
+                                        </div>
+                                      )}
+                                      {editingForm.addedModels.length > 0 && (
+                                        <div className="ml-added-models">
+                                          <span className="ml-added-label">已添加:</span>
+                                          {editingForm.addedModels.map((m, i) => (
+                                            <span key={i} className="ml-added-tag">{m}</span>
+                                          ))}
+                                        </div>
+                                      )}
+                                      <button
+                                        className="btn btn-skip ml-add-model-btn"
+                                        style={{ fontSize: 11, padding: "4px 12px" }}
+                                        onClick={() => {
+                                          const newModel = prompt("输入模型名称 (ID)", "");
+                                          if (newModel && !editingForm.addedModels.includes(newModel)) {
+                                            setEditingForm({
+                                              ...editingForm,
+                                              addedModels: [...editingForm.addedModels, newModel],
+                                            });
+                                          }
+                                        }}
+                                      >添加模型</button>
+                                    </div>
+
+                                    {/* 操作按钮 */}
+                                    <div className="ml-edit-actions">
+                                      <button
+                                        className="btn btn-skip"
+                                        onClick={() => {
+                                          setEditingProviderId(null);
+                                          setEditingForm(null);
+                                        }}
+                                      >取消</button>
+                                      <button
+                                        className="btn btn-approve"
+                                        onClick={async () => {
+                                          try {
+                                            const provider = catalog.find(p => p.id === editingForm.providerId);
+                                            if (!provider) return;
+                                            const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
+                                            if (editingForm.apiKey && editingForm.apiKey !== "********") {
+                                              const result = await setApiKey(
+                                                editingForm.providerId,
+                                                envVar,
+                                                editingForm.apiKey,
+                                                editingForm.providerId
+                                              );
+                                              if (result.ok) {
+                                                showNotification(
+                                                  "保存成功",
+                                                  `${provider.name} · ${result.masked_preview}`,
+                                                  "success"
+                                                );
+                                                const keys = await listApiKeys();
+                                                setApiKeys(keys.api_keys || {});
+                                                apiKeyStorage.save(keys.api_keys || {});
+                                              } else {
+                                                showNotification("保存失败", result.error || "未知错误", "danger");
+                                                return;
+                                              }
+                                            }
+                                            setEditingProviderId(null);
+                                            setEditingForm(null);
+                                            loadModels();
+                                          } catch (e) {
+                                            showNotification("保存失败", e instanceof Error ? e.message : String(e), "danger");
+                                          }
+                                        }}
+                                      >保存</button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* 分页 */}
+                      {filtered.length > providerPageSize && (
+                        <div className="ml-pagination">
+                          <button
+                            className="ml-page-btn"
+                            disabled={page <= 1}
+                            onClick={() => setProviderPage(page - 1)}
+                          >上一页</button>
+                          <span className="ml-page-info">{page} / {totalPages}</span>
+                          <button
+                            className="ml-page-btn"
+                            disabled={page >= totalPages}
+                            onClick={() => setProviderPage(page + 1)}
+                          >下一页</button>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
                   </>
                 )}
 
-                {/* ============ API Key 管理 ============ */}
-                <div className="models-section">
-                  <div className="models-section-title">
-                    <h3>🔑 API Key 管理</h3>
-                    <span className="hint">
-                      已配置 {Object.values(apiKeys).filter(k => k.has_key).length} / {Object.keys(apiKeys).length || catalog.length} 个 · 持久化存储
-                    </span>
-                  </div>
-                  {Object.keys(apiKeys).length === 0 && catalog.length === 0 && (
-                    <div className="models-empty">
-                      <div className="big">🔑</div>
-                      {bridgeReady ? "加载中..." : "演示模式：连接核心后显示 API Key 配置"}
-                    </div>
-                  )}
-                  {(Object.keys(apiKeys).length > 0 || catalog.length > 0) && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {catalog.map((provider) => {
-                        const keyEntry = apiKeys[provider.api_key_env] || apiKeys[provider.id];
-                        const hasKey = keyEntry?.has_key || false;
-                        const keyLen = keyEntry?.key_length || 0;
-                        const maskedPreview = keyEntry?.masked_preview || "";
-                        const isEditingKey = editingKeyEnv === (provider.api_key_env || provider.id);
-                        return (
-                          <div key={provider.id} className={`models-table-row ${hasKey ? "key-ok" : ""}`} style={{ gridTemplateColumns: "2fr auto 1fr auto" }}>
-                            <div className="row-main">
-                              <div className="row-title">{provider.name}</div>
-                              <div className="row-sub">
-                                {provider.id} · {provider.base_url}
-                                {hasKey && maskedPreview && (
-                                  <span style={{ color: "var(--accent)", marginLeft: 6 }}>🔑 {maskedPreview}</span>
-                                )}
-                              </div>
-                            </div>
-                            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-                              <span className={`models-badge ${hasKey ? "ok" : "bad"}`}>
-                                {hasKey ? `已配置 (${keyLen}位)` : "未配置"}
-                              </span>
-                              {hasKey && keyEntry?.source === "env" && (
-                                <span style={{ fontSize: 9, color: "#f59e0b" }}>环境变量</span>
-                              )}
-                            </div>
-                            <span style={{ fontSize: 10, color: "var(--muted2)", textAlign: "center" }}>{provider.default_model}</span>
-                            <div className="row-actions">
-                              {hasKey && !isEditingKey ? (
-                                <>
-                                  <button className="btn btn-approve" onClick={() => setEditingKeyEnv(provider.api_key_env || provider.id)}>编辑</button>
-                                  <button className="btn btn-skip" onClick={async () => {
-                                    const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
-                                    const val = prompt(`重新输入 ${provider.name} API Key (留空保持不变)`, "");
-                                    if (!val) return;
-                                    try {
-                                      const result = await setApiKey(provider.id, envVar, val, provider.id);
-                                      if (result.ok) {
-                                        showNotification("API Key 已更新", `${provider.name} · ${result.masked_preview}`, "success");
-                                        const keys = await listApiKeys();
-                                        setApiKeys(keys.api_keys || {});
-                                        apiKeyStorage.save(keys.api_keys || {});
-                                      } else {
-                                        showNotification("更新失败", result.error || "未知错误", "danger");
-                                      }
-                                    } catch (e) {
-                                      showNotification("设置失败", e instanceof Error ? e.message : String(e), "danger");
-                                    }
-                                  }}>重生成</button>
-                                  <button className="btn btn-skip" style={{ background: "rgba(239,68,68,0.15)" }} onClick={async () => {
-                                    const confirmed = confirm(`确定要删除 ${provider.name} 的 API Key 吗？`);
-                                    if (!confirmed) return;
-                                    try {
-                                      const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
-                                      const result = await removeApiKey(provider.id, envVar);
-                                      if (result.ok) {
-                                        showNotification("API Key 已删除", `${provider.name}`, "success");
-                                        const keys = await listApiKeys();
-                                        setApiKeys(keys.api_keys || {});
-                                        apiKeyStorage.save(keys.api_keys || {});
-                                      }
-                                    } catch (e) {
-                                      showNotification("删除失败", e instanceof Error ? e.message : String(e), "danger");
-                                    }
-                                  }}>删除</button>
-                                </>
-                              ) : (
-                                <button className="btn btn-approve" onClick={async () => {
-                                  const val = prompt(`输入 ${provider.name} API Key`, "");
-                                  if (!val) { setEditingKeyEnv(""); return; }
-                                  const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
-                                  try {
-                                    const result = await setApiKey(provider.id, envVar, val, provider.id);
-                                    if (result.ok) {
-                                      showNotification(
-                                        hasKey ? "API Key 已更新" : "API Key 已保存",
-                                        `${provider.name} · ${result.masked_preview}${result.removed ? " (已清除)" : ""}`,
-                                        "success"
-                                      );
-                                      const keys = await listApiKeys();
-                                      setApiKeys(keys.api_keys || {});
-                                      apiKeyStorage.save(keys.api_keys || {});
-                                    } else {
-                                      showNotification("设置失败", result.error || "未知错误", "danger");
-                                    }
-                                  } catch (e) {
-                                    showNotification("设置失败", e instanceof Error ? e.message : String(e), "danger");
-                                  }
-                                  setEditingKeyEnv("");
-                                }}>{hasKey ? "保存" : "设置"}</button>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {catalog.length === 0 && Object.keys(apiKeys).length > 0 && (
-                        <>
-                          {Object.entries(apiKeys).map(([envVar, entry]) => (
-                            <div key={envVar} className={`models-table-row ${entry.has_key ? "key-ok" : ""}`} style={{ gridTemplateColumns: "2fr auto 1fr auto" }}>
-                              <div className="row-main">
-                                <div className="row-title">{envVar}</div>
-                                <div className="row-sub">
-                                  {entry.provider || "自定义"} · {entry.source === "env" ? "环境变量" : "持久化存储"}
-                                  {entry.has_key && entry.masked_preview && (
-                                    <span style={{ color: "var(--accent)", marginLeft: 6 }}>🔑 {entry.masked_preview}</span>
-                                  )}
-                                </div>
-                              </div>
-                              <span className={`models-badge ${entry.has_key ? "ok" : "bad"}`}>
-                                {entry.has_key ? `已配置 (${entry.key_length}位)` : "未配置"}
-                              </span>
-                              <span></span>
-                              <div className="row-actions">
-                                <button className="btn btn-approve" onClick={async () => {
-                                  try {
-                                    const val = prompt(`输入 ${envVar}`, "");
-                                    if (!val) return;
-                                    const providerId = entry.provider || envVar.toLowerCase().replace("api_key_", "");
-                                    const result = await setApiKey(providerId, envVar, val, providerId);
-                                    if (result.ok) {
-                                      showNotification("API Key 已更新", `${envVar} · ${result.masked_preview}`, "success");
-                                      const keys = await listApiKeys();
-                                      setApiKeys(keys.api_keys || {});
-                                      apiKeyStorage.save(keys.api_keys || {});
-                                    } else {
-                                      showNotification("设置失败", result.error || "未知错误", "danger");
-                                    }
-                                  } catch (e) { showNotification("设置失败", e instanceof Error ? e.message : String(e), "danger"); }
-                                }}
-                                >设置</button>
-                                {entry.has_key && (
-                                  <button className="btn btn-skip" style={{ background: "rgba(239,68,68,0.15)" }}
-                                    onClick={async () => {
-                                      const confirmed = confirm(`确定要删除 ${envVar} 吗？`);
-                                      if (!confirmed) return;
-                                      try {
-                                        const providerId = entry.provider || envVar.toLowerCase().replace("api_key_", "");
-                                        const result = await removeApiKey(providerId, envVar);
-                                        if (result.ok) {
-                                          showNotification("API Key 已删除", envVar, "success");
-                                          const keys = await listApiKeys();
-                                          setApiKeys(keys.api_keys || {});
-                                          apiKeyStorage.save(keys.api_keys || {});
-                                        }
-                                      } catch (e) { showNotification("删除失败", e instanceof Error ? e.message : String(e), "danger"); }
-                                    }}
-                                  >删除</button>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* ============ 添加模型对话框 ============ */}
-                <div className="models-section">
-                  <div className="models-section-title">
-                    <h3>➕ 添加新模型</h3>
-                    <button
-                      className={`btn ${showAddModelDialog ? "btn-skip" : "btn-approve"}`}
-                      style={{ fontSize: 11, padding: "4px 12px" }}
-                      onClick={() => {
-                        if (showAddModelDialog) resetAddModelDialog();
-                        setShowAddModelDialog(!showAddModelDialog);
-                      }}
-                    >{showAddModelDialog ? "取消" : "+ 新增"}</button>
-                  </div>
-                  {showAddModelDialog && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {/* 服务商选择 */}
-                      <div className="models-form-row">
-                        <label>提供商</label>
-                        <select
-                          className="chat-input"
-                          value={addModelProvider}
-                          onChange={e => handleProviderChange(e.target.value)}
-                        >
-                          <option value="">选择提供商...</option>
-                          {catalog.map(p => (
-                            <option key={p.id} value={p.id}>{p.name} ({p.id})</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Base URL */}
-                      <div className="models-form-row">
-                        <label>Base URL</label>
-                        <input
-                          className="chat-input"
-                          placeholder={addModelProvider ? "自动填充，可修改" : "选择提供商后自动填充"}
-                          value={addModelBaseUrl}
-                          onChange={e => setAddModelBaseUrl(e.target.value)}
-                        />
-                      </div>
-
-                      {/* API Key + 注册链接 */}
-                      <div className="models-form-row">
-                        <label>API Key</label>
-                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                          <input
-                            className="chat-input" style={{ flex: 1 }}
-                            type="password"
-                            placeholder={addModelProvider ? "输入 API Key" : "选择提供商后输入"}
-                            value={addModelApiKey}
-                            onChange={e => setAddModelApiKey(e.target.value)}
-                          />
-                          {addModelProvider && (() => {
-                            const p = catalog.find(c => c.id === addModelProvider);
-                            return p && p.website ? (
-                              <a href={p.website} target="_blank" style={{ fontSize: 10, color: "var(--accent)", whiteSpace: "nowrap" }}>注册 →</a>
-                            ) : null;
-                          })()}
-                        </div>
-                      </div>
-
-                      {/* 测试连接 */}
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <button
-                          className="btn" style={{ fontSize: 11, padding: "5px 14px", borderColor: "var(--border)", background: "var(--bg3)" }}
-                          disabled={!addModelProvider || !addModelApiKey || !addModelBaseUrl || addModelTesting}
-                          onClick={handleTestConnection}
-                        >
-                          {addModelTesting ? "测试中..." : "测试连接"}
-                        </button>
-                        {addModelTestResult && (
-                          addModelTestResult.ok ? (
-                            <span style={{ fontSize: 11, color: "var(--success)" }}>
-                              ✓ 连接成功 · 发现 {addModelTestResult.model_count} 个模型
-                            </span>
-                          ) : (
-                            <span style={{ fontSize: 11, color: "var(--danger)" }}>
-                              ✗ {addModelTestResult.error}
-                            </span>
-                          )
-                        )}
-                      </div>
-
-                      {/* 选择模型 - 仅在连接成功或有预设模型时显示 */}
-                      {(addModelTestResult?.ok || addModelPresetModels) && (
-                        <div className="models-form-row">
-                          <label>选择模型</label>
-                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                            <input
-                              className="chat-input" style={{ flex: 1 }}
-                              placeholder={addModelFetchingModels ? "加载模型列表..." : "可手动输入或从下拉选择"}
-                              value={addModelName}
-                              onChange={e => setAddModelName(e.target.value)}
-                              list="preset-model-list"
-                            />
-                            {addModelPresetModels?.models && addModelPresetModels.models.length > 0 && (
-                              <datalist id="preset-model-list">
-                                {addModelPresetModels.models.map(m => (
-                                  <option key={m.name} value={m.name}>{m.display_name || m.name}</option>
-                                ))}
-                              </datalist>
-                            )}
-                            {addModelTestResult?.ok && addModelTestResult.models && addModelTestResult.models.length > 0 && (
-                              <select
-                                className="chat-input" style={{ height: 30, width: 140 }}
-                                value=""
-                                onChange={e => { if (e.target.value) setAddModelName(e.target.value); }}
-                              >
-                                <option value="">从远程选择...</option>
-                                {addModelTestResult.models.map(m => (
-                                  <option key={m.id} value={m.id}>{m.id}</option>
-                                ))}
-                              </select>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* 高级配置 - 折叠 */}
-                      {addModelProvider && (
-                        <details className="models-advanced">
-                          <summary>高级配置（API 类型、上下文窗口、输入类型等）</summary>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "8px 0" }}>
-                            {/* API 类型 */}
-                            <div className="models-form-row">
-                              <label>API 类型</label>
-                              <div className="models-radio-row">
-                                {[
-                                  { v: "chat_completions", l: "Chat Completions" },
-                                  { v: "responses_api", l: "Responses API" },
-                                  { v: "anthropic_messages", l: "Anthropic Messages" },
-                                ].map(opt => (
-                                  <label key={opt.v}>
-                                    <input type="radio" name="apiType" value={opt.v}
-                                      checked={addModelApiType === opt.v}
-                                      onChange={() => setAddModelApiType(opt.v)}
-                                    />{opt.l}
-                                  </label>
-                                ))}
-                              </div>
-                            </div>
-
-                            {/* 思考模式 */}
-                            <div className="models-form-row">
-                              <label>思考模式</label>
-                              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 11 }}>
-                                <input type="checkbox"
-                                  checked={addModelThinking}
-                                  onChange={e => setAddModelThinking(e.target.checked)}
-                                />
-                                开启思考模式（Reasoning/Thinking）
-                              </label>
-                            </div>
-
-                            {/* 输入类型 */}
-                            <div className="models-form-row">
-                              <label>输入类型</label>
-                              <div className="models-radio-row">
-                                {[
-                                  { k: "text", l: "文本", v: addModelInputText, s: setAddModelInputText },
-                                  { k: "image", l: "图像", v: addModelInputImage, s: setAddModelInputImage },
-                                  { k: "audio", l: "音频", v: addModelInputAudio, s: setAddModelInputAudio },
-                                  { k: "video", l: "视频", v: addModelInputVideo, s: setAddModelInputVideo },
-                                ].map(item => (
-                                  <label key={item.k}>
-                                    <input type="checkbox" checked={item.v}
-                                      onChange={e => item.s(e.target.checked)}
-                                    />{item.l}
-                                  </label>
-                                ))}
-                              </div>
-                            </div>
-
-                            {/* 上下文窗口 + 最大输出 */}
-                            <div className="models-form-row">
-                              <label>上下文/输出</label>
-                              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                                <label style={{ fontSize: 10, color: "var(--muted2)" }}>窗口</label>
-                                <input type="number" className="chat-input" style={{ height: 28, width: 90 }}
-                                  value={addModelContextWindow}
-                                  onChange={e => setAddModelContextWindow(parseInt(e.target.value) || 32768)}
-                                />
-                                <label style={{ fontSize: 10, color: "var(--muted2)" }}>最大输出</label>
-                                <input type="number" className="chat-input" style={{ height: 28, width: 80 }}
-                                  value={addModelMaxOutput}
-                                  onChange={e => setAddModelMaxOutput(parseInt(e.target.value) || 4096)}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        </details>
-                      )}
-
-                      {/* 保存按钮 */}
-                      <div className="models-form-actions">
-                        <button
-                          className="btn btn-approve"
-                          style={{ fontSize: 11, padding: "6px 18px" }}
-                          disabled={!addModelProvider || !addModelName}
-                          onClick={async () => {
-                            if (!addModelProvider || !addModelName) return;
-                            try {
-                              const provider = catalog.find(p => p.id === addModelProvider);
-                              if (!provider) return;
-                              if (addModelApiKey) {
-                                const envVar = provider.api_key_env || `API_KEY_${provider.id.toUpperCase()}`;
-                                await setApiKey(addModelProvider, envVar, addModelApiKey);
-                              }
-                              showNotification("模型已添加", `${provider.name} · ${addModelName}`, "success");
-                              setShowAddModelDialog(false);
-                              resetAddModelDialog();
-                              loadModels();
-                            } catch (e) { showNotification("添加失败", e instanceof Error ? e.message : String(e), "danger"); }
-                          }}
-                        >保存</button>
-                      </div>
-                      <div className="models-form-hint">
-                        选择提供商后自动关联 Base URL，测试连接可验证 API Key 并获取可用模型列表
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* ============ 语音引擎仪表盘 ============ */}
+                {/* ============ 语音引擎仪表盘（仅模型列表 Tab 显示） ============ */}
+                {modelsTab === "list" && (
                 <div className="models-section">
                   <div className="models-section-title">
                     <h3>🎙️ 语音引擎仪表盘</h3>
@@ -3335,6 +3375,7 @@ export default function App() {
                     </div>
                   )}
                 </div>
+                )}
               </div>
             </div>
 

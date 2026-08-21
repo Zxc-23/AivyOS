@@ -64,6 +64,9 @@ class TestPhase1E2E(AivyTestCase):
     def test_vision_fusion_chat_chain(self):
         """能看：视觉输入 → 多模态融合（§3.4）→ LLM。"""
         cfg = make_config()
+        # 测试不依赖真实视觉模型（本地/云端探测一律 mock，保证离线可跑）
+        cfg["vision"]["understand_backend"] = "mock"
+        cfg["vision"]["ocr_backend"] = "mock"
         engine = ChatEngine(cfg)
         reply = asyncio.run(engine.send_multimodal(text="帮我看看这张图", image=b"fake-image", session_id=None))
         self.assertTrue(reply.text)

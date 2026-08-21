@@ -78,8 +78,10 @@ def create_understand(cfg: Dict[str, Any]) -> UnderstandBackend:
         if base_url:
             model = cfg.get("model", "qwen2-vl-7b")
             # 真实可用性探测：确认端点可达且模型存在（否则回退 mock，避免假阳性）
-            if _probe_vision_model(base_url, model):
-                return QwenVLBackend(base_url, model=model)
+            real_model = _probe_vision_model(base_url, model)
+            if real_model:
+                # 使用探测到的真实模型 id（如 qwen2.5vl:7b-q4_K_M），避免配置名不匹配导致 404
+                return QwenVLBackend(base_url, model=real_model)
             import logging
 
             logging.getLogger(__name__).warning(
@@ -90,9 +92,11 @@ def create_understand(cfg: Dict[str, Any]) -> UnderstandBackend:
     return MockUnderstand()
 
 
-def _probe_vision_model(base_url: str, model: str) -> bool:
+def _probe_vision_model(base_url: str, model: str) -> Optional[str]:
     """探测 OpenAI 兼容端点是否可访问且模型存在（GET /models）。
 
+    返回实际匹配的模型 id（如配置 qwen2.5vl:7b 命中 qwen2.5vl:7b-q4_K_M）；
+    不可用返回 None。
     Ollama /v1/models 返回字段为 id（如 qwen2.5:3b）；标准 OpenAI 为 id。
     """
     import json
@@ -104,13 +108,13 @@ def _probe_vision_model(base_url: str, model: str) -> bool:
             payload = json.loads(resp.read().decode())
         ids = [m.get("id", "") for m in payload.get("data", [])]
         if not ids:
-            return False
+            return None
         # 精确匹配，或按主名段精确匹配（避免 qwen2.5:3b 误匹配 qwen2.5vl:7b）
         for mid in ids:
             if mid == model:
-                return True
+                return mid
             if mid.split(":")[0] == model.split(":")[0] and ":" in model:
-                return True
-        return False
+                return mid
+        return None
     except Exception:
-        return False
+        return None
