@@ -74,6 +74,65 @@ class TestPhase1E2E(AivyTestCase):
         ctx = asyncio.run(engine.fusion.fuse(text="x", image=b"img"))
         self.assertTrue(any("视觉输入" in b for b in ctx.blocks))
 
+    def test_chat_send_with_image_b64(self):
+        """chat.send 带 image_b64 → 走多模态链路，返回 vision_used。"""
+        from aivyos_core.server_entry import build_server
+
+        import base64
+
+        cfg = make_config()
+        cfg["vision"]["understand_backend"] = "mock"
+        cfg["vision"]["ocr_backend"] = "mock"
+        engine = ChatEngine(cfg)
+        server = build_server(engine, cfg)
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["chat.send"]({
+            "text": "看看这张图",
+            "session_id": None,
+            "image_b64": base64.b64encode(b"fake-image-bytes").decode(),
+        }))
+        self.assertTrue(result["text"])
+        self.assertTrue(result.get("vision_used"))
+
+    def test_chat_send_with_image_path(self):
+        """chat.send 带 image_path → 后端读文件 → 多模态。"""
+        import base64
+        import os
+
+        from aivyos_core.server_entry import build_server
+
+        cfg = make_config()
+        cfg["vision"]["understand_backend"] = "mock"
+        cfg["vision"]["ocr_backend"] = "mock"
+        engine = ChatEngine(cfg)
+        server = build_server(engine, cfg)
+        handlers = {m: h for m, h in server._handlers.items()}
+        img_path = os.path.join(_TMP, "chat_img.png")
+        with open(img_path, "wb") as f:
+            f.write(b"\x89PNG-fake")
+        try:
+            result = asyncio.run(handlers["chat.send"]({
+                "text": "看看这张图",
+                "session_id": None,
+                "image_path": img_path,
+            }))
+            self.assertTrue(result["text"])
+            self.assertTrue(result.get("vision_used"))
+        finally:
+            os.remove(img_path)
+
+    def test_chat_send_without_image_unchanged(self):
+        """chat.send 无图片参数 → 普通链路，vision_used=False。"""
+        from aivyos_core.server_entry import build_server
+
+        cfg = make_config()
+        engine = ChatEngine(cfg)
+        server = build_server(engine, cfg)
+        handlers = {m: h for m, h in server._handlers.items()}
+        result = asyncio.run(handlers["chat.send"]({"text": "你好", "session_id": None}))
+        self.assertTrue(result["text"])
+        self.assertFalse(result.get("vision_used", False))
+
     def test_output_routing_chain(self):
         """输出路由（§6.3）：文本/语音/通知/文件 四通道。"""
         cfg = make_config()

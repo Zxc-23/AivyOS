@@ -183,6 +183,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # 视觉理解端点（OpenAI 兼容，Ollama/vLLM 视觉模型）
         "base_url": "http://127.0.0.1:11434/v1",
         "model": "qwen2.5vl:7b",      # Ollama 视觉模型（如 llava/qwen2.5vl）；未拉取时理解回退 mock
+        # 动态加载/释放策略（Ollama keep_alive）：
+        "load_on_demand": True,       # 需要时（首次视觉调用）才加载模型，避免启动即占显存
+        "keep_alive_s": 600,          # 加载后驻留秒数（10 分钟无调用 Ollama 自动释放）
+        "idle_unload_s": 300,         # 本进程侧空闲自动释放阈值（秒，0=禁用）
+        "load_timeout_s": 300,        # 模型冷启动加载超时（秒）
     },
     "multimodal": {
         "fusion_strategy": "late",   # §3.4 晚期融合

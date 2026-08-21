@@ -7,7 +7,7 @@ import {
   runVibe,
   runBootCheck,
   getVoiceSettings, setVoiceSettings as saveVoiceSettings,
-  listModels, getModelsHealth, getModelsCost, setActiveModel,
+  listModels, getModelsHealth, getModelsCost, setActiveModel, getModelsBackends,
   BackendHealth, CostDashboard,
   listMcpTools, callMcpTool,
   executeFallbackChain,
@@ -24,6 +24,7 @@ import {
   getModelCatalog, listApiKeys, setApiKey, removeApiKey,
   getVoiceEngines, configVoiceEngine,
   testModelConnection, listProviderModels,
+  addBackend, removeBackend,
   testTts,
   applyVoiceTts,
   ProviderCatalogEntry, ApiKeyEntry, TestConnectionResult, ListModelsResult,
@@ -31,6 +32,7 @@ import {
   apiKeyStorage,
   startWakeLoop, stopWakeLoop, getWakeLoopStatus, listenWakeEvents,
   WakeLoopStatus, WakeEvent,
+  readImagePreview, loadVisionModel, releaseVisionModel,
 } from "./chat";
 import {
   TrayStateName,
@@ -52,7 +54,12 @@ type NavId =
   | "chat" | "voice" | "task" | "sched" | "vibe"
   | "memory" | "boot" | "voiceset" | "models" | "settings";
 
-interface Msg { role: "user" | "assistant"; text: string; }
+interface Msg {
+  role: "user" | "assistant";
+  text: string;
+  /** 用户消息附带的图片（base64 data URL，用于预览展示） */
+  image?: string;
+}
 
 interface Notif {
   id: number; title: string; body: string;
@@ -314,6 +321,9 @@ export default function App() {
     { role: "assistant", text: "早上好！我是 Aivy，您的私人 AI 助理。有什么可以帮您？" },
   ]);
   const [input, setInput] = useState("");
+  // 待发送图片附件（拖拽/粘贴）：{path 原始路径, dataUrl 预览, mime}
+  const [pendingImage, setPendingImage] = useState<{ path?: string; dataUrl: string; mime: string; name: string } | null>(null);
+  const [imageSending, setImageSending] = useState(false);
   const [status, setStatus] = useState<StatusInfo | null>(null);
   const [trayState, setTrayStateUi] = useState<TrayStateName>("booting");
   const [notifs, setNotifs] = useState<Notif[]>([]);
@@ -464,6 +474,15 @@ export default function App() {
     testing: boolean;
     testResult: TestConnectionResult | null;
   } | null>(null);
+  const [showAddProviderDropdown, setShowAddProviderDropdown] = useState(false);
+  const [showCustomProviderForm, setShowCustomProviderForm] = useState(false);
+  const [customProvider, setCustomProvider] = useState({
+    backendType: "",
+    name: "",
+    baseUrl: "",
+    apiKey: "",
+    defaultModel: "",
+  });
   const [vsetDoubaoSpeed, setVsetDoubaoSpeed] = useState(1.0);
   const [vsetDoubaoVolume, setVsetDoubaoVolume] = useState(1.0);
   const [vsetDoubaoPitch, setVsetDoubaoPitch] = useState(1.0);
@@ -706,20 +725,96 @@ export default function App() {
     onTrayEvent((ev) => {
       if (ev.kind === "click" && ev.double) setNav("chat");
     }).then(fn => { if (typeof fn === "function") cleanupFns.push(fn); }).catch(() => {});
-    onWindowFileDrop((paths) => {
-      showNotification("收到文件", `已拖入 ${paths.length} 个文件，正在处理...`, "success");
-    }).then(fn => { if (typeof fn === "function") cleanupFns.push(fn); }).catch(() => {});
     return () => { cleanupFns.forEach(fn => fn()); };
   }, [showNotification]);
 
   /* ================================================================
    *  Chat handlers
    * ================================================================ */
+
+  // 拖拽图片 → 读取预览（Tauri onDragDropEvent 给本地路径）
+  const handleImageDrop = useCallback(async (paths: string[]) => {
+    const imgExts = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+    const imgPath = paths.find(p => {
+      const ext = p.split(".").pop()?.toLowerCase() ?? "";
+      return imgExts.includes(ext);
+    });
+    if (!imgPath) {
+      showNotification("仅支持图片", "请拖入 PNG/JPG/GIF/WebP/BMP 图片", "warning");
+      return;
+    }
+    setImageSending(true);
+    try {
+      if (!bridgeReady) {
+        showNotification("演示模式", "连接核心后可拖入图片让艾薇看图回答", "warning");
+        return;
+      }
+      const res = await readImagePreview(imgPath);
+      if (!res.ok || !res.base64) {
+        showNotification("读取失败", res.error || "无法读取图片", "danger");
+        return;
+      }
+      const name = imgPath.split(/[\\/]/).pop() ?? imgPath;
+      setPendingImage({
+        path: imgPath,
+        dataUrl: `data:${res.mime || "image/png"};base64,${res.base64}`,
+        mime: res.mime || "image/png",
+        name,
+      });
+      showNotification("已添加图片", `${name} · 随下一条消息发送`, "success");
+    } catch (e) {
+      showNotification("读取失败", e instanceof Error ? e.message : String(e), "danger");
+    } finally {
+      setImageSending(false);
+    }
+  }, [bridgeReady, showNotification]);
+
+  // 窗口拖拽图片（Tauri onDragDropEvent）→ 附件预览
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    onWindowFileDrop((paths) => {
+      void handleImageDrop(paths);
+    }).then(fn => { unlisten = fn; }).catch(() => {});
+    return () => { unlisten?.(); };
+  }, [handleImageDrop]);
+
+  // 键盘粘贴图片（Ctrl+V）→ 剪贴板 base64 附件
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (!file) continue;
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl = String(reader.result || "");
+            setPendingImage({
+              dataUrl,
+              mime: item.type,
+              name: "剪贴板图片.png",
+            });
+            showNotification("已粘贴图片", "随下一条消息发送", "success");
+          };
+          reader.readAsDataURL(file);
+          break;
+        }
+      }
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [showNotification]);
+
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text) return;
-    setMessages(prev => [...prev, { role: "user", text }]);
+    const hasImage = !!pendingImage;
+    if (!text && !hasImage) return;
+    const userMsg: Msg = { role: "user", text: text || "（图片）" };
+    if (pendingImage?.dataUrl) userMsg.image = pendingImage.dataUrl;
+    setMessages(prev => [...prev, userMsg]);
     setInput("");
+    setPendingImage(null);
     updateTrayState("working");
     if (!bridgeReady) {
       setTimeout(() => {
@@ -729,7 +824,11 @@ export default function App() {
       return;
     }
     try {
-      const reply: ChatReply = await sendChat(text);
+      const reply: ChatReply = await sendChat(
+        text,
+        undefined,
+        hasImage ? { path: pendingImage?.path, b64: pendingImage?.dataUrl.split(",")[1] } : undefined
+      );
       setMessages(prev => [...prev, { role: "assistant", text: reply.text }]);
       // 知识卡片自动调用：对话中呈现相关卡片
       if (reply.knowledge_hits && reply.knowledge_hits.length > 0) {
@@ -740,7 +839,7 @@ export default function App() {
       setMessages(prev => [...prev, { role: "assistant", text: "抱歉，出现了错误：" + (e instanceof Error ? e.message : String(e)) }]);
       updateTrayState("error");
     }
-  }, [input, bridgeReady, updateTrayState]);
+  }, [input, pendingImage, bridgeReady, updateTrayState]);
 
   const quickSend = useCallback((text: string) => {
     setInput(text);
@@ -1080,12 +1179,13 @@ export default function App() {
   }, [vibeRequest, bridgeReady, updateTrayState, showNotification]);
 
   // ---- Boot/Self-check ----
-  const runBoot = useCallback(async () => {
+  const runBoot = useCallback(async (deep = false) => {
     setBootLoading(true);
     updateTrayState("booting");
     try {
       if (!bridgeReady) { await new Promise(r => setTimeout(r, 1500)); setBootResult(DEMO_BOOT); return; }
-      const result = await runBootCheck();
+      // fast 模式（默认）：仅依赖探测，秒级完成；deep 模式做真实模型加载验证
+      const result = await runBootCheck(!deep);
       setBootResult(result);
       showNotification("系统自检完成", result.summary, result.passed === result.total ? "success" : "warning");
     } catch (e) {
@@ -1710,16 +1810,33 @@ export default function App() {
                   {messages.map((m, i) => (
                     <div key={i} className={`msg-row ${m.role === "user" ? "user" : ""}`}>
                       {m.role === "assistant" && <div className="msg-avatar">薇</div>}
-                      <div className={`msg-bubble ${m.role}`}>{m.text}</div>
+                      <div className={`msg-bubble ${m.role}`}>
+                        {m.image && (
+                          <img
+                            src={m.image}
+                            alt="附件"
+                            className="msg-image"
+                            style={{ display: "block", maxWidth: 220, maxHeight: 160, borderRadius: 8, marginBottom: 6, objectFit: "cover" }}
+                          />
+                        )}
+                        {m.text}
+                      </div>
                     </div>
                   ))}
                   <div ref={chatEndRef} />
                 </div>
                 <div className="chat-input-area">
+                  {pendingImage && (
+                    <div className="chat-attach">
+                      <img src={pendingImage.dataUrl} alt="待发送图片" className="chat-attach-img" />
+                      <span className="chat-attach-name">{pendingImage.name}</span>
+                      <button className="chat-attach-remove" onClick={() => setPendingImage(null)} title="移除图片">✕</button>
+                    </div>
+                  )}
                   <div className="chat-input-row">
                     <input
                       className="chat-input"
-                      placeholder="输入消息或按 Alt+V 语音对话..."
+                      placeholder="输入消息、拖入图片让艾薇看图，或按 Alt+V 语音对话..."
                       value={input}
                       onChange={e => setInput(e.target.value)}
                       onKeyDown={e => { if (e.key === "Enter") handleSend(); }}
@@ -2462,7 +2579,7 @@ export default function App() {
                   </div>
                 </div>
                 <div className="boot-actions">
-                  <button className="btn btn-approve" onClick={runBoot} disabled={bootLoading}>{bootLoading ? "检查中..." : "▶ 重新自检"}</button>
+                  <button className="btn btn-approve" onClick={() => runBoot(false)} disabled={bootLoading}>{bootLoading ? "检查中..." : "▶ 深度自检"}</button>
                   <button className="btn btn-skip" onClick={() => handleNav("chat")}>进入主界面 →</button>
                 </div>
               </div>
@@ -2909,7 +3026,7 @@ export default function App() {
                   >打开配置文件</button>
                 </div>
 
-                {/* 工具栏: 搜索 + 筛选 + 排序 */}
+                {/* 工具栏: 搜索 + 筛选 + 排序 + 添加按钮 */}
                 <div className="ml-toolbar">
                   <div className="ml-search">
                     <input
@@ -2941,6 +3058,65 @@ export default function App() {
                       <option value="status">按状态排序</option>
                       <option value="category">按类型排序</option>
                     </select>
+                  </div>
+                  <div className="ml-toolbar-buttons">
+                    {/* 添加提供方按钮 + 下拉列表 */}
+                    <div className="ml-dropdown-wrapper">
+                      <button
+                        className="btn btn-skip ml-add-btn"
+                        onClick={() => {
+                          setShowAddProviderDropdown(!showAddProviderDropdown);
+                          setShowCustomProviderForm(false);
+                        }}
+                      >+ 添加提供方</button>
+                      {showAddProviderDropdown && (
+                        <div className="ml-dropdown-menu">
+                          {catalog
+                            .filter(p => {
+                              const keyEntry = apiKeys[p.api_key_env] || apiKeys[p.id];
+                              return !keyEntry?.has_key;
+                            })
+                            .map(p => (
+                              <div
+                                key={p.id}
+                                className="ml-dropdown-item"
+                                onClick={() => {
+                                  setEditingProviderId(p.id);
+                                  setEditingForm({
+                                    providerId: p.id,
+                                    apiKey: "",
+                                    baseUrl: p.base_url,
+                                    fetchedModels: [],
+                                    fetching: false,
+                                    customSettingsOpen: false,
+                                    addedModels: [],
+                                    testing: false,
+                                    testResult: null,
+                                  });
+                                  setShowAddProviderDropdown(false);
+                                }}
+                              >
+                                <span className="ml-dropdown-name">{p.name}</span>
+                                <span className="ml-dropdown-status muted">未配置</span>
+                              </div>
+                            ))}
+                          {catalog.filter(p => {
+                            const keyEntry = apiKeys[p.api_key_env] || apiKeys[p.id];
+                            return !keyEntry?.has_key;
+                          }).length === 0 && (
+                            <div className="ml-dropdown-empty">所有提供方均已配置</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {/* 添加自定义提供方按钮 */}
+                    <button
+                      className="btn btn-skip ml-add-btn"
+                      onClick={() => {
+                        setShowCustomProviderForm(!showCustomProviderForm);
+                        setShowAddProviderDropdown(false);
+                      }}
+                    >+ 添加自定义提供方</button>
                   </div>
                 </div>
 
@@ -3072,7 +3248,7 @@ export default function App() {
                                         }}
                                       >
                                         {catalog.map(c => (
-                                          <option key={c.id} value={c.id}>{c.id}</option>
+                                          <option key={c.id} value={c.id}>{c.name} ({c.id})</option>
                                         ))}
                                       </select>
                                     </div>
@@ -3256,6 +3432,25 @@ export default function App() {
                                         }}
                                       >取消</button>
                                       <button
+                                        className="btn btn-skip"
+                                        style={{ color: "#ef4444", borderColor: "rgba(239,68,68,0.4)" }}
+                                        onClick={async () => {
+                                          if (!bridgeReady) {
+                                            showNotification("操作失败", "核心服务未连接", "danger");
+                                            return;
+                                          }
+                                          const backendName = `${editingForm.providerId}-${editingForm.providerId}`;
+                                          const result = await removeBackend(backendName);
+                                          if (result.ok) {
+                                            showNotification("移除成功", `后端 ${backendName} 已移除`, "success");
+                                            const backends = await getModelsBackends();
+                                            setModelHealth(backends);
+                                          } else {
+                                            showNotification("移除失败", result.error || "后端可能不存在", "warning");
+                                          }
+                                        }}
+                                      >删除</button>
+                                      <button
                                         className="btn btn-approve"
                                         onClick={async () => {
                                           try {
@@ -3283,6 +3478,25 @@ export default function App() {
                                                 return;
                                               }
                                             }
+                                            if (bridgeReady) {
+                                              try {
+                                                const backendName = `${provider.id}-${Date.now().toString(36)}`;
+                                                const addResult = await addBackend(
+                                                  backendName,
+                                                  provider.id,
+                                                  provider.default_model || (editingForm.fetchedModels[0]?.id) || "",
+                                                  editingForm.baseUrl || provider.base_url,
+                                                  envVar
+                                                );
+                                                if (!addResult.ok) {
+                                                  showNotification("后端注册警告", `API Key 已保存，但后端注册失败: ${addResult.error}`, "warning");
+                                                }
+                                              } catch (addErr) {
+                                                showNotification("后端注册警告", `API Key 已保存，但后端注册异常: ${addErr instanceof Error ? addErr.message : String(addErr)}`, "warning");
+                                              }
+                                              const backends = await getModelsBackends();
+                                              setModelHealth(backends);
+                                            }
                                             setEditingProviderId(null);
                                             setEditingForm(null);
                                             loadModels();
@@ -3290,7 +3504,7 @@ export default function App() {
                                             showNotification("保存失败", e instanceof Error ? e.message : String(e), "danger");
                                           }
                                         }}
-                                      >保存</button>
+                                      >保存并启用</button>
                                     </div>
                                   </div>
                                 )}
@@ -3319,6 +3533,149 @@ export default function App() {
                     </>
                   );
                 })()}
+
+                {/* 自定义提供方表单 */}
+                {showCustomProviderForm && (
+                  <div className="ml-custom-form">
+                    <div className="ml-custom-form-header">
+                      <h3>添加自定义提供方</h3>
+                      <button
+                        className="btn btn-skip"
+                        style={{ fontSize: 11, padding: "3px 10px" }}
+                        onClick={() => setShowCustomProviderForm(false)}
+                      >关闭</button>
+                    </div>
+                    <div className="ml-custom-form-body">
+                      <div className="ml-form-group">
+                        <label className="ml-label">后端类型</label>
+                        <select
+                          className="ml-input"
+                          value={customProvider.backendType}
+                          onChange={e => {
+                            const providerInfo = catalog.find(c => c.id === e.target.value);
+                            setCustomProvider({
+                              ...customProvider,
+                              backendType: e.target.value,
+                              baseUrl: providerInfo?.base_url || "",
+                              defaultModel: providerInfo?.default_model || "",
+                            });
+                          }}
+                        >
+                          <option value="">选择后端类型...</option>
+                          {catalog.map(c => (
+                            <option key={c.id} value={c.id}>{c.name} ({c.id})</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="ml-form-group">
+                        <label className="ml-label">实例名称</label>
+                        <input
+                          className="ml-input"
+                          placeholder="唯一标识符，如: my-deepseek"
+                          value={customProvider.name}
+                          onChange={e => setCustomProvider({ ...customProvider, name: e.target.value })}
+                        />
+                      </div>
+                      <div className="ml-form-group">
+                        <label className="ml-label">API 地址</label>
+                        <input
+                          className="ml-input"
+                          placeholder="https://api.example.com/v1"
+                          value={customProvider.baseUrl}
+                          onChange={e => setCustomProvider({ ...customProvider, baseUrl: e.target.value })}
+                        />
+                      </div>
+                      <div className="ml-form-group">
+                        <label className="ml-label">API 密钥</label>
+                        <input
+                          className="ml-input"
+                          type="password"
+                          placeholder="输入API密钥"
+                          value={customProvider.apiKey}
+                          onChange={e => setCustomProvider({ ...customProvider, apiKey: e.target.value })}
+                        />
+                      </div>
+                      <div className="ml-form-group">
+                        <label className="ml-label">默认模型</label>
+                        <input
+                          className="ml-input"
+                          placeholder="如: deepseek-chat"
+                          value={customProvider.defaultModel}
+                          onChange={e => setCustomProvider({ ...customProvider, defaultModel: e.target.value })}
+                        />
+                      </div>
+                      <div className="ml-edit-actions">
+                        <button
+                          className="btn btn-skip"
+                          onClick={() => {
+                            setShowCustomProviderForm(false);
+                            setCustomProvider({ backendType: "", name: "", baseUrl: "", apiKey: "", defaultModel: "" });
+                          }}
+                        >取消</button>
+                        <button
+                          className="btn btn-approve"
+                          disabled={!customProvider.backendType || !customProvider.name || !customProvider.defaultModel}
+                          onClick={async () => {
+                            try {
+                              if (!bridgeReady) {
+                                showNotification("操作失败", "核心服务未连接", "danger");
+                                return;
+                              }
+                              const result = await addBackend(
+                                customProvider.name,
+                                customProvider.backendType,
+                                customProvider.defaultModel,
+                                customProvider.baseUrl,
+                                customProvider.apiKey ? `API_KEY_${customProvider.backendType.toUpperCase()}` : ""
+                              );
+                              if (!result.ok) {
+                                showNotification("添加失败", result.error || "未知错误", "danger");
+                                return;
+                              }
+                              if (customProvider.apiKey) {
+                                const keyResult = await setApiKey(
+                                  customProvider.backendType,
+                                  `API_KEY_${customProvider.backendType.toUpperCase()}`,
+                                  customProvider.apiKey,
+                                  customProvider.backendType
+                                );
+                                if (keyResult.ok) {
+                                  const keys = await listApiKeys();
+                                  setApiKeys(keys.api_keys || {});
+                                  apiKeyStorage.save(keys.api_keys || {});
+                                }
+                              }
+                              const backends = await getModelsBackends();
+                              setModelHealth(backends);
+                              const syntheticEntry: ProviderCatalogEntry = {
+                                id: customProvider.name,
+                                name: customProvider.name,
+                                category: "cloud-native",
+                                description: `自定义提供方 (${customProvider.backendType})`,
+                                base_url: customProvider.baseUrl,
+                                api_key_env: `API_KEY_${customProvider.backendType.toUpperCase()}`,
+                                auth_type: "api_key",
+                                website: "",
+                                default_model: customProvider.defaultModel,
+                                models: [],
+                              };
+                              setCatalog(prev => [...prev.filter(p => p.id !== customProvider.name), syntheticEntry]);
+                              showNotification(
+                                "添加成功",
+                                `后端 ${result.name} 已注册，模型: ${result.model}`,
+                                "success"
+                              );
+                              setShowCustomProviderForm(false);
+                              setCustomProvider({ backendType: "", name: "", baseUrl: "", apiKey: "", defaultModel: "" });
+                            } catch (e) {
+                              showNotification("添加失败", e instanceof Error ? e.message : String(e), "danger");
+                            }
+                          }}
+                        >保存并注册</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                   </>
                 )}
 

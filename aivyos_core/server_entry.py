@@ -181,6 +181,22 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
     @server.method("chat.send")
     async def chat_send(params):
         text = params["text"]
+        # 可选图片输入（拖拽/粘贴）：image_b64（base64 字节）或 image_path（本地文件）
+        image_b64 = params.get("image_b64") or ""
+        image_path = params.get("image_path") or ""
+        image_bytes = None
+        if image_b64:
+            import base64
+            try:
+                image_bytes = base64.b64decode(image_b64)
+            except Exception as e:
+                log.warning("chat.send: image_b64 解码失败: %s", e)
+        elif image_path:
+            try:
+                with open(image_path, "rb") as f:
+                    image_bytes = f.read()
+            except Exception as e:
+                log.warning("chat.send: 读取图片失败 %s: %s", image_path, e)
         # 相似知识自动调用（对话中呈现相关卡片，不阻塞主回复）
         recalled = []
         if cfg.get("knowledge", {}).get("recall_in_chat", True):
@@ -190,7 +206,10 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
                 ))
             except Exception as e:
                 log.debug("知识调用失败: %s", e)
-        reply = await engine.send(text, session_id=params.get("session_id"))
+        if image_bytes is not None:
+            reply = await engine.send_multimodal(text=text, image=image_bytes, session_id=params.get("session_id"))
+        else:
+            reply = await engine.send(text, session_id=params.get("session_id"))
         # 对话知识沉淀（后台任务，不阻塞响应）
         if cfg.get("knowledge", {}).get("auto_extract", True):
             async def _ingest():
@@ -207,6 +226,7 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             "latency_ms": reply.latency_ms,
             "memory_hits": reply.memory_hits,
             "knowledge_hits": [{"card": h["card"], "score": h["score"]} for h in recalled],
+            "vision_used": image_bytes is not None,
         }
 
     @server.method("session.list")
@@ -870,7 +890,11 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
 
         真实性原则：每项做真实可用性探测（而非仅配置读取），
         避免假阳性 —— LLM 探测、记忆真实检索、语音模型就绪检查。
+
+        fast=True（默认）：语音模块仅做依赖探测（不加载 ASR 模型、不合成 TTS），
+        秒级完成，适合启动自检；fast=False 做深度真实加载验证。
         """
+        fast = bool(params.get("fast", True))
         checks = []
         # 1. LLM 路由（真实 HTTP 探测：GET /models，带 TTL 缓存）
         try:
@@ -910,7 +934,7 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         except Exception as e:
             checks.append({"name": "记忆系统", "ok": False, "detail": str(e)})
 
-        # 3. 语音模块（真实加载 ASR 模型 + 真实 TTS 合成，不打开麦克风）
+        # 3. 语音模块（fast：仅依赖探测；deep：真实加载 ASR 模型 + 真实 TTS 合成，不打开麦克风）
         try:
             from aivyos_core.asr.manager import create_asr
             from aivyos_core.tts.manager import create_tts
@@ -920,36 +944,65 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
             asr_backend = asr_cfg.get("backend", "auto")
             tts_backend = tts_cfg.get("backend", "auto")
             detail = f"ASR={asr_backend}, TTS={tts_backend}"
-            # ASR 真实加载（不创建 VoiceSession/不开麦克风）
-            asr_ok = True
-            try:
-                asr = create_asr(asr_cfg)
-                if getattr(asr, "name", "") not in ("mock-asr",):
-                    # 真实模型：执行预热（加载模型 + 空推理）
-                    if hasattr(asr, "warmup"):
-                        await asyncio.get_running_loop().run_in_executor(None, asr.warmup)
-                    warmed = bool(getattr(asr, "_warmed_up", True))
-                    if not warmed:
-                        detail += "（ASR 模型预热中）"
-                    asr_ok = warmed
-            except Exception as e:
-                detail += f"（ASR 加载失败: {str(e)[:60]}）"
-                asr_ok = False
-            # TTS 真实合成（验证网络可达/后端可用）
-            tts_ok = True
-            try:
-                tts = create_tts(tts_cfg)
-                if getattr(tts, "name", "") not in ("mock-tts",):
-                    audio = await asyncio.get_running_loop().run_in_executor(
-                        None, lambda: tts.synthesize("自检")
-                    )
-                    tts_ok = audio is not None and len(getattr(audio, "pcm", b"")) > 0
-                    if not tts_ok:
-                        detail += "（TTS 合成失败）"
-            except Exception as e:
-                detail += f"（TTS 失败: {str(e)[:60]}）"
-                tts_ok = False
-            checks.append({"name": "语音模块", "ok": asr_ok and tts_ok, "detail": detail})
+
+            if fast:
+                # ---- 快速模式：仅依赖探测（不实例化/不导入重型包，秒级，启动自检用）----
+                # 注意：不能用 import funasr —— 其 __init__ 会导入 torch 等全部子模块（~10s+），
+                # 用 find_spec 只检查包是否存在，真实加载延迟到首次语音使用。
+                import importlib.util
+
+                asr_ok = True
+                tts_ok = True
+                try:
+                    has_funasr = importlib.util.find_spec("funasr") is not None
+                    has_sd = importlib.util.find_spec("sounddevice") is not None
+                    if has_funasr and has_sd:
+                        detail += "（ASR 依赖✓ 首次使用加载）"
+                    else:
+                        detail += "（ASR 依赖缺失→mock 回退）"
+                except Exception:
+                    detail += "（ASR 依赖探测失败）"
+                try:
+                    has_edge = importlib.util.find_spec("edge_tts") is not None
+                    if has_edge:
+                        detail += "（TTS 依赖✓）"
+                    else:
+                        detail += "（TTS 依赖缺失→mock 回退）"
+                except Exception:
+                    detail += "（TTS 依赖探测失败）"
+                checks.append({"name": "语音模块", "ok": asr_ok and tts_ok, "detail": detail})
+            else:
+                # ---- 深度模式：真实加载 + 真实合成 ----
+                # ASR 真实加载（不创建 VoiceSession/不开麦克风）
+                asr_ok = True
+                try:
+                    asr = create_asr(asr_cfg)
+                    if getattr(asr, "name", "") not in ("mock-asr",):
+                        # 真实模型：执行预热（加载模型 + 空推理）
+                        if hasattr(asr, "warmup"):
+                            await asyncio.get_running_loop().run_in_executor(None, asr.warmup)
+                        warmed = bool(getattr(asr, "_warmed_up", True))
+                        if not warmed:
+                            detail += "（ASR 模型预热中）"
+                        asr_ok = warmed
+                except Exception as e:
+                    detail += f"（ASR 加载失败: {str(e)[:60]}）"
+                    asr_ok = False
+                # TTS 真实合成（验证网络可达/后端可用）
+                tts_ok = True
+                try:
+                    tts = create_tts(tts_cfg)
+                    if getattr(tts, "name", "") not in ("mock-tts",):
+                        audio = await asyncio.get_running_loop().run_in_executor(
+                            None, lambda: tts.synthesize("自检")
+                        )
+                        tts_ok = audio is not None and len(getattr(audio, "pcm", b"")) > 0
+                        if not tts_ok:
+                            detail += "（TTS 合成失败）"
+                except Exception as e:
+                    detail += f"（TTS 失败: {str(e)[:60]}）"
+                    tts_ok = False
+                checks.append({"name": "语音模块", "ok": asr_ok and tts_ok, "detail": detail})
         except Exception as e:
             checks.append({"name": "语音模块", "ok": False, "detail": str(e)})
 
@@ -1030,6 +1083,55 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
     async def boot_restore(params):
         summary = await engine.restore_on_boot()
         return summary.to_dict()
+
+    # ================================================================
+    #  Vision (图片读取/视觉模型加载管理)
+    # ================================================================
+
+    @server.method("vision.read-image")
+    async def vision_read_image(params):
+        """读取本地图片 → base64（供前端预览/发送）。"""
+        import base64
+        import os
+
+        path = params.get("path", "")
+        try:
+            if not path or not os.path.isfile(path):
+                return {"ok": False, "error": "文件不存在"}
+            with open(path, "rb") as f:
+                data = f.read()
+            ext = os.path.splitext(path)[1].lower().lstrip(".")
+            mime = {
+                "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp",
+            }.get(ext, "application/octet-stream")
+            return {"ok": True, "base64": base64.b64encode(data).decode(), "mime": mime, "size": len(data)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("vision.load")
+    async def vision_load(params):
+        """主动加载视觉模型（调用方在需要时触发；Ollama keep_alive 驻留）。"""
+        try:
+            u = engine.vision.understand
+            if getattr(u, "name", "") == "mock-vision":
+                return {"ok": False, "message": "视觉模型未配置（mock 回退）"}
+            u.ensure_loaded()
+            return {"ok": True, "message": f"已加载 {u.model}"}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+
+    @server.method("vision.release")
+    async def vision_release(params):
+        """主动释放视觉模型（Ollama keep_alive=0 立即卸载，释放显存）。"""
+        try:
+            u = engine.vision.understand
+            if getattr(u, "name", "") == "mock-vision":
+                return {"ok": False, "message": "视觉模型未配置（mock 回退）"}
+            u.release()
+            return {"ok": True, "message": f"已释放 {u.model}"}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
 
     # ================================================================
     #  Voice Settings (配置读写)

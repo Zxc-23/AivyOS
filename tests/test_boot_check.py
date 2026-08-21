@@ -59,6 +59,39 @@ class TestBootCheck(AivyTestCase):
             self.assertTrue(mock_search.called)  # 真实检索被调用
             self.assertTrue(memory_check["ok"])
 
+    def test_boot_check_fast_default(self):
+        """默认 fast=True：语音检查仅依赖探测（不实例化 ASR/TTS、不加载模型）。"""
+        server, engine = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        with patch("aivyos_core.asr.manager.create_asr") as mock_asr, \
+             patch("aivyos_core.tts.manager.create_tts") as mock_tts:
+            result = asyncio.run(handlers["boot.check"]({}))
+        voice_check = next(c for c in result["checks"] if c["name"] == "语音模块")
+        self.assertIsInstance(voice_check["ok"], bool)
+        # fast 模式不应实例化 ASR/TTS 后端（避免加载模型拖慢启动）
+        mock_asr.assert_not_called()
+        mock_tts.assert_not_called()
+
+    def test_boot_check_deep_mode(self):
+        """fast=False：深度模式真实调用 warmup + TTS 合成。"""
+        from unittest.mock import MagicMock
+
+        server, engine = self._build_server()
+        handlers = {m: h for m, h in server._handlers.items()}
+        with patch("aivyos_core.asr.manager.create_asr") as mock_asr, \
+             patch("aivyos_core.tts.manager.create_tts") as mock_tts:
+            fake_asr = MagicMock(name="funasr", _warmed_up=True)
+            fake_asr.warmup = MagicMock()
+            fake_tts = MagicMock(name="edge-tts")
+            fake_tts.synthesize.return_value = MagicMock(pcm=b"audio")
+            mock_asr.return_value = fake_asr
+            mock_tts.return_value = fake_tts
+            result = asyncio.run(handlers["boot.check"]({"fast": False}))
+        voice_check = next(c for c in result["checks"] if c["name"] == "语音模块")
+        self.assertTrue(fake_asr.warmup.called)
+        self.assertTrue(fake_tts.synthesize.called)
+        self.assertIsInstance(voice_check["ok"], bool)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -327,8 +327,43 @@ export async function bridgeCall<T>(
 //  基础对话接口
 // ================================================================
 
-export async function sendChat(text: string, sessionId?: string): Promise<ChatReply> {
-  return bridgeCall<ChatReply>("chat.send", { text, session_id: sessionId ?? null });
+export interface ChatReply {
+  text: string;
+  session_id: string;
+  model: string;
+  route: RouteDecision;
+  latency_ms: number;
+  memory_hits: unknown[];
+  knowledge_hits?: { card: KnowledgeCard; score: number }[];
+  vision_used?: boolean;
+}
+
+export async function sendChat(
+  text: string,
+  sessionId?: string,
+  image?: { path?: string; b64?: string },
+): Promise<ChatReply> {
+  const params: Record<string, unknown> = { text, session_id: sessionId ?? null };
+  if (image?.path) params.image_path = image.path;
+  if (image?.b64) params.image_b64 = image.b64;
+  return bridgeCall<ChatReply>("chat.send", params);
+}
+
+/** 读取本地图片 → base64（拖拽预览用）。 */
+export async function readImagePreview(path: string): Promise<{
+  ok: boolean; base64?: string; mime?: string; size?: number; error?: string;
+}> {
+  return bridgeCall("vision.read-image", { path });
+}
+
+/** 主动加载视觉模型（需要时触发；Ollama keep_alive 驻留）。 */
+export async function loadVisionModel(): Promise<{ ok: boolean; message: string }> {
+  return bridgeCall("vision.load", {});
+}
+
+/** 主动释放视觉模型（释放显存）。 */
+export async function releaseVisionModel(): Promise<{ ok: boolean; message: string }> {
+  return bridgeCall("vision.release", {});
 }
 
 export async function fetchStatus(): Promise<StatusInfo> {
@@ -586,8 +621,8 @@ export async function runVibe(
 //  Boot / Self-check
 // ================================================================
 
-export async function runBootCheck(): Promise<BootCheckResult> {
-  return bridgeCall<BootCheckResult>("boot.check", {});
+export async function runBootCheck(fast = true): Promise<BootCheckResult> {
+  return bridgeCall<BootCheckResult>("boot.check", { fast });
 }
 
 // ================================================================
@@ -892,6 +927,40 @@ export async function listProviderModels(
   keyword?: string,
 ): Promise<ListModelsResult> {
   return bridgeCall("models.preset-list", { provider, keyword: keyword || "" });
+}
+
+export interface AddBackendResult {
+  ok: boolean;
+  name?: string;
+  provider?: string;
+  model?: string;
+  error?: string;
+}
+
+export interface RemoveBackendResult {
+  ok: boolean;
+  name?: string;
+  error?: string;
+}
+
+export async function addBackend(
+  name: string,
+  provider: string,
+  model: string,
+  baseUrl?: string,
+  apiKeyEnv?: string,
+): Promise<AddBackendResult> {
+  return bridgeCall("models.add", {
+    name,
+    provider,
+    model,
+    base_url: baseUrl || "",
+    api_key_env: apiKeyEnv || "",
+  });
+}
+
+export async function removeBackend(name: string): Promise<RemoveBackendResult> {
+  return bridgeCall("models.remove", { name });
 }
 
 // ================================================================

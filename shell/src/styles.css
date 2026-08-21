@@ -280,6 +280,29 @@ body {
 .chat-model-select:hover { border-color: var(--accent); }
 .chat-model-select option { background: var(--bg2); color: var(--ink); font-size: 11px; }
 .chat-quick { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.chat-attach {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; margin-bottom: 8px;
+  background: rgba(255,255,255,0.05);
+  border: 1px dashed var(--accent);
+  border-radius: 10px; width: fit-content; max-width: 100%;
+}
+.chat-attach-img {
+  width: 48px; height: 48px; border-radius: 6px; object-fit: cover;
+  border: 1px solid var(--glass-border);
+}
+.chat-attach-name {
+  font-size: 12px; color: var(--muted2);
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-attach-remove {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: rgba(239,68,68,0.2); border: 1px solid rgba(239,68,68,0.4);
+  color: #f87171; font-size: 10px; cursor: pointer; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.chat-attach-remove:hover { background: rgba(239,68,68,0.4); color: #fff; }
+.msg-image { border: 1px solid var(--glass-border); }
 .quick-chip {
   padding: 4px 12px; border-radius: 16px; font-size: 12px;
   background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
@@ -1276,4 +1299,125 @@ body {
   font-size: 11px;
   color: var(--muted2);
   padding: 4px 0;
+}
+
+/* 工具栏按钮组 */
+.ml-toolbar-buttons {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ml-add-btn {
+  font-size: 12px;
+  padding: 6px 14px;
+  border: 1px dashed var(--accent);
+  color: var(--accent);
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.ml-add-btn:hover {
+  background: rgba(79,172,254,0.1);
+  border-style: solid;
+}
+
+/* 下拉菜单 */
+.ml-dropdown-wrapper {
+  position: relative;
+}
+.ml-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 260px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--glass-bg2);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  z-index: 100;
+  padding: 6px 0;
+}
+.ml-dropdown-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 14px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.ml-dropdown-item:hover {
+  background: rgba(79,172,254,0.08);
+}
+.ml-dropdown-name {
+  font-size: 13px;
+  color: var(--ink);
+}
+.ml-dropdown-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.ml-dropdown-status.ok {
+  background: rgba(16,185,129,0.15);
+  color: #10b981;
+}
+.ml-dropdown-status.muted {
+  background: rgba(255,255,255,0.05);
+  color: var(--muted2);
+}
+.ml-dropdown-empty {
+  padding: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted2);
+}
+
+/* 自定义提供方表单 */
+.ml-custom-form {
+  margin-top: 14px;
+  background: var(--glass-bg2);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.ml-custom-form-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.02);
+}
+.ml-custom-form-header h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--ink);
+}
+.ml-custom-form-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 折叠内容区域 */
+.ml-collapse-content {
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 移动端适配 - 添加按钮 */
+@media (max-width: 768px) {
+  .ml-toolbar-buttons {
+    flex-wrap: wrap;
+  }
+  .ml-dropdown-menu {
+    min-width: 220px;
+    right: 0;
+  }
 }
