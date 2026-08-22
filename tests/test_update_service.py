@@ -98,24 +98,29 @@ class TestUpdateService(AivyTestCase):
         self.assertFalse(st["update_available"])
 
     def test_check_no_endpoint(self):
-        """check：未配置 endpoint → 诚实报错。"""
+        """check：未配置更新源（github_repo 与 endpoint 都空）→ 诚实报错。"""
         from aivyos_core.config import load_config, deep_merge
         from aivyos_core.update.service import UpdateService
 
         home = self._mk_home("ne")
-        cfg = deep_merge(load_config(), {"update": {"endpoint": ""}})
+        cfg = deep_merge(load_config(), {"update": {"github_repo": "", "endpoint": ""}})
         svc = UpdateService(cfg, home)
         r = svc.check()
         self.assertFalse(r["ok"])
         self.assertIn("未配置", r["error"])
 
     def test_check_server_unreachable(self):
-        """check：服务器不可达 → 诚实报错（不假装有更新）。"""
+        """check：endpoint 服务器不可达 → 诚实报错（不假装有更新）。"""
         from aivyos_core.config import load_config, deep_merge
         from aivyos_core.update.service import UpdateService
 
         home = self._mk_home("un")
-        cfg = deep_merge(load_config(), {"update": {"endpoint": "http://127.0.0.1:1/update/{target}/{arch}/{current_version}"}})
+        cfg = deep_merge(load_config(), {
+            "update": {
+                "github_repo": "",
+                "endpoint": "http://127.0.0.1:1/update/{target}/{arch}/{current_version}",
+            }
+        })
         svc = UpdateService(cfg, home)
         r = svc.check(timeout=2)
         self.assertFalse(r["ok"])
@@ -135,6 +140,7 @@ class TestUpdateService(AivyTestCase):
         srv_old, port_old = self._serve(signed_old)
         cfg = deep_merge(load_config(), {
             "update": {
+                "github_repo": "",
                 "endpoint": f"http://127.0.0.1:{port_old}/update/{{target}}/{{arch}}/{{current_version}}",
             }
         })
@@ -184,6 +190,7 @@ class TestUpdateService(AivyTestCase):
         srv, port = self._serve(signed)
         cfg = deep_merge(load_config(), {
             "update": {
+                "github_repo": "",
                 "endpoint": f"http://127.0.0.1:{port}/update/{{target}}/{{arch}}/{{current_version}}",
             }
         })
@@ -192,6 +199,133 @@ class TestUpdateService(AivyTestCase):
         self.assertFalse(r["ok"])
         self.assertIn("验证失败", r["error"])
         srv.shutdown()
+
+
+class TestGitHubReleases(AivyTestCase):
+    """GitHub Releases 更新源：publish → mock API → check → install。"""
+
+    def _mk_home(self, tag):
+        import uuid
+
+        home = os.path.join(os.getcwd(), ".aivyos_test", f"updgh_{tag}_{uuid.uuid4().hex[:6]}")
+        os.makedirs(os.path.join(home, "pki"), exist_ok=True)
+        return home
+
+    def _publish(self, home, version, pkg_files):
+        """用 publish_update.py 生成签名 zip + manifest（复用 UpdateService 的 pki）。"""
+        from aivyos_core.config import load_config
+        from aivyos_core.update.service import UpdateService
+
+        svc = UpdateService(load_config(), home)
+        svc._ensure_pki()
+        pki = os.path.join(home, "pki")
+        pkg = os.path.join(home, "pkg")
+        os.makedirs(pkg, exist_ok=True)
+        for name, content in pkg_files.items():
+            with open(os.path.join(pkg, name), "w", encoding="utf-8") as f:
+                f.write(content)
+        out = os.path.join(home, "out")
+        r = subprocess.run(
+            [sys.executable, "scripts/publish_update.py", "--root", pkg,
+             "--version", version, "--out", out, "--pki", pki],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        )
+        self.assertEqual(r.returncode, 0, f"publish 失败: {r.stderr[:300]}")
+        return os.path.join(out, f"aivyos-{version}.zip"), os.path.join(out, "signed", "manifest.signed.json")
+
+    def test_github_check_install(self):
+        """GitHub 源：mock API 返回 release → 下载 zip+manifest → 验签 → 安装。"""
+        import http.server
+        import uuid
+
+        from aivyos_core.config import load_config, deep_merge
+        from aivyos_core.update.service import UpdateService
+
+        home = os.path.join(os.getcwd(), ".aivyos_test", "gh_" + uuid.uuid4().hex[:6])
+        os.makedirs(home, exist_ok=True)
+        zip_path, manifest_path = self._publish(home, "1.5.0", {"core.py": "# v1.5.0\n"})
+
+        # mock GitHub API + asset 服务器
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if "/releases/latest" in self.path:
+                    body = json.dumps({
+                        "tag_name": "v1.5.0",
+                        "assets": [
+                            {"name": "aivyos-1.5.0.zip", "browser_download_url": f"http://127.0.0.1:{port}/assets/aivyos-1.5.0.zip"},
+                            {"name": "manifest.signed.json", "browser_download_url": f"http://127.0.0.1:{port}/assets/manifest.signed.json"},
+                        ],
+                    }).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(body)
+                elif self.path.startswith("/assets/"):
+                    name = self.path.split("/")[-1]
+                    f = manifest_path if name == "manifest.signed.json" else zip_path
+                    self.send_response(200)
+                    self.end_headers()
+                    with open(f, "rb") as fh:
+                        self.wfile.write(fh.read())
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        port = srv.server_address[1]
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+        # 客户端：同一 pki，repo 指向本地 mock
+        client_home = os.path.join(home, "client")
+        os.makedirs(client_home, exist_ok=True)
+        shutil.copytree(os.path.join(home, "pki"), os.path.join(client_home, "pki"))
+
+        cfg = deep_merge(load_config(), {"update": {"github_repo": "mock/repo", "current_version": "0.1.0"}})
+        svc = UpdateService(cfg, client_home)
+
+        api_base = f"http://127.0.0.1:{port}"
+        orig_json = UpdateService._download_json
+        orig_bytes = UpdateService._download_bytes
+
+        def fake_json(url, headers, timeout):
+            return orig_json(url.replace("https://api.github.com", api_base), headers, timeout)
+
+        def fake_bytes(url, headers, timeout):
+            return orig_bytes(url.replace("https://api.github.com", api_base), headers, timeout)
+
+        UpdateService._download_json = staticmethod(fake_json)
+        UpdateService._download_bytes = staticmethod(fake_bytes)
+        try:
+            r = svc.check(timeout=5)
+            self.assertTrue(r["ok"], r.get("error"))
+            self.assertTrue(r["update_available"])
+            self.assertEqual(r["version"], "1.5.0")
+            inst = svc.install()
+            self.assertTrue(inst["ok"], inst.get("error"))
+            st = svc.status()
+            self.assertIn("1.5.0", st["installed_versions"])
+            self.assertEqual(st["active_version"], "1.5.0")
+            self.assertIn("mock/repo", st["source"])
+        finally:
+            UpdateService._download_json = orig_json
+            UpdateService._download_bytes = orig_bytes
+            srv.shutdown()
+
+    def test_github_no_release(self):
+        """GitHub 源：仓库无 release → 诚实报错。"""
+        from aivyos_core.config import load_config, deep_merge
+        from aivyos_core.update.service import UpdateService
+
+        home = self._mk_home("ghn")
+        cfg = deep_merge(load_config(), {"update": {"github_repo": "nonexistent/repo"}})
+        svc = UpdateService(cfg, home)
+        r = svc.check(timeout=3)
+        self.assertFalse(r["ok"])
+        self.assertIn("GitHub", r["error"])
 
 
 if __name__ == "__main__":

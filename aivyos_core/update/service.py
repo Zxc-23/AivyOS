@@ -41,6 +41,8 @@ class UpdateService:
         u = cfg.get("update", {})
         self.enabled = bool(u.get("enabled", True))
         self.endpoint = str(u.get("endpoint", ""))
+        self.github_repo = str(u.get("github_repo", "")).strip()
+        self.github_token = str(u.get("github_token", "")).strip()
         self.current_version = str(u.get("current_version", "0.1.0"))
         self.check_interval_h = float(u.get("check_interval_h", 6))
         self.min_required = str(u.get("min_required_version", "0.0.0"))
@@ -144,6 +146,8 @@ class UpdateService:
             "current_version": self.current_version,
             "installed_versions": installed,
             "active_version": cur or self.current_version,
+            "source": self._state.get("source") or ("github:" + self.github_repo if self.github_repo else self.endpoint or "未配置"),
+            "github_repo": self.github_repo,
             "endpoint": self.endpoint,
             "check_interval_h": self.check_interval_h,
             "last_check": self._state.get("last_check"),
@@ -155,17 +159,176 @@ class UpdateService:
         }
 
     def check(self, timeout: float = 10.0) -> Dict[str, Any]:
-        """从 endpoint 拉取并验证 manifest，报告是否有新版本（不安装）。
+        """检查更新：GitHub Releases（若配置）或自建 endpoint。
 
-        服务器不可达 → 诚实返回 error（不假装有更新）。
+        拉取并验证 manifest → 报告新版本（不安装）。
+        源不可达 → 诚实返回 error（不假装有更新）。
         """
         if not self.enabled:
             return {"ok": False, "error": "自动更新已禁用 (update.enabled=false)"}
-        if not self.endpoint:
-            return {"ok": False, "error": "未配置更新服务器 endpoint"}
+
+        if self.github_repo:
+            return self._check_github(timeout=timeout)
+        return self._check_endpoint(timeout=timeout)
+
+    # ------------------------------------------------------------------
+    # 源 A：GitHub Releases
+    # ------------------------------------------------------------------
+    def _check_github(self, timeout: float = 10.0) -> Dict[str, Any]:
+        """从 GitHub Releases 检查更新：
+
+        1) GET /repos/{repo}/releases/latest → 最新 release（tag 即版本）
+        2) 找到 manifest.signed.json asset → 下载
+        3) 找到更新包 asset（*.zip / *.upd）→ 下载并解压到 .update_pending
+        4) 七步验签 → 报告新版本
+        """
+        import io
+        import json as _json
+        import urllib.request
+        import zipfile
+
+        api = f"https://api.github.com/repos/{self.github_repo}/releases/latest"
+        headers = {"User-Agent": f"AivyOS/{self.current_version}", "Accept": "application/vnd.github+json"}
+        if self.github_token:
+            headers["Authorization"] = f"Bearer {self.github_token}"
+        try:
+            release = self._download_json(api, headers, timeout)
+        except Exception as e:
+            self._last_check_error = f"GitHub Releases 不可达: {e}"
+            self._state["last_check"] = int(time.time())
+            self._state["last_check_result"] = "error"
+            self._state["update_available"] = False
+            self._save_state()
+            return {"ok": False, "error": self._last_check_error, "status": self.status()}
+
+        tag = str(release.get("tag_name", "")).lstrip("v")
+        if not Version.is_valid(tag):
+            self._last_check_error = f"最新 release 标签非法: {tag!r}"
+            self._state["last_check"] = int(time.time())
+            self._state["last_check_result"] = "error"
+            self._state["update_available"] = False
+            self._save_state()
+            return {"ok": False, "error": self._last_check_error, "status": self.status()}
+
+        if not Version.is_higher(tag, self.current_version):
+            # 已是最新（或降级标签）
+            self._state["last_check"] = int(time.time())
+            self._state["last_check_result"] = "ok"
+            self._state["update_available"] = False
+            self._state["available_version"] = None
+            self._state.pop("pending_manifest", None)
+            self._save_state()
+            return {
+                "ok": True,
+                "update_available": False,
+                "latest_version": tag,
+                "status": self.status(),
+            }
+
+        # 找 assets
+        assets = {a.get("name", ""): a.get("browser_download_url", "") for a in release.get("assets", [])}
+        manifest_url = assets.get("manifest.signed.json")
+        pkg_url = next((u for n, u in assets.items() if n.endswith(".zip") or n.endswith(".upd")), None)
+        if not manifest_url:
+            self._last_check_error = f"release v{tag} 缺少 manifest.signed.json asset"
+            self._state["last_check"] = int(time.time())
+            self._state["last_check_result"] = "error"
+            self._state["update_available"] = False
+            self._save_state()
+            return {"ok": False, "error": self._last_check_error, "status": self.status()}
+
+        # 下载 manifest + 更新包
+        pending = self.home / ".update_pending"
+        pending.mkdir(parents=True, exist_ok=True)
+        try:
+            signed = self._download_json(manifest_url, headers, timeout)
+            if pkg_url:
+                pkg_bytes = self._download_bytes(pkg_url, headers, timeout)
+                if pkg_url.endswith(".zip"):
+                    with zipfile.ZipFile(io.BytesIO(pkg_bytes)) as zf:
+                        zf.extractall(pending)
+                else:
+                    (pending / "update.bin").write_bytes(pkg_bytes)
+            else:
+                # 无更新包 asset：仅写入 manifest 供验签（全包哈希步会失败 → 诚实报错）
+                (pending / "manifest.signed.json").write_text(
+                    _json.dumps(signed, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+        except Exception as e:
+            self._last_check_error = f"下载更新资源失败: {e}"
+            self._state["last_check"] = int(time.time())
+            self._state["last_check_result"] = "error"
+            self._state["update_available"] = False
+            self._save_state()
+            return {"ok": False, "error": self._last_check_error, "status": self.status()}
+
+        # 七步验签
+        verifier = self._verifier()
+        new_version = str(signed.get("manifest", {}).get("version", ""))
+        try:
+            if not Version.is_valid(new_version):
+                raise ValueError(f"manifest 版本非法: {new_version}")
+            if not Version.is_higher(new_version, self.current_version):
+                verifier.last_error = f"非新版本或降级: {new_version} <= {self.current_version}"
+                raise ValueError(verifier.last_error)
+            ok = verifier.verify(signed, pending)
+        except Exception as e:
+            self._last_check_error = f"验证失败: {e}"
+            self._state["last_check"] = int(time.time())
+            self._state["last_check_result"] = "verify_failed"
+            self._state["update_available"] = False
+            self._save_state()
+            return {"ok": False, "error": self._last_check_error, "status": self.status()}
+
+        self._state["last_check"] = int(time.time())
+        if ok:
+            self._state["last_check_result"] = "ok"
+            self._state["update_available"] = True
+            self._state["available_version"] = new_version
+            self._state["available_type"] = signed.get("manifest", {}).get("update_type", "feature")
+            self._state["pending_manifest"] = signed
+            self._state["source"] = f"github:{self.github_repo}"
+            self._save_state()
+            return {
+                "ok": True,
+                "update_available": True,
+                "version": new_version,
+                "update_type": self._state["available_type"],
+                "source": self._state["source"],
+                "status": self.status(),
+            }
+        self._last_check_error = verifier.last_error or "验签失败"
+        self._state["last_check_result"] = "verify_failed"
+        self._state["update_available"] = False
+        self._save_state()
+        return {"ok": False, "error": self._last_check_error, "status": self.status()}
+
+    @staticmethod
+    def _download_json(url: str, headers: Dict[str, str], timeout: float) -> Dict[str, Any]:
+        import json as _json
         import urllib.request
 
-        # §13.1 端点模板: {target}/{arch}/{current_version}
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return _json.loads(resp.read().decode("utf-8", errors="replace"))
+
+    @staticmethod
+    def _download_bytes(url: str, headers: Dict[str, str], timeout: float) -> bytes:
+        import urllib.request
+
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read()
+
+    # ------------------------------------------------------------------
+    # 源 B：自建 endpoint
+    # ------------------------------------------------------------------
+    def _check_endpoint(self, timeout: float = 10.0) -> Dict[str, Any]:
+        """从自建 endpoint 拉取并验证 manifest（§13.1 端点模板）。"""
+        import urllib.request
+
+        if not self.endpoint:
+            return {"ok": False, "error": "未配置更新源（github_repo 或 endpoint）"}
         import platform
 
         target = "windows"

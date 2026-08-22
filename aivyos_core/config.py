@@ -247,6 +247,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "update": {
         "enabled": True,
         "check_interval_h": 6,          # §2.1 检测频率：每 6 小时
+        # 更新源二选一：
+        #   A) GitHub Releases：github_repo 填写 "owner/repo"（公开库无需 token；私有库配 github_token）
+        #   B) 自建服务器：endpoint 模板 {target}/{arch}/{current_version}
+        "github_repo": "Zxc-23/AivyOS",   # 如 "Zxc-23/AivyOS"（空 = 不使用 GitHub Releases）
+        "github_token": "",             # GitHub Personal Access Token（私有库需要；公开库留空）
         "endpoint": "https://api.aivyos.local/update/{target}/{arch}/{current_version}",
         "current_version": "0.1.0",
         "min_required_version": "0.0.0",

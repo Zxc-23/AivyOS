@@ -11,6 +11,13 @@
 import argparse
 import json
 import sys
+
+# 跨平台安全输出（Windows GBK 控制台打印 UTF-8 中文会崩）
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # 仓库根入 path

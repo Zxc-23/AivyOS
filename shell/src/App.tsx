@@ -4731,7 +4731,9 @@ export default function App() {
                           >↩ 回滚</button>
                         )}
                         <span style={{ fontSize: 10, color: "var(--muted2)", alignSelf: "center" }}>
-                          服务器: {updateStatus.endpoint || "未配置"}
+                          {updateStatus.github_repo
+                            ? <>源: GitHub Releases · <b>{updateStatus.github_repo}</b></>
+                            : <>服务器: {updateStatus.endpoint || "未配置"}</>}
                         </span>
                       </div>
                     </>

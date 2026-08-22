@@ -1227,6 +1227,8 @@ export interface UpdateStatus {
   current_version: string;
   installed_versions: string[];
   active_version: string;
+  source: string;
+  github_repo: string;
   endpoint: string;
   check_interval_h: number;
   last_check?: number;
