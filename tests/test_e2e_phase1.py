@@ -158,6 +158,28 @@ class TestPhase1E2E(AivyTestCase):
         self.assertTrue(any("小明" in h.text for h in hits))
         self.assertIn("小明", engine2.memfs.read("facts.md"))
 
+    def test_named_session_id_persists_and_resumes(self):
+        """命名会话：显式 session_id 持久化且可续接（不自动新建）。"""
+        from aivyos_core.server_entry import build_server
+
+        cfg = make_config()
+        engine = ChatEngine(cfg)
+        server = build_server(engine, cfg)
+        handlers = {m: h for m, h in server._handlers.items()}
+        # 第一次：指定 session_id
+        r1 = asyncio.run(handlers["chat.send"]({"text": "我叫小明", "session_id": "named-sess-1"}))
+        self.assertEqual(r1["session_id"], "named-sess-1")
+        # 第二次：同 id 续接（不再生成新会话）
+        r2 = asyncio.run(handlers["chat.send"]({"text": "记住我说的话", "session_id": "named-sess-1"}))
+        self.assertEqual(r2["session_id"], "named-sess-1")
+        # 会话列表只有一个 named-sess-1
+        sessions = asyncio.run(handlers["session.list"]({}))
+        named = [s for s in sessions if s["session_id"] == "named-sess-1"]
+        self.assertEqual(len(named), 1, "同 id 应复用同一会话")
+        # 无 id → 自动生成
+        r3 = asyncio.run(handlers["chat.send"]({"text": "无会话", "session_id": None}))
+        self.assertTrue(r3["session_id"].startswith("sess_"))
+
 
 if __name__ == "__main__":
     unittest.main()

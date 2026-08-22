@@ -92,6 +92,9 @@ class ChatEngine:
         if session_id and self._session_path(session_id).exists():
             data = json.loads(self._session_path(session_id).read_text(encoding="utf-8"))
             state = SessionState.from_snapshot(data)
+        elif session_id:
+            # 用户显式指定了 session_id 但文件不存在 → 用该 id 创建新会话（实现续接/命名会话）
+            state = SessionState(persona_name=self.persona.name, session_id=session_id)
         else:
             state = SessionState(persona_name=self.persona.name)
         return state
