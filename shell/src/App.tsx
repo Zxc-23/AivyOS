@@ -40,6 +40,8 @@ import {
   MarketSkill as MarketSkillType, MarketListResult, RemoteImportResult,
   listMarketSources, browseMarketSource, MarketSource as MarketSourceType,
   listTools, setToolEnabled, ManagedTool, ToolsResult,
+  getUpdateStatus, checkForUpdate, installUpdate, rollbackUpdate,
+  UpdateStatus, UpdateResult,
 } from "./chat";
 import {
   TrayStateName,
@@ -500,6 +502,11 @@ export default function App() {
   const [managedTools, setManagedTools] = useState<ManagedTool[]>([]);
   const [toolsLoading, setToolsLoading] = useState(false);
   const [toolFilter, setToolFilter] = useState<"all" | "enabled" | "disabled">("all");
+  // 更新中心
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [editingForm, setEditingForm] = useState<{
     providerId: string;
     apiKey: string;
@@ -1633,6 +1640,79 @@ export default function App() {
     }
   }, [bridgeReady, showNotification]);
 
+  /* ================================================================
+   *  Update（自动更新 §13）
+   * ================================================================ */
+  const loadUpdateStatus = useCallback(async () => {
+    try {
+      if (!bridgeReady) { setUpdateStatus(null); return; }
+      const st = await getUpdateStatus();
+      setUpdateStatus(st);
+      setUpdateError(st.error || null);
+    } catch (e) {
+      setUpdateError(e instanceof Error ? e.message : String(e));
+    }
+  }, [bridgeReady]);
+
+  const handleCheckUpdate = useCallback(async () => {
+    if (!bridgeReady) { showNotification("演示模式", "连接核心后可检查更新", "warning"); return; }
+    setUpdateChecking(true);
+    setUpdateError(null);
+    try {
+      const res = await checkForUpdate();
+      if (res.ok) {
+        if (res.update_available) {
+          showNotification("发现新版本", `v${res.version}（${res.update_type}）可用`, "success");
+        } else {
+          showNotification("已是最新", `当前版本 v${updateStatus?.current_version ?? "?"}`, "success");
+        }
+      } else {
+        setUpdateError(res.error || "检查失败");
+        showNotification("检查失败", res.error || "无法连接更新服务器", "warning");
+      }
+      if (res.status) setUpdateStatus(res.status);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setUpdateError(msg);
+      showNotification("检查失败", msg, "danger");
+    } finally {
+      setUpdateChecking(false);
+    }
+  }, [bridgeReady, showNotification, updateStatus?.current_version]);
+
+  const handleInstallUpdate = useCallback(async () => {
+    if (!bridgeReady) { showNotification("演示模式", "连接核心后可安装更新", "warning"); return; }
+    setUpdateInstalling(true);
+    setUpdateError(null);
+    try {
+      const res = await installUpdate();
+      if (res.ok) {
+        showNotification("更新完成", `已安装 v${res.version}，重启后生效`, "success");
+        if (res.status) setUpdateStatus(res.status);
+      } else {
+        setUpdateError(res.error || "安装失败");
+        showNotification("安装失败", res.error || "未知错误", "danger");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setUpdateError(msg);
+      showNotification("安装失败", msg, "danger");
+    } finally {
+      setUpdateInstalling(false);
+    }
+  }, [bridgeReady, showNotification]);
+
+  const handleRollbackUpdate = useCallback(async () => {
+    if (!bridgeReady) { showNotification("演示模式", "连接核心后可回滚更新", "warning"); return; }
+    const res = await rollbackUpdate();
+    if (res.ok) {
+      showNotification("已回滚", `当前版本 v${res.version}`, "success");
+      if (res.status) setUpdateStatus(res.status);
+    } else {
+      showNotification("回滚失败", res.error || "没有可回滚版本", "warning");
+    }
+  }, [bridgeReady, showNotification]);
+
   const resetAddModelDialog = useCallback(() => {
     setAddModelProvider("");
     setAddModelName("");
@@ -1913,9 +1993,10 @@ export default function App() {
       case "memory": loadMemory(); loadKnowledge(); break;
       case "skills": loadSkills(); void loadMarketSources(); void loadMarket("builtin", ""); break;
       case "tools": loadTools(); break;
+      case "settings": void loadUpdateStatus(); break;
       default: break;
     }
-  }, [nav, loadVoiceStatus, loadTasks, loadSchedules, runBoot, loadVoiceSettings, loadModels, loadMemory, loadKnowledge, loadSkills, loadTools, loadMarket, loadMarketSources]);
+  }, [nav, loadVoiceStatus, loadTasks, loadSchedules, runBoot, loadVoiceSettings, loadModels, loadMemory, loadKnowledge, loadSkills, loadTools, loadMarket, loadMarketSources, loadUpdateStatus]);
 
   useEffect(() => {
     if (nav !== "voice" || bridgeReady) return;
@@ -4576,6 +4657,89 @@ export default function App() {
                     ))}
                   </div>
                 </div>
+                <div className="settings-section-title">🔄 更新中心</div>
+                <div className="glass-card" style={{ padding: 14, marginBottom: 10 }}>
+                  {!bridgeReady ? (
+                    <div style={{ fontSize: 12, color: "var(--muted2)" }}>连接核心后显示更新状态</div>
+                  ) : updateStatus ? (
+                    <>
+                      {/* 版本信息 */}
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+                        <div className="models-stat" style={{ flex: 1, minWidth: 120 }}>
+                          <div className="label">当前版本</div>
+                          <div className="value" style={{ fontSize: 16 }}>v{updateStatus.current_version}</div>
+                        </div>
+                        <div className="models-stat" style={{ flex: 1, minWidth: 120 }}>
+                          <div className="label">生效版本</div>
+                          <div className="value" style={{ fontSize: 16 }}>v{updateStatus.active_version}</div>
+                        </div>
+                        <div className="models-stat" style={{ flex: 1, minWidth: 120 }}>
+                          <div className="label">检查间隔</div>
+                          <div className="value" style={{ fontSize: 16 }}>{updateStatus.check_interval_h}h</div>
+                        </div>
+                        <div className="models-stat" style={{ flex: 1, minWidth: 120 }}>
+                          <div className="label">更新状态</div>
+                          <div className="value" style={{
+                            fontSize: 14,
+                            color: updateStatus.update_available ? "var(--warning)" : "var(--success)",
+                          }}>
+                            {updateStatus.update_available ? `可用 v${updateStatus.available_version}` : "已是最新"}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 已安装版本 */}
+                      <div style={{ fontSize: 11, color: "var(--muted2)", marginBottom: 10 }}>
+                        已安装版本: {updateStatus.installed_versions.length > 0
+                          ? updateStatus.installed_versions.map(v => `v${v}`).join(" → ")
+                          : "无（首次运行）"}
+                        {updateStatus.last_check && ` · 最近检查: ${new Date(updateStatus.last_check * 1000).toLocaleString()}`}
+                      </div>
+
+                      {/* 错误信息 */}
+                      {(updateError || updateStatus.last_error) && (
+                        <div style={{
+                          fontSize: 11, color: "#f87171", marginBottom: 10, padding: 8,
+                          background: "rgba(239,68,68,0.08)", borderRadius: 6,
+                          border: "1px solid rgba(239,68,68,0.2)",
+                        }}>
+                          ⚠ {updateError || updateStatus.last_error}
+                        </div>
+                      )}
+
+                      {/* 操作按钮 */}
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          className="btn btn-approve"
+                          style={{ fontSize: 11, padding: "6px 14px" }}
+                          disabled={updateChecking}
+                          onClick={handleCheckUpdate}
+                        >{updateChecking ? "检查中..." : "🔍 检查更新"}</button>
+                        {updateStatus.update_available && (
+                          <button
+                            className="btn btn-approve"
+                            style={{ fontSize: 11, padding: "6px 14px", background: "linear-gradient(135deg,#f59e0b,#d97706)" }}
+                            disabled={updateInstalling}
+                            onClick={handleInstallUpdate}
+                          >{updateInstalling ? "安装中..." : `⬇ 安装 v${updateStatus.available_version}`}</button>
+                        )}
+                        {updateStatus.installed_versions.length > 1 && (
+                          <button
+                            className="btn btn-skip"
+                            style={{ fontSize: 11, padding: "6px 14px" }}
+                            onClick={handleRollbackUpdate}
+                          >↩ 回滚</button>
+                        )}
+                        <span style={{ fontSize: 10, color: "var(--muted2)", alignSelf: "center" }}>
+                          服务器: {updateStatus.endpoint || "未配置"}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 12, color: "var(--muted2)" }}>加载更新状态...</div>
+                  )}
+                </div>
+
                 <div className="settings-section-title">系统</div>
                 <div className="glass-card" style={{ padding: 14, marginBottom: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>

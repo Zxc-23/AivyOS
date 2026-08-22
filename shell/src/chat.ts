@@ -1215,3 +1215,54 @@ export async function updateConfig(
 ): Promise<{ ok: boolean; path?: string }> {
   return bridgeCall("config.update", { path, value });
 }
+
+// ================================================================
+//  Update（自动更新 §13）
+// ================================================================
+
+export interface UpdateStatus {
+  ok: boolean;
+  error?: string;
+  enabled: boolean;
+  current_version: string;
+  installed_versions: string[];
+  active_version: string;
+  endpoint: string;
+  check_interval_h: number;
+  last_check?: number;
+  last_check_result: string;
+  update_available: boolean;
+  available_version?: string;
+  available_type?: string;
+  last_error?: string;
+}
+
+export interface UpdateResult {
+  ok: boolean;
+  error?: string;
+  update_available?: boolean;
+  version?: string;
+  update_type?: string;
+  installed_to?: string;
+  status?: UpdateStatus;
+}
+
+/** 更新状态：当前版本 / 已安装版本 / 最近检查 / 可用更新。 */
+export async function getUpdateStatus(): Promise<UpdateStatus> {
+  return bridgeCall<UpdateStatus>("update.status", {});
+}
+
+/** 检查更新：拉取 manifest → 七步验签 → 报告新版本（不安装）。 */
+export async function checkForUpdate(): Promise<UpdateResult> {
+  return bridgeCall<UpdateResult>("update.check", {});
+}
+
+/** 安装已验证的可用更新。 */
+export async function installUpdate(): Promise<UpdateResult> {
+  return bridgeCall<UpdateResult>("update.install", {});
+}
+
+/** 回滚到上一版本。 */
+export async function rollbackUpdate(): Promise<UpdateResult> {
+  return bridgeCall<UpdateResult>("update.rollback", {});
+}

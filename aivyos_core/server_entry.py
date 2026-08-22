@@ -2090,6 +2090,53 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         target[parts[-1]] = value
         return {"ok": True, "path": path}
 
+    # ================================================================
+    #  Update（自动更新 §13）：status / check / install / rollback
+    # ================================================================
+    from pathlib import Path as _Path
+
+    _update_svc = None
+
+    def get_update_svc():
+        nonlocal _update_svc
+        if _update_svc is None:
+            from aivyos_core.update.service import UpdateService
+
+            _update_svc = UpdateService(cfg, _Path(cfg.get("home", ".")))
+        return _update_svc
+
+    @server.method("update.status")
+    async def update_status(params):
+        """更新状态：当前版本 / 已安装版本 / 最近检查 / 可用更新。"""
+        try:
+            return get_update_svc().status()
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("update.check")
+    async def update_check(params):
+        """检查更新：拉取 manifest → 七步验签 → 报告新版本（不安装）。"""
+        try:
+            return get_update_svc().check(timeout=float(params.get("timeout", 10)))
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("update.install")
+    async def update_install(params):
+        """安装已验证的可用更新。"""
+        try:
+            return get_update_svc().install()
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("update.rollback")
+    async def update_rollback(params):
+        """回滚到上一版本。"""
+        try:
+            return get_update_svc().rollback()
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     return server
 
 
@@ -2153,6 +2200,24 @@ async def amain(args) -> None:
             log.warning("启动预热语音模型失败（不影响使用，首次调用会自动预热）: %s", e)
 
     asyncio.get_running_loop().create_task(_warmup_voice())
+
+    # 启动就绪门：后台执行一次更新检查（§13.1 每 6h；不阻塞服务启动）
+    async def _startup_update_check() -> None:
+        try:
+            from pathlib import Path as _P
+            from aivyos_core.update.service import UpdateService
+
+            svc = UpdateService(cfg, _P(cfg.get("home", ".")))
+            result = svc.maybe_check(force=False)
+            if result:
+                if result.get("ok") and result.get("update_available"):
+                    log.info("发现新版本 %s（%s）", result.get("version"), result.get("update_type"))
+                else:
+                    log.info("更新检查完成: %s", result.get("error") or "无更新")
+        except Exception as e:
+            log.debug("启动更新检查失败（不影响使用）: %s", e)
+
+    asyncio.get_running_loop().create_task(_startup_update_check())
 
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
