@@ -253,8 +253,8 @@ class TestGitHubReleases(AivyTestCase):
                     body = json.dumps({
                         "tag_name": "v1.5.0",
                         "assets": [
-                            {"name": "aivyos-1.5.0.zip", "browser_download_url": f"http://127.0.0.1:{port}/assets/aivyos-1.5.0.zip"},
-                            {"name": "manifest.signed.json", "browser_download_url": f"http://127.0.0.1:{port}/assets/manifest.signed.json"},
+                            {"name": "aivyos-1.5.0.zip", "url": f"https://api.github.com/assets/aivyos-1.5.0.zip"},
+                            {"name": "manifest.signed.json", "url": f"https://api.github.com/assets/manifest.signed.json"},
                         ],
                     }).encode()
                     self.send_response(200)

@@ -225,10 +225,11 @@ class UpdateService:
                 "status": self.status(),
             }
 
-        # 找 assets
-        assets = {a.get("name", ""): a.get("browser_download_url", "") for a in release.get("assets", [])}
+        # 找 assets（用 API url：browser_download_url 对私有库不带 token 上下文会 404）
+        assets = {a.get("name", ""): a.get("url", "") for a in release.get("assets", [])}
         manifest_url = assets.get("manifest.signed.json")
-        pkg_url = next((u for n, u in assets.items() if n.endswith(".zip") or n.endswith(".upd")), None)
+        pkg_name = next((n for n in assets if n.endswith(".zip") or n.endswith(".upd")), None)
+        pkg_url = assets.get(pkg_name) if pkg_name else None
         if not manifest_url:
             self._last_check_error = f"release v{tag} 缺少 manifest.signed.json asset"
             self._state["last_check"] = int(time.time())
@@ -237,14 +238,15 @@ class UpdateService:
             self._save_state()
             return {"ok": False, "error": self._last_check_error, "status": self.status()}
 
-        # 下载 manifest + 更新包
+        # 下载 manifest + 更新包（asset API url 必须带 octet-stream 才返回文件内容）
+        asset_headers = {**headers, "Accept": "application/octet-stream"}
         pending = self.home / ".update_pending"
         pending.mkdir(parents=True, exist_ok=True)
         try:
-            signed = self._download_json(manifest_url, headers, timeout)
+            signed = self._download_json(manifest_url, asset_headers, timeout)
             if pkg_url:
-                pkg_bytes = self._download_bytes(pkg_url, headers, timeout)
-                if pkg_url.endswith(".zip"):
+                pkg_bytes = self._download_bytes(pkg_url, asset_headers, timeout)
+                if pkg_name.endswith(".zip"):
                     with zipfile.ZipFile(io.BytesIO(pkg_bytes)) as zf:
                         zf.extractall(pending)
                 else:
