@@ -79,7 +79,7 @@ def _is_exit_command(text: str, exit_words=DEFAULT_EXIT_WORDS) -> bool:
     return False
 
 
-def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
+def build_server(engine: ChatEngine, cfg: dict, stop_event: "asyncio.Event | None" = None) -> AivyIpcServer:
     ipc_cfg = cfg.get("ipc", {})
     server = AivyIpcServer(
         host=ipc_cfg.get("host", "127.0.0.1"),
@@ -2137,6 +2137,15 @@ def build_server(engine: ChatEngine, cfg: dict) -> AivyIpcServer:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    @server.method("core.shutdown")
+    async def core_shutdown(params):
+        """优雅关闭核心进程（外壳负责 respawn，实现热重启）。"""
+        if stop_event is None:
+            return {"ok": False, "error": "核心未启用远程关闭"}
+        # 先让本响应返回给调用方，再触发停止
+        asyncio.get_running_loop().call_later(0.3, stop_event.set)
+        return {"ok": True, "shutting_down": True}
+
     return server
 
 
@@ -2165,7 +2174,8 @@ async def amain(args) -> None:
                 break
 
     engine = ChatEngine(cfg)
-    server = build_server(engine, cfg)
+    stop = asyncio.Event()
+    server = build_server(engine, cfg, stop_event=stop)
     try:
         await server.start()
     except OSError as e:
@@ -2219,7 +2229,7 @@ async def amain(args) -> None:
 
     asyncio.get_running_loop().create_task(_startup_update_check())
 
-    stop = asyncio.Event()
+    # stop 事件已在 build_server 前创建并传入（core.shutdown 复用同一事件）
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             asyncio.get_running_loop().add_signal_handler(sig, stop.set)

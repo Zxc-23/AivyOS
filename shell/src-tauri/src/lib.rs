@@ -316,6 +316,172 @@ fn ping() -> Value {
     json!({ "pong": true, "shell": "aivyos-shell" })
 }
 
+/// 热重启 Python 核心：优雅关闭（core.shutdown）→ 超时强杀 → 重新拉起并重连。
+/// 更新安装后应用新版本用；UI 进程不退出，实现"热更新生效"。
+#[tauri::command]
+async fn restart_core(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, CoreHandle>,
+) -> Result<Value, String> {
+    // 外部核心（非本应用 spawn，如手动启动的服务）无法由我们重启
+    let owns_child = state.0._child.lock().await.is_some();
+    if !owns_child {
+        return Err("当前 Python 核心由外部进程提供（非本应用拉起），请手动重启该进程".into());
+    }
+
+    // 优雅关闭：核心响应后 0.3s 自行退出（见 server_entry core.shutdown）；失败则走下方强杀
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        state.call("core.shutdown", json!({})),
+    )
+    .await;
+
+    // 标记未就绪，restart 期间拒绝新调用
+    state.0.ready.store(false, std::sync::atomic::Ordering::SeqCst);
+
+    // 等端口释放（最多 5s）
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let probe = tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            TcpStream::connect((IPC_HOST, IPC_PORT)),
+        )
+        .await;
+        if !matches!(probe, Ok(Ok(_))) {
+            break; // 连不上 = 核心已退出
+        }
+        if std::time::Instant::now() > deadline {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    // 子进程仍在（优雅关闭失败）则强杀
+    {
+        let mut guard = state.0._child.lock().await;
+        if let Some(mut c) = guard.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+
+    // 重新拉起 + 重连（boot_core 内含最多 30s 端口等待）
+    boot_core(state.inner().clone(), app).await;
+
+    if state.0.ready.load(std::sync::atomic::Ordering::SeqCst) {
+        Ok(json!({ "ok": true }))
+    } else {
+        Err("核心重启后未能就绪，请查看终端日志".into())
+    }
+}
+
+// ---------- 核心进程拉起 + 桥接 actor 初始化 ----------
+
+/// 找 Python → （端口未占用时）spawn 核心 → 轮询端口就绪 → 安装 actor。
+/// 初次启动与热重启（restart_core）共用。
+async fn boot_core(handle: CoreHandle, app_handle: tauri::AppHandle) {
+    // 找 python
+    let python = match find_python() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[AivyOS] 找 Python 失败: {e}");
+            eprintln!("[AivyOS] 提示：请在 f:\\AivyOS\\aivyos 目录执行 `python -m aivyos_core.server_entry --mode auto`");
+            return;
+        }
+    };
+    println!("[AivyOS] Python: {}", python.display());
+
+    // 探测端口是否已监听
+    let port_alive = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        TcpStream::connect((IPC_HOST, IPC_PORT)),
+    )
+    .await;
+
+    let child: Option<std::process::Child> =
+        if matches!(port_alive, Ok(Ok(_))) {
+            println!("[AivyOS] 端口 {}:{} 已在监听，复用现有进程", IPC_HOST, IPC_PORT);
+            None
+        } else {
+            // 向上查找包含 aivyos_core/ 的目录作为 Python 根路径
+            // cargo run 时 cwd 为 shell/src-tauri，需往上 2 层到达 aivyos/
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let mut aivyos_root = cwd.clone();
+            for _ in 0..5 {
+                if aivyos_root.join("aivyos_core").is_dir() {
+                    break;
+                }
+                if !aivyos_root.pop() {
+                    break;
+                }
+            }
+
+            // 设置 PYTHONPATH 环境变量，确保 Python 能找到 aivyos_core 模块
+            let pythonpath = std::env::var("PYTHONPATH")
+                .unwrap_or_default();
+            let mut new_pythonpath = aivyos_root.to_string_lossy().to_string();
+            if !pythonpath.is_empty() {
+                new_pythonpath.push(';');
+                new_pythonpath.push_str(&pythonpath);
+            }
+            println!("[AivyOS] PYTHONPATH = {}", new_pythonpath);
+            println!("[AivyOS] cwd = {}", aivyos_root.display());
+
+            match std::process::Command::new(&python)
+                .args(["-m", "aivyos_core.server_entry", "--mode", "auto"])
+                .current_dir(&aivyos_root)
+                .env("PYTHONPATH", &new_pythonpath)
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .spawn()
+            {
+                Ok(c) => {
+                    println!("[AivyOS] Python 核心 PID={}，等待端口就绪…", c.id());
+                    Some(c)
+                }
+                Err(e) => {
+                    eprintln!("[AivyOS] spawn Python 核心失败: {e}");
+                    return;
+                }
+            }
+        };
+
+    // 轮询端口（最多 30s）
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(CORE_BOOT_TIMEOUT_SECS);
+    let stream = loop {
+        if std::time::Instant::now() > deadline {
+            eprintln!(
+                "[AivyOS] 等待 IPC 端口超时: {}:{}（请检查 Python 核心是否正常启动）",
+                IPC_HOST, IPC_PORT
+            );
+            return;
+        }
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            TcpStream::connect((IPC_HOST, IPC_PORT)),
+        )
+        .await
+        {
+            Ok(Ok(s)) => break s,
+            _ => tokio::time::sleep(std::time::Duration::from_millis(300)).await,
+        }
+    };
+
+    // 启动 actor：创建 (tx, rx)，把 tx 放进 CoreHandle
+    let (tx, rx) = mpsc::channel::<ReqEnvelope>(128);
+    handle.install(tx, child).await;
+    println!(
+        "[AivyOS] ✅ 桥接就绪（tcp {}:{}），前端输入框可立即使用",
+        IPC_HOST, IPC_PORT
+    );
+
+    let bridge_app_handle = app_handle.clone();
+    tauri::async_runtime::handle().spawn(async move {
+        bridge_task_actor(stream, rx, bridge_app_handle).await;
+    });
+}
+
 // ---------- 主入口 ----------
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -348,111 +514,12 @@ pub fn run() {
 
             // 后台启动 Python 核心 & bridge actor（不阻塞 setup）
             rt.spawn(async move {
-                // 找 python
-                let python = match find_python() {
-                    Ok(p) => p,
-                    Err(e) => {
-                        eprintln!("[AivyOS] 找 Python 失败: {e}");
-                        eprintln!("[AivyOS] 提示：请在 f:\\AivyOS\\aivyos 目录执行 `python -m aivyos_core.server_entry --mode auto`");
-                        return;
-                    }
-                };
-                println!("[AivyOS] Python: {}", python.display());
-
-                // 探测端口是否已监听
-                let port_alive = tokio::time::timeout(
-                    std::time::Duration::from_millis(500),
-                    TcpStream::connect((IPC_HOST, IPC_PORT)),
-                )
-                .await;
-
-                let child: Option<std::process::Child> =
-                    if matches!(port_alive, Ok(Ok(_))) {
-                        println!("[AivyOS] 端口 {}:{} 已在监听，复用现有进程", IPC_HOST, IPC_PORT);
-                        None
-                    } else {
-                        // 向上查找包含 aivyos_core/ 的目录作为 Python 根路径
-                        // cargo run 时 cwd 为 shell/src-tauri，需往上 2 层到达 aivyos/
-                        let cwd = std::env::current_dir().unwrap_or_default();
-                        let mut aivyos_root = cwd.clone();
-                        for _ in 0..5 {
-                            if aivyos_root.join("aivyos_core").is_dir() {
-                                break;
-                            }
-                            if !aivyos_root.pop() {
-                                break;
-                            }
-                        }
-                        
-                        // 设置 PYTHONPATH 环境变量，确保 Python 能找到 aivyos_core 模块
-                        let pythonpath = std::env::var("PYTHONPATH")
-                            .unwrap_or_default();
-                        let mut new_pythonpath = aivyos_root.to_string_lossy().to_string();
-                        if !pythonpath.is_empty() {
-                            new_pythonpath.push(';');
-                            new_pythonpath.push_str(&pythonpath);
-                        }
-                        println!("[AivyOS] PYTHONPATH = {}", new_pythonpath);
-                        println!("[AivyOS] cwd = {}", aivyos_root.display());
-
-                        match std::process::Command::new(&python)
-                            .args(["-m", "aivyos_core.server_entry", "--mode", "auto"])
-                            .current_dir(&aivyos_root)
-                            .env("PYTHONPATH", &new_pythonpath)
-                            .stdout(std::process::Stdio::inherit())
-                            .stderr(std::process::Stdio::inherit())
-                            .spawn()
-                        {
-                            Ok(c) => {
-                                println!("[AivyOS] Python 核心 PID={}，等待端口就绪…", c.id());
-                                Some(c)
-                            }
-                            Err(e) => {
-                                eprintln!("[AivyOS] spawn Python 核心失败: {e}");
-                                return;
-                            }
-                        }
-                    };
-
-                // 轮询端口（最多 30s）
-                let deadline = std::time::Instant::now()
-                    + std::time::Duration::from_secs(CORE_BOOT_TIMEOUT_SECS);
-                let stream = loop {
-                    if std::time::Instant::now() > deadline {
-                        eprintln!(
-                            "[AivyOS] 等待 IPC 端口超时: {}:{}（请检查 Python 核心是否正常启动）",
-                            IPC_HOST, IPC_PORT
-                        );
-                        return;
-                    }
-                    match tokio::time::timeout(
-                        std::time::Duration::from_secs(1),
-                        TcpStream::connect((IPC_HOST, IPC_PORT)),
-                    )
-                    .await
-                    {
-                        Ok(Ok(s)) => break s,
-                        _ => tokio::time::sleep(std::time::Duration::from_millis(300)).await,
-                    }
-                };
-
-                // 启动 actor：创建 (tx, rx)，把 tx 放进 CoreHandle
-                let (tx, rx) = mpsc::channel::<ReqEnvelope>(128);
-                handle.install(tx, child).await;
-                println!(
-                    "[AivyOS] ✅ 桥接就绪（tcp {}:{}），前端输入框可立即使用",
-                    IPC_HOST, IPC_PORT
-                );
-
-                let bridge_app_handle = app_handle.clone();
-                tauri::async_runtime::handle().spawn(async move {
-                    bridge_task_actor(stream, rx, bridge_app_handle).await;
-                });
+                boot_core(handle, app_handle).await;
             });
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![bridge, ping, tray::set_tray_state])
+        .invoke_handler(tauri::generate_handler![bridge, ping, restart_core, tray::set_tray_state])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

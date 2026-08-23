@@ -40,7 +40,7 @@ import {
   MarketSkill as MarketSkillType, MarketListResult, RemoteImportResult,
   listMarketSources, browseMarketSource, MarketSource as MarketSourceType,
   listTools, setToolEnabled, ManagedTool, ToolsResult,
-  getUpdateStatus, checkForUpdate, installUpdate, rollbackUpdate,
+  getUpdateStatus, checkForUpdate, installUpdate, rollbackUpdate, restartCore,
   UpdateStatus, UpdateResult,
 } from "./chat";
 import {
@@ -506,6 +506,7 @@ export default function App() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [updateRestarting, setUpdateRestarting] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [editingForm, setEditingForm] = useState<{
     providerId: string;
@@ -1687,7 +1688,7 @@ export default function App() {
     try {
       const res = await installUpdate();
       if (res.ok) {
-        showNotification("更新完成", `已安装 v${res.version}，重启后生效`, "success");
+        showNotification("更新完成", `已安装 v${res.version}，点「🔄 重启生效」应用`, "success");
         if (res.status) setUpdateStatus(res.status);
       } else {
         setUpdateError(res.error || "安装失败");
@@ -1712,6 +1713,29 @@ export default function App() {
       showNotification("回滚失败", res.error || "没有可回滚版本", "warning");
     }
   }, [bridgeReady, showNotification]);
+
+  const handleRestartCore = useCallback(async () => {
+    if (!bridgeReady) { showNotification("演示模式", "热重启仅在桌面端可用", "warning"); return; }
+    setUpdateRestarting(true);
+    setUpdateError(null);
+    showNotification("热重启中", "正在重启核心，几秒后自动恢复…", "warning");
+    try {
+      const res = await restartCore();
+      if (res.ok) {
+        showNotification("重启完成", "核心已热重启，更新已生效", "success");
+      } else {
+        setUpdateError(res.error || "重启失败");
+        showNotification("重启失败", res.error || "未知错误", "danger");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setUpdateError(msg);
+      showNotification("重启失败", msg, "danger");
+    } finally {
+      setUpdateRestarting(false);
+      try { await loadUpdateStatus(); } catch { /* 核心刚重启，稍后手动刷新 */ }
+    }
+  }, [bridgeReady, showNotification, loadUpdateStatus]);
 
   const resetAddModelDialog = useCallback(() => {
     setAddModelProvider("");
@@ -4730,6 +4754,13 @@ export default function App() {
                             onClick={handleRollbackUpdate}
                           >↩ 回滚</button>
                         )}
+                        <button
+                          className="btn btn-approve"
+                          style={{ fontSize: 11, padding: "6px 14px", background: updateStatus.last_check_result === "installed" ? "linear-gradient(135deg,#10b981,#059669)" : undefined }}
+                          disabled={updateRestarting}
+                          onClick={handleRestartCore}
+                          title="热重启 Python 核心（更新安装后点此生效，无需重启整个应用）"
+                        >{updateRestarting ? "重启中..." : "🔄 重启生效"}</button>
                         <span style={{ fontSize: 10, color: "var(--muted2)", alignSelf: "center" }}>
                           {updateStatus.github_repo
                             ? <>源: GitHub Releases · <b>{updateStatus.github_repo}</b></>

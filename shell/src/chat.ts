@@ -1268,3 +1268,12 @@ export async function installUpdate(): Promise<UpdateResult> {
 export async function rollbackUpdate(): Promise<UpdateResult> {
   return bridgeCall<UpdateResult>("update.rollback", {});
 }
+
+/** 热重启 Python 核心（Tauri 命令，非 bridge）：更新安装后应用新版本，UI 不退出。 */
+export async function restartCore(): Promise<{ ok: boolean; error?: string }> {
+  if (inTauri) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke("restart_core");
+  }
+  throw new Error("演示模式：热重启仅在桌面端可用。");
+}
