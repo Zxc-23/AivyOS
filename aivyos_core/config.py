@@ -203,7 +203,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     # ---- Phase 2 Week 5：MCP 工具层（§5）----
     "mcp": {
-        "enabled_servers": ["filesystem", "shell", "code_exec", "office", "search", "screenshot", "memory", "browser"],
+        "enabled_servers": ["filesystem", "shell", "code_exec", "office", "search", "screenshot", "memory", "browser", "workbench"],
         "allowed_dirs": [],          # filesystem 白名单（相对 home 解析；空=仅 home）
         "scratch_dir": ".aivyos_mcp_scratch",  # code-exec/office 工作目录
         "shell_timeout_s": 30,
@@ -215,6 +215,31 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "scheduler": {
         "timezone": "local",
         "tick_s": 5,                 # 调度循环 tick
+    },
+    # ---- 双模型协同工作台（workbench 计划书 Phase 1）----
+    "workbench": {
+        "cc_switch": {
+            "enabled": True,         # 读取 cc-switch SQLite（只读）获取双 CLI 凭据
+            "db_path": "",           # 空则自动探测 ~/.cc-switch/cc-switch.db
+        },
+        "agents": {
+            "claude_code": {
+                "enabled": True,
+                "cli_path": "claude",
+                # cc-switch 不可用时的降级凭据（api_key 非空才生效）
+                "manual": {"api_key": "", "base_url": "", "model": ""},
+            },
+            "codex": {
+                "enabled": True,
+                "cli_path": "codex",
+                "manual": {"api_key": "", "base_url": ""},
+            },
+        },
+        "collaboration": {
+            "default_mode": "sequential",   # sequential | parallel | human_in_the_loop
+            "auto_open_vscode": True,       # 实现类任务产出文件后自动在 VS Code 打开
+        },
+        "timeout_s": 300,            # 子进程默认超时（长任务可调大）
     },
     # ---- Phase 2 Week 6：代码生成（§10 一句话做软件 / §11 预览）----
     "codegen": {

@@ -8,8 +8,10 @@ from aivyos_core.mcp.servers.office import OfficeServer
 from aivyos_core.mcp.servers.screenshot import ScreenshotServer
 from aivyos_core.mcp.servers.search import SearchServer
 from aivyos_core.mcp.servers.shell import ShellServer
+from aivyos_core.mcp.servers.workbench import WorkbenchServer
 
 __all__ = [
     "FilesystemServer", "ShellServer", "CodeExecServer", "BrowserServer",
     "OfficeServer", "SearchServer", "ScreenshotServer", "MemoryServer",
+    "WorkbenchServer",
 ]

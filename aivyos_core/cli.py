@@ -11,6 +11,8 @@ REPL 命令：
   /mem <文本>    写入记忆        /memls                 列出记忆
   /routes        查看路由状态    /sessions              列出会话
   /status        系统状态        /help /quit
+  /claude <需求>  Claude 实现    /codex <提示>  调用 Codex
+  /review        Codex 审查      /compare <问题> 双模型对比   /vscode <路径> VS Code 打开
 """
 
 from __future__ import annotations
@@ -34,8 +36,32 @@ HELP_TEXT = """可用命令：
   /routes             查看 LLM 路由状态
   /sessions           列出会话
   /status             系统状态
+  /claude <需求>       调用 Claude Code 实现（双模型工作台）
+  /codex <提示>        调用 Codex / ChatGPT
+  /review             用 Codex 审查最近一次 Claude 输出
+  /compare <问题>      并行调用双模型并对比
+  /vscode <路径>       在 VS Code 打开文件/目录
   /help               显示帮助
   /quit               退出"""
+
+
+def _get_workbench(engine: ChatEngine):
+    """惰性创建 WorkbenchService（挂在 engine 上复用内存态）。"""
+    wb = getattr(engine, "_workbench", None)
+    if wb is None:
+        from aivyos_core.workbench.service import WorkbenchService
+
+        wb = WorkbenchService(engine.config)
+        engine._workbench = wb
+    return wb
+
+
+def _print_agent_result(res) -> None:
+    if res.ok:
+        print(res.output or "（无输出）")
+        print(f"  [{res.agent}] 退出码 {res.exit_code}  耗时 {res.elapsed_s:.1f}s")
+    else:
+        print(f"  [{res.agent}] 失败: {res.error}")
 
 
 async def run_once(engine: ChatEngine, text: str, session_id: str | None = None) -> str:
@@ -124,6 +150,44 @@ async def handle_command(engine: ChatEngine, line: str, session_id: str | None) 
             print(f"  {s['session_id']}  msgs={s['messages']}  更新={s['updated_at']}")
     elif cmd == "/status":
         print(json.dumps(engine.status(), ensure_ascii=False, indent=2))
+    elif cmd == "/claude":
+        if not args:
+            print("用法：/claude <需求>")
+            return
+        wb = _get_workbench(engine)
+        print("Claude Code 执行中（可能耗时较长）...")
+        _print_agent_result(await wb.run_claude(" ".join(args)))
+        if wb.last_notice:
+            print(f"  提示: {wb.last_notice}")
+    elif cmd == "/codex":
+        if not args:
+            print("用法：/codex <提示>")
+            return
+        wb = _get_workbench(engine)
+        print("Codex 执行中（可能耗时较长）...")
+        _print_agent_result(await wb.run_codex(" ".join(args)))
+        if wb.last_notice:
+            print(f"  提示: {wb.last_notice}")
+    elif cmd == "/review":
+        wb = _get_workbench(engine)
+        print("Codex 审查中...")
+        _print_agent_result(await wb.review())
+    elif cmd == "/compare":
+        if not args:
+            print("用法：/compare <问题>")
+            return
+        wb = _get_workbench(engine)
+        print("双模型并行执行中...")
+        results = await wb.compare(" ".join(args))
+        for agent in ("claude", "codex"):
+            r = results[agent]
+            print(f"\n--- {agent} ({'成功' if r['ok'] else '失败'}) ---")
+            print(r["output"] if r["ok"] else r["error"])
+    elif cmd == "/vscode":
+        if not args:
+            print("用法：/vscode <路径>")
+            return
+        _print_agent_result(await _get_workbench(engine).open_vscode(args[0]))
     elif cmd == "/quit":
         print("再见。")
         raise SystemExit(0)

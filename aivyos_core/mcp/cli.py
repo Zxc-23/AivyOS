@@ -26,7 +26,7 @@ from aivyos_core.mcp.manager import ToolManager
 from aivyos_core.mcp.server import McpServer
 from aivyos_core.mcp.servers import (
     BrowserServer, CodeExecServer, FilesystemServer, MemoryServer,
-    OfficeServer, ScreenshotServer, SearchServer, ShellServer,
+    OfficeServer, ScreenshotServer, SearchServer, ShellServer, WorkbenchServer,
 )
 from aivyos_core.mcp.types import MRTRRequest, PermissionLevel, ToolResult
 
@@ -47,6 +47,7 @@ SERVERS = {
     "search": lambda cfg, home: SearchServer(searxng_url=cfg.get("searxng_url")),
     "screenshot": lambda cfg, home: ScreenshotServer(),
     "memory": None,  # 需要 engine.memory，由 build_manager 注入
+    "workbench": lambda cfg, home: WorkbenchServer(),
 }
 
 
