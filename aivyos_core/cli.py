@@ -40,6 +40,8 @@ HELP_TEXT = """可用命令：
   /codex <提示>        调用 Codex / ChatGPT
   /review             用 Codex 审查最近一次 Claude 输出
   /compare <问题>      并行调用双模型并对比
+  /flow <模板> <需求>  协作模板：implement_then_review | parallel_design | doc_after_api
+  /diffreview [路径]   捕获 git diff 交 Codex 审查（默认当前目录）
   /vscode <路径>       在 VS Code 打开文件/目录
   /help               显示帮助
   /quit               退出"""
@@ -188,6 +190,24 @@ async def handle_command(engine: ChatEngine, line: str, session_id: str | None) 
             print("用法：/vscode <路径>")
             return
         _print_agent_result(await _get_workbench(engine).open_vscode(args[0]))
+    elif cmd == "/flow":
+        if len(args) < 2:
+            print("用法：/flow <implement_then_review|parallel_design|doc_after_api> <需求>")
+            return
+        wb = _get_workbench(engine)
+        template, prompt = args[0], args[1]
+        print(f"协作模板 {template} 执行中...")
+        result = await wb.run_template(template, prompt)
+        for i, s in enumerate(result["steps"], 1):
+            print(f"\n--- 步骤 {i}: {s['name']} ({'成功' if s['ok'] else '失败'}, {s['elapsed_s']}s) ---")
+            print(s["output"] if s["ok"] else s["error"])
+        if not result["ok"]:
+            print(f"\n模板未完成: {result.get('error', '')}")
+    elif cmd == "/diffreview":
+        wb = _get_workbench(engine)
+        cwd = args[0] if args else "."
+        print(f"捕获 {cwd} 的 git diff 并交 Codex 审查...")
+        _print_agent_result(await wb.review_diff(cwd))
     elif cmd == "/quit":
         print("再见。")
         raise SystemExit(0)

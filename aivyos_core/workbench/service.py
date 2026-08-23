@@ -127,6 +127,22 @@ class WorkbenchService:
     async def open_vscode(self, path: str) -> AgentResult:
         return await self.vscode.open(path)
 
+    async def run_template(self, template: str, prompt: str,
+                           cwd: Optional[str] = None) -> Dict[str, Any]:
+        """运行预置协作模板（§4.2.2）：implement_then_review / parallel_design / doc_after_api。"""
+        from aivyos_core.workbench.templates import run_template
+
+        return await run_template(template, prompt, self.run_claude, self.run_codex, cwd=cwd)
+
+    async def review_diff(self, cwd: str) -> AgentResult:
+        """捕获 cwd 的 git diff 并交 Codex 审查（§4.2.3 人工确认闭环）。"""
+        from aivyos_core.workbench.diff import build_review_prompt, capture_diff
+
+        diff = await capture_diff(cwd)
+        if not diff.ok:
+            return AgentResult(agent="codex", error=diff.error)
+        return await self.run_codex(build_review_prompt(diff.output), cwd=cwd)
+
     def status(self) -> Dict[str, Any]:
         return {
             "cc_switch": {"enabled": self.cc_switch_enabled, "db_path": str(self.reader.db_path)},
