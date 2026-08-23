@@ -25,6 +25,7 @@ shell/src-tauri/target/
 .aivyos_workspace/
 .aivyos_mcp_scratch/
 *.log
+security_events.jsonl
 
 # Rust 工具链（沙箱隔离安装到工作区，不入库）
 .rustup/
