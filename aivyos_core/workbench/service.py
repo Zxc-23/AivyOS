@@ -71,9 +71,10 @@ class WorkbenchService:
                 ProviderEnv(app_type=app_type, name="手动配置", env=env, source="aivyos-config"),
                 "未检测到 cc-switch 可用配置，已使用 AivyOS 手动配置",
             )
+        section = "claude_code" if app_type == "claude" else app_type
         return None, (
             f"未检测到 cc-switch 的 {app_type} provider，且未配置 "
-            f"workbench.agents.{app_type}.manual 手动凭据"
+            f"workbench.agents.{section}.manual 手动凭据"
         )
 
     # ------------------------------------------------------------------
