@@ -76,6 +76,17 @@ class TestClaudeDispatcher(AivyTestCase):
         self.assertTrue(res.ok, res.error)
         self.assertIn("HELLO AIVYOS", res.output)
 
+    def test_strip_noise_removes_unknown_model_warning(self):
+        """unknown-model 警告段被过滤，正文保留。"""
+        from aivyos_core.workbench.dispatchers.claude_code import _strip_noise
+
+        noisy = (
+            '"kimi-k2.7-code" is not a model this version of Claude Code recognizes, so auto-compact...\n'
+            'set CLAUDE_CODE_MAX_CONTEXT_TOKENS to its real window\n'
+            '我是正经回答。'
+        )
+        self.assertEqual(_strip_noise(noisy), "我是正经回答。")
+
 
 if __name__ == "__main__":
     unittest.main()

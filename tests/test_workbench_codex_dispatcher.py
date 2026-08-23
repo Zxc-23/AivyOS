@@ -35,6 +35,26 @@ class TestCodexDispatcher(AivyTestCase):
         self.assertEqual(res.exit_code, 2)
         self.assertIn("2", res.error)
 
+    def test_output_last_message_preferred(self):
+        """-o 落盘的最终答复优先于混杂 banner/推理的 stdout。"""
+        import re
+
+        async def _fake(cmd, **kwargs):
+            m = re.search(r'-o "([^"]+)"', cmd)
+            self.assertIsNotNone(m, "命令应包含 -o <file>")
+            with open(m.group(1), "w", encoding="utf-8") as f:
+                f.write("干净的最终答复")
+            out = kwargs.get("stdout")
+            out.write("OpenAI Codex v0.149.0\nbanner 噪音\ntokens used\n1,234".encode("utf-8"))
+            out.flush()
+            return _FakeProc()
+
+        penv = ProviderEnv(app_type="codex", name="Kimi", env={"OPENAI_API_KEY": "k"})
+        with mock.patch("asyncio.create_subprocess_shell", _fake):
+            res = asyncio.run(CodexDispatcher().run(AgentTask(agent="codex", prompt="x"), penv))
+        self.assertTrue(res.ok)
+        self.assertEqual(res.output, "干净的最终答复")
+
 
 if __name__ == "__main__":
     unittest.main()
