@@ -31,6 +31,17 @@ const MAX_FRAME: usize = 16 * 1024 * 1024;
 const CORE_BOOT_TIMEOUT_SECS: u64 = 30;
 /// 单个 IPC 调用超时（秒）—— 避免前端挂死
 const IPC_CALL_TIMEOUT_SECS: u64 = 120;
+/// 长任务 IPC 调用超时（秒）：workbench.* 双模型 CLI 串行可能跑 10 分钟以上
+const IPC_LONG_CALL_TIMEOUT_SECS: u64 = 900;
+
+/// 按 method 前缀选择超时：workbench 双模型任务走长超时，其余默认
+fn ipc_timeout_secs(method: &str) -> u64 {
+    if method.starts_with("workbench.") {
+        IPC_LONG_CALL_TIMEOUT_SECS
+    } else {
+        IPC_CALL_TIMEOUT_SECS
+    }
+}
 
 /// BridgeTask 接收的请求：(id, json_rpc_body_bytes, 响应一次性 sender)
 type ReqEnvelope = (u64, Vec<u8>, oneshot::Sender<Result<Value, String>>);
@@ -282,7 +293,7 @@ impl CoreHandle {
         drop(tx_guard);
 
         match tokio::time::timeout(
-            std::time::Duration::from_secs(IPC_CALL_TIMEOUT_SECS),
+            std::time::Duration::from_secs(ipc_timeout_secs(method)),
             resp_rx,
         )
         .await
@@ -292,7 +303,8 @@ impl CoreHandle {
                 "IPC(id={id}, method={method_owned}) 响应通道被关闭"
             )),
             Err(_) => Err(format!(
-                "IPC(id={id}, method={method_owned}) 超时（> {IPC_CALL_TIMEOUT_SECS}s）"
+                "IPC(id={id}, method={method_owned}) 超时（> {}s）",
+                ipc_timeout_secs(method)
             )),
         }
     }
