@@ -1277,3 +1277,78 @@ export async function restartCore(): Promise<{ ok: boolean; error?: string }> {
   }
   throw new Error("演示模式：热重启仅在桌面端可用。");
 }
+
+// ================================================================
+//  Workbench（双模型协同工作台 §4.2.4）
+// ================================================================
+
+export interface WorkbenchStatus {
+  ok?: boolean;
+  error?: string;
+  cc_switch?: { enabled: boolean; db_path: string };
+  agents?: Record<string, { enabled: boolean }>;
+  auto_open_vscode?: boolean;
+  vscode_available?: boolean;
+  last_notice?: string;
+}
+
+export interface AgentResultDto {
+  ok: boolean;
+  error?: string;
+  agent?: string;
+  output?: string;
+  exit_code?: number;
+  elapsed_s?: number;
+  notice?: string;
+}
+
+export interface TemplateStep {
+  name: string;
+  agent: string;
+  ok: boolean;
+  output: string;
+  error: string;
+  elapsed_s: number;
+}
+
+export interface TemplateResult {
+  ok: boolean;
+  error?: string;
+  template?: string;
+  steps?: TemplateStep[];
+}
+
+/** 工作台状态。 */
+export async function getWorkbenchStatus(): Promise<WorkbenchStatus> {
+  return bridgeCall<WorkbenchStatus>("workbench.status", {});
+}
+
+/** 调用 Claude Code。 */
+export async function workbenchClaude(prompt: string, cwd?: string): Promise<AgentResultDto> {
+  return bridgeCall<AgentResultDto>("workbench.claude", { prompt, cwd });
+}
+
+/** 调用 Codex。 */
+export async function workbenchCodex(prompt: string, cwd?: string): Promise<AgentResultDto> {
+  return bridgeCall<AgentResultDto>("workbench.codex", { prompt, cwd });
+}
+
+/** Codex 审查最近一次 Claude 输出。 */
+export async function workbenchReview(): Promise<AgentResultDto> {
+  return bridgeCall<AgentResultDto>("workbench.review", {});
+}
+
+/** 运行协作模板：implement_then_review | parallel_design | doc_after_api。 */
+export async function workbenchRunTemplate(template: string, prompt: string, cwd?: string): Promise<TemplateResult> {
+  return bridgeCall<TemplateResult>("workbench.run_template", { template, prompt, cwd });
+}
+
+/** 捕获 git diff 交 Codex 审查。 */
+export async function workbenchDiffReview(cwd: string): Promise<AgentResultDto> {
+  return bridgeCall<AgentResultDto>("workbench.diff_review", { cwd });
+}
+
+/** 在 VS Code 打开路径。 */
+export async function workbenchVscodeOpen(path: string): Promise<AgentResultDto> {
+  return bridgeCall<AgentResultDto>("workbench.vscode_open", { path });
+}

@@ -42,6 +42,9 @@ import {
   listTools, setToolEnabled, ManagedTool, ToolsResult,
   getUpdateStatus, checkForUpdate, installUpdate, rollbackUpdate, restartCore,
   UpdateStatus, UpdateResult,
+  getWorkbenchStatus, workbenchClaude, workbenchCodex, workbenchRunTemplate,
+  workbenchDiffReview, workbenchVscodeOpen,
+  WorkbenchStatus, AgentResultDto, TemplateResult, TemplateStep,
 } from "./chat";
 import {
   TrayStateName,
@@ -62,7 +65,7 @@ const TRAY_LABEL: Record<string, string> = {
 type NavId =
   | "chat" | "voice" | "task" | "sched" | "vibe"
   | "memory" | "boot" | "voiceset" | "models" | "settings"
-  | "skills" | "tools";
+  | "skills" | "tools" | "workbench";
 
 interface Msg {
   role: "user" | "assistant";
@@ -508,6 +511,15 @@ export default function App() {
   const [updateInstalling, setUpdateInstalling] = useState(false);
   const [updateRestarting, setUpdateRestarting] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  // 协同工作台
+  const [wbStatus, setWbStatus] = useState<WorkbenchStatus | null>(null);
+  const [wbMode, setWbMode] = useState("serial");
+  const [wbPrompt, setWbPrompt] = useState("");
+  const [wbCwd, setWbCwd] = useState("");
+  const [wbRunning, setWbRunning] = useState(false);
+  const [wbSteps, setWbSteps] = useState<TemplateStep[]>([]);
+  const [wbError, setWbError] = useState<string | null>(null);
+  const [wbRound, setWbRound] = useState(0);
   const [editingForm, setEditingForm] = useState<{
     providerId: string;
     apiKey: string;
@@ -1681,6 +1693,81 @@ export default function App() {
     }
   }, [bridgeReady, showNotification, updateStatus?.current_version]);
 
+  /* ================================================================
+   *  Workbench（双模型协同工作台 §4.2.4）
+   * ================================================================ */
+  const loadWorkbenchStatus = useCallback(async () => {
+    try {
+      if (!bridgeReady) { setWbStatus(null); return; }
+      setWbStatus(await getWorkbenchStatus());
+    } catch { setWbStatus(null); }
+  }, [bridgeReady]);
+
+  const WB_TEMPLATES: Record<string, string> = {
+    serial: "implement_then_review",
+    parallel: "parallel_design",
+    doc: "doc_after_api",
+  };
+
+  const handleWbRun = useCallback(async () => {
+    if (!bridgeReady) { showNotification("演示模式", "连接核心后可使用协同工作台", "warning"); return; }
+    if (wbMode !== "diff" && !wbPrompt.trim()) { showNotification("请输入需求", "协同任务需要描述内容", "warning"); return; }
+    setWbRunning(true);
+    setWbError(null);
+    setWbSteps([]);
+    updateTrayState("working");
+    try {
+      if (wbMode === "claude" || wbMode === "codex") {
+        const fn = wbMode === "claude" ? workbenchClaude : workbenchCodex;
+        const res: AgentResultDto = await fn(wbPrompt, wbCwd || undefined);
+        setWbSteps([{ name: wbMode === "claude" ? "Claude 执行" : "Codex 执行",
+          agent: wbMode, ok: res.ok, output: res.output || "", error: res.error || "",
+          elapsed_s: res.elapsed_s || 0 }]);
+        if (!res.ok) setWbError(res.error || "执行失败");
+      } else if (wbMode === "diff") {
+        const res = await workbenchDiffReview(wbCwd || ".");
+        setWbSteps([{ name: "Codex 审查 diff", agent: "codex", ok: res.ok,
+          output: res.output || "", error: res.error || "", elapsed_s: res.elapsed_s || 0 }]);
+        if (!res.ok) setWbError(res.error || "审查失败");
+      } else {
+        const res: TemplateResult = await workbenchRunTemplate(WB_TEMPLATES[wbMode], wbPrompt, wbCwd || undefined);
+        setWbSteps(res.steps || []);
+        if (!res.ok) setWbError(res.error || "模板执行失败");
+      }
+    } catch (e) {
+      setWbError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWbRunning(false);
+      updateTrayState("idle");
+    }
+  }, [bridgeReady, wbMode, wbPrompt, wbCwd, showNotification, updateTrayState]);
+
+  const handleWbRevise = useCallback(async () => {
+    // 再改一轮：把审查意见发回 Claude 修订
+    const review = [...wbSteps].reverse().find(s => s.agent === "codex" && s.ok);
+    if (!review || !bridgeReady) return;
+    setWbRunning(true);
+    updateTrayState("working");
+    try {
+      const res = await workbenchClaude(
+        `请根据以下审查意见修订你之前的实现，输出修订后的完整结果：\n\n审查意见：\n${review.output}\n\n原始需求：\n${wbPrompt}`,
+        wbCwd || undefined,
+      );
+      setWbSteps(prev => [...prev, { name: `Claude 修订（第 ${wbRound + 1} 轮）`, agent: "claude",
+        ok: res.ok, output: res.output || "", error: res.error || "", elapsed_s: res.elapsed_s || 0 }]);
+      setWbRound(r => r + 1);
+    } finally {
+      setWbRunning(false);
+      updateTrayState("idle");
+    }
+  }, [bridgeReady, wbSteps, wbPrompt, wbCwd, wbRound, updateTrayState]);
+
+  const handleWbOpenVscode = useCallback(async () => {
+    if (!bridgeReady) return;
+    const res = await workbenchVscodeOpen(wbCwd || ".");
+    if (!res.ok) showNotification("VS Code", res.error || "打开失败", "warning");
+  }, [bridgeReady, wbCwd, showNotification]);
+
   const handleInstallUpdate = useCallback(async () => {
     if (!bridgeReady) { showNotification("演示模式", "连接核心后可安装更新", "warning"); return; }
     setUpdateInstalling(true);
@@ -2018,9 +2105,10 @@ export default function App() {
       case "skills": loadSkills(); void loadMarketSources(); void loadMarket("builtin", ""); break;
       case "tools": loadTools(); break;
       case "settings": void loadUpdateStatus(); break;
+      case "workbench": void loadWorkbenchStatus(); break;
       default: break;
     }
-  }, [nav, loadVoiceStatus, loadTasks, loadSchedules, runBoot, loadVoiceSettings, loadModels, loadMemory, loadKnowledge, loadSkills, loadTools, loadMarket, loadMarketSources, loadUpdateStatus]);
+  }, [nav, loadVoiceStatus, loadTasks, loadSchedules, runBoot, loadVoiceSettings, loadModels, loadMemory, loadKnowledge, loadSkills, loadTools, loadMarket, loadMarketSources, loadUpdateStatus, loadWorkbenchStatus]);
 
   useEffect(() => {
     if (nav !== "voice" || bridgeReady) return;
@@ -2043,7 +2131,7 @@ export default function App() {
     chat: "对话", voice: "语音模式", task: "自主任务", sched: "定时任务",
     vibe: "Vibe Coding", memory: "知识卡片", boot: "系统自检",
     voiceset: "语音设置", models: "模型管理", settings: "设置",
-    skills: "技能管理", tools: "工具管理",
+    skills: "技能管理", tools: "工具管理", workbench: "协同工作台",
   };
 
   /* ================================================================
@@ -2074,6 +2162,7 @@ export default function App() {
     { id: "models" as NavId, label: "模型管理", desc: "模型部署、路由与切换策略", icon: "🧩" },
     { id: "skills" as NavId, label: "技能管理", desc: "配置艾薇的专属技能与提示词", icon: "🎯" },
     { id: "tools" as NavId, label: "工具管理", desc: "MCP 工具开关与权限查看", icon: "🔧" },
+    { id: "workbench" as NavId, label: "协同工作台", desc: "Claude 与 Codex 双模型协同开发", icon: "🤝" },
   ];
 
   /* ================================================================
@@ -4610,6 +4699,112 @@ export default function App() {
                     })()}
                   </div>
                 )}
+              </div>
+            </div>
+
+            {/* ============ 13. 协同工作台 (workbench) ============ */}
+            <div className={`screen ${nav === "workbench" ? "active" : ""}`}>
+              <div className="settings-screen">
+                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>协同工作台 — Claude × Codex</div>
+                <div style={{ fontSize: 12, color: "var(--muted2)", marginBottom: 14 }}>
+                  读取 cc-switch 配置免登录调用双 CLI，串行/并行协作，结果可回 VS Code
+                </div>
+
+                {/* 环境状态 */}
+                {wbStatus && (
+                  <div style={{ fontSize: 11, color: "var(--muted2)", marginBottom: 10 }}>
+                    cc-switch: {wbStatus.cc_switch?.enabled ? "已启用" : "已停用"}
+                    {wbStatus.agents && ` · Claude: ${wbStatus.agents.claude_code?.enabled ? "开" : "关"} · Codex: ${wbStatus.agents.codex?.enabled ? "开" : "关"}`}
+                    {` · VS Code: ${wbStatus.vscode_available ? "可用" : "不在 PATH"}`}
+                  </div>
+                )}
+
+                {/* 模式选择 */}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                  {[
+                    { id: "serial", label: "🔗 串行：实现→审查" },
+                    { id: "parallel", label: "⚖️ 并行：双方案对比" },
+                    { id: "doc", label: "📄 API→Swagger" },
+                    { id: "claude", label: "仅 Claude" },
+                    { id: "codex", label: "仅 Codex" },
+                    { id: "diff", label: "🔀 Diff 审查" },
+                  ].map(m => (
+                    <button key={m.id} className="btn btn-approve"
+                      style={{
+                        fontSize: 11, padding: "6px 12px",
+                        opacity: wbMode === m.id ? 1 : 0.45,
+                      }}
+                      onClick={() => setWbMode(m.id)}
+                    >{m.label}</button>
+                  ))}
+                </div>
+
+                {/* 输入区 */}
+                <div className="glass-card" style={{ padding: 14, marginBottom: 10 }}>
+                  {wbMode !== "diff" && (
+                    <textarea
+                      value={wbPrompt}
+                      onChange={e => setWbPrompt(e.target.value)}
+                      placeholder={wbMode === "doc" ? "描述要设计的 API（如：用户登录/注册接口）" : "描述需求（如：写一个天气网页）"}
+                      style={{
+                        width: "100%", minHeight: 72, resize: "vertical", fontSize: 12,
+                        padding: 8, borderRadius: 6, marginBottom: 8,
+                        background: "rgba(255,255,255,0.04)", color: "inherit",
+                        border: "1px solid rgba(255,255,255,0.12)",
+                      }}
+                    />
+                  )}
+                  <input
+                    value={wbCwd}
+                    onChange={e => setWbCwd(e.target.value)}
+                    placeholder={wbMode === "diff" ? "仓库路径（默认当前目录）" : "工作目录（可选，如 F:\\project）"}
+                    style={{
+                      width: "100%", fontSize: 12, padding: "6px 8px", borderRadius: 6, marginBottom: 10,
+                      background: "rgba(255,255,255,0.04)", color: "inherit",
+                      border: "1px solid rgba(255,255,255,0.12)",
+                    }}
+                  />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button className="btn btn-approve" style={{ fontSize: 11, padding: "6px 14px" }}
+                      disabled={wbRunning} onClick={handleWbRun}>
+                      {wbRunning ? "执行中（双模型可能耗时数分钟）..." : "▶ 开始协同"}
+                    </button>
+                    {wbSteps.some(s => s.agent === "codex" && s.ok) && wbMode === "serial" && (
+                      <button className="btn btn-approve" style={{ fontSize: 11, padding: "6px 14px", opacity: 0.8 }}
+                        disabled={wbRunning} onClick={handleWbRevise}>
+                        🔁 再改一轮
+                      </button>
+                    )}
+                    <button className="btn btn-approve" style={{ fontSize: 11, padding: "6px 14px", opacity: 0.6 }}
+                      disabled={wbRunning} onClick={handleWbOpenVscode}>
+                      在 VS Code 打开
+                    </button>
+                  </div>
+                </div>
+
+                {/* 错误 */}
+                {wbError && (
+                  <div style={{
+                    fontSize: 11, color: "#f87171", marginBottom: 10, padding: 8,
+                    background: "rgba(239,68,68,0.08)", borderRadius: 6,
+                    border: "1px solid rgba(239,68,68,0.2)",
+                  }}>⚠ {wbError}</div>
+                )}
+
+                {/* 步骤进度与输出 */}
+                {wbSteps.map((s, i) => (
+                  <div key={i} className="glass-card" style={{ padding: 12, marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                      {s.ok ? "✅" : "❌"} 步骤 {i + 1}：{s.name}
+                      <span style={{ fontWeight: 400, color: "var(--muted2)", marginLeft: 8 }}>{s.elapsed_s}s</span>
+                    </div>
+                    <pre style={{
+                      fontSize: 11, whiteSpace: "pre-wrap", wordBreak: "break-word",
+                      maxHeight: 260, overflow: "auto", margin: 0,
+                      color: s.ok ? "inherit" : "#f87171",
+                    }}>{s.ok ? s.output : s.error}</pre>
+                  </div>
+                ))}
               </div>
             </div>
 

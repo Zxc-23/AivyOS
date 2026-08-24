@@ -2146,6 +2146,97 @@ def build_server(engine: ChatEngine, cfg: dict, stop_event: "asyncio.Event | Non
         asyncio.get_running_loop().call_later(0.3, stop_event.set)
         return {"ok": True, "shutting_down": True}
 
+    # ================================================================
+    #  Workbench（双模型协同工作台 §4.2.4 前端面板 IPC）
+    # ================================================================
+    _wb_svc = None
+
+    def get_wb_svc():
+        nonlocal _wb_svc
+        if _wb_svc is None:
+            from aivyos_core.workbench.service import WorkbenchService
+
+            _wb_svc = WorkbenchService(cfg)
+        return _wb_svc
+
+    @server.method("workbench.status")
+    async def workbench_status(params):
+        """工作台状态：cc-switch 检测、agent 启停、VS Code 可用性。"""
+        try:
+            return get_wb_svc().status()
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("workbench.claude")
+    async def workbench_claude(params):
+        """调用 Claude Code。params: prompt, cwd?, timeout_s?"""
+        try:
+            res = await get_wb_svc().run_claude(
+                params.get("prompt", ""), cwd=params.get("cwd") or None,
+                timeout_s=float(params.get("timeout_s", 0)) or None,
+            )
+            d = res.to_dict()
+            d["notice"] = get_wb_svc().last_notice
+            return d
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("workbench.codex")
+    async def workbench_codex(params):
+        """调用 Codex。params: prompt, cwd?, timeout_s?"""
+        try:
+            res = await get_wb_svc().run_codex(
+                params.get("prompt", ""), cwd=params.get("cwd") or None,
+                timeout_s=float(params.get("timeout_s", 0)) or None,
+            )
+            d = res.to_dict()
+            d["notice"] = get_wb_svc().last_notice
+            return d
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("workbench.review")
+    async def workbench_review(params):
+        """Codex 审查最近一次 Claude 输出。"""
+        try:
+            return (await get_wb_svc().review()).to_dict()
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("workbench.compare")
+    async def workbench_compare(params):
+        """双模型并行对比。params: prompt, cwd?"""
+        try:
+            return await get_wb_svc().compare(params.get("prompt", ""), cwd=params.get("cwd") or None)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("workbench.run_template")
+    async def workbench_run_template(params):
+        """运行协作模板。params: template, prompt, cwd?"""
+        try:
+            return await get_wb_svc().run_template(
+                params.get("template", ""), params.get("prompt", ""), cwd=params.get("cwd") or None
+            )
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("workbench.diff_review")
+    async def workbench_diff_review(params):
+        """捕获 git diff 交 Codex 审查。params: cwd"""
+        try:
+            return (await get_wb_svc().review_diff(params.get("cwd", "."))).to_dict()
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @server.method("workbench.vscode_open")
+    async def workbench_vscode_open(params):
+        """在 VS Code 打开路径。params: path"""
+        try:
+            return (await get_wb_svc().open_vscode(params.get("path", ""))).to_dict()
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     return server
 
 
