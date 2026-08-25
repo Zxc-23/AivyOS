@@ -11,6 +11,17 @@ from aivyos_core.scheduler.registry import JobRegistry
 from aivyos_core.scheduler.triggers import ConditionTrigger, CronTrigger, EventTrigger
 
 
+def _trigger_info(trigger: Any) -> Dict[str, Any]:
+    """将触发器对象转为可序列化字典。"""
+    if isinstance(trigger, CronTrigger):
+        return {"type": "cron", "spec": trigger.spec}
+    if isinstance(trigger, EventTrigger):
+        return {"type": "event", "name": trigger.name}
+    if isinstance(trigger, ConditionTrigger):
+        return {"type": "condition", "expr": trigger.expr, "cooldown_seconds": trigger.cooldown_seconds}
+    return {"type": type(trigger).__name__}
+
+
 class ActiveScheduler:
     """主动调度器：start() 启动后台 task，支持 cron/事件/条件三触发。
 
@@ -38,6 +49,37 @@ class ActiveScheduler:
         self._cron_fire_history: Dict[str, datetime] = {}
         self._cron_next_cache: Dict[str, datetime] = {}
         self._shared_ctx: Dict[str, Any] = {}
+
+    def status(self) -> List[Dict[str, Any]]:
+        """返回可序列化的任务状态列表。
+
+        返回:
+            每个元素包含 job_id、trigger 类型与参数、running 状态。
+        """
+        running = self._task is not None and not self._task.done()
+        return [
+            {
+                "job_id": job["job_id"],
+                "trigger": _trigger_info(job["trigger"]),
+                "running": running,
+            }
+            for job in self._registry.list()
+        ]
+
+    def cron(self, job_id: str, spec: str):
+        """装饰器：注册一个 cron 任务。
+
+        参数:
+            job_id: 任务唯一标识
+            spec: cron 表达式字符串
+
+        返回:
+            装饰器函数，接收 coroutine function 并注册到注册表。
+        """
+        def decorator(coro_fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+            self._registry.register(job_id, CronTrigger(spec), coro_fn)
+            return coro_fn
+        return decorator
 
     async def start(self) -> None:
         """启动后台调度循环 task。
