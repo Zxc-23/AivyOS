@@ -135,6 +135,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "enabled": True,
         "auto_detect": True,          # 自动从文本关键词推断情感
         "default_emotion": "neutral", # 无关键词时的默认情感
+        "tags_enabled": True,         # §6.1 14 种细粒度情感标签 [laughter][breath]...
     },
     "voice": {
         "wake_words": ["Aivy", "艾维", "贾维斯"],
@@ -199,9 +200,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "default_channel": "text",   # text | voice | notification（§6.3 路由默认）
         "notify_levels": ["urgent", "important", "normal"],
         "notify_backend": "auto",    # auto | console | win_toast
-    },
-    "emotion": {
-        "tags_enabled": True,        # §6.1 14 种细粒度情感标签 [laughter][breath]...
     },
     # ---- Phase 2 Week 5：MCP 工具层（§5）----
     "mcp": {

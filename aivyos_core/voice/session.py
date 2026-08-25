@@ -242,7 +242,7 @@ class VoiceSession:
             return False
         self._ptt_active = True
         self._ptt_buffer = bytearray()
-        self._ptt_task = asyncio.get_event_loop().create_task(self._ptt_collect())
+        self._ptt_task = asyncio.create_task(self._ptt_collect())
         log.info("PTT 采集开始")
         return True
 

@@ -9,18 +9,19 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import subprocess
 import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Union
 
 from aivyos_core.workbench.models import AgentResult
 
 
 async def run_cli(
-    command: str,
+    command: Union[str, List[str]],
     *,
     agent: str = "",
     env_extra: Optional[Dict[str, str]] = None,
@@ -33,23 +34,40 @@ async def run_cli(
     out_path = Path(tempfile.gettempdir()) / f"aivyos_wb_{uuid.uuid4().hex[:8]}.txt"
     env = {**os.environ, **(env_extra or {})}
     proc = None
+    # Pre-compute display string so FileNotFoundError handler can reference it
+    if isinstance(command, str):
+        cmd_display = command
+    else:
+        cmd_display = " ".join(shlex.quote(str(p)) for p in command)
     try:
         with open(out_path, "wb") as f:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                stdin=asyncio.subprocess.PIPE if input_text is not None else None,
-                stdout=f,
-                stderr=subprocess.STDOUT,
-                cwd=cwd,
-                env=env,
-            )
+            if isinstance(command, str):
+                # 兼容旧调用：对 shell 字符串做最小安全转义
+                proc = await asyncio.create_subprocess_shell(
+                    command,
+                    stdin=asyncio.subprocess.PIPE if input_text is not None else None,
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                    cwd=cwd,
+                    env=env,
+                )
+            else:
+                # 推荐：参数列表，避免 shell 注入
+                proc = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdin=asyncio.subprocess.PIPE if input_text is not None else None,
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                    cwd=cwd,
+                    env=env,
+                )
             try:
                 data = input_text.encode("utf-8") if input_text is not None else None
                 await asyncio.wait_for(proc.communicate(data), timeout_s)
             except asyncio.TimeoutError:
                 proc.kill()
                 return AgentResult(
-                    agent=agent, error=f"命令超时（>{timeout_s:.0f}s）: {command[:80]}",
+                    agent=agent, error=f"命令超时（>{timeout_s:.0f}s）: {cmd_display[:80]}",
                     elapsed_s=time.monotonic() - started,
                 )
         text = out_path.read_text(encoding="utf-8", errors="replace") if out_path.exists() else ""
@@ -67,7 +85,7 @@ async def run_cli(
         )
     except FileNotFoundError:
         return AgentResult(
-            agent=agent, error=f"CLI 不可用（不在 PATH）: {command.split()[0]}",
+            agent=agent, error=f"CLI 不可用（不在 PATH）: {cmd_display.split()[0]}",
             elapsed_s=time.monotonic() - started,
         )
     except Exception as e:

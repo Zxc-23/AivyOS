@@ -41,9 +41,18 @@ class _FakeProc:
         self.killed = True
 
 
+def _normalize_cmd(args, kwargs):
+    """Normalize command from create_subprocess_shell(str) or create_subprocess_exec(*args)."""
+    if "shell" in kwargs and kwargs["shell"]:
+        return args[0] if args else ""
+    if len(args) == 1 and isinstance(args[0], str):
+        return args[0]
+    return " ".join(str(a) for a in args)
+
+
 def _fake_shell_factory(recorder, proc):
-    async def _fake(cmd, **kwargs):
-        recorder["cmd"] = cmd
+    async def _fake(*args, **kwargs):
+        recorder["cmd"] = _normalize_cmd(args, kwargs)
         recorder["env"] = kwargs.get("env")
         recorder["cwd"] = kwargs.get("cwd")
         out = kwargs.get("stdout")
@@ -54,6 +63,16 @@ def _fake_shell_factory(recorder, proc):
     return _fake
 
 
+def _patch_subprocess(recorder, proc):
+    """Patch both shell and exec subprocess creation."""
+    fake = _fake_shell_factory(recorder, proc)
+    return mock.patch.multiple(
+        "asyncio",
+        create_subprocess_shell=fake,
+        create_subprocess_exec=fake,
+    )
+
+
 class TestClaudeDispatcher(AivyTestCase):
     def test_env_injected_and_parent_not_polluted(self):
         """ANTHROPIC_AUTH_TOKEN 注入子进程 env，且不写入 os.environ。"""
@@ -61,7 +80,7 @@ class TestClaudeDispatcher(AivyTestCase):
         proc = _FakeProc(output=b"ok-output")
         penv = ProviderEnv(app_type="claude", name="Kimi",
                            env={"ANTHROPIC_AUTH_TOKEN": "tok-secret", "ANTHROPIC_BASE_URL": "https://x"})
-        with mock.patch("asyncio.create_subprocess_shell", _fake_shell_factory(recorder, proc)):
+        with _patch_subprocess(recorder, proc):
             res = asyncio.run(ClaudeCodeDispatcher().run(AgentTask(agent="claude", prompt="hi"), penv))
         self.assertEqual(recorder["env"]["ANTHROPIC_AUTH_TOKEN"], "tok-secret")
         self.assertNotEqual(os.environ.get("ANTHROPIC_AUTH_TOKEN"), "tok-secret")
@@ -75,7 +94,7 @@ class TestClaudeDispatcher(AivyTestCase):
         proc = _FakeProc(output=b"ok")
         penv = ProviderEnv(app_type="claude", name="Kimi", env={})
         dispatcher = ClaudeCodeDispatcher(skip_permissions=True)
-        with mock.patch("asyncio.create_subprocess_shell", _fake_shell_factory(recorder, proc)):
+        with _patch_subprocess(recorder, proc):
             asyncio.run(dispatcher.run(AgentTask(agent="claude", prompt="hi"), penv))
         self.assertIn("--dangerously-skip-permissions", recorder["cmd"])
 
@@ -85,7 +104,7 @@ class TestClaudeDispatcher(AivyTestCase):
         proc = _FakeProc(output=b"ok")
         penv = ProviderEnv(app_type="claude", name="Kimi", env={})
         dispatcher = ClaudeCodeDispatcher(skip_permissions=False)
-        with mock.patch("asyncio.create_subprocess_shell", _fake_shell_factory(recorder, proc)):
+        with _patch_subprocess(recorder, proc):
             asyncio.run(dispatcher.run(AgentTask(agent="claude", prompt="hi"), penv))
         self.assertNotIn("--dangerously-skip-permissions", recorder["cmd"])
 

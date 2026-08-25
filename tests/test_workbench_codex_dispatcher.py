@@ -7,7 +7,7 @@ from unittest import mock
 from tests import AivyTestCase
 from aivyos_core.workbench.dispatchers.codex import CodexDispatcher
 from aivyos_core.workbench.models import AgentTask, ProviderEnv
-from tests.test_workbench_claude_dispatcher import _FakeProc, _fake_shell_factory
+from tests.test_workbench_claude_dispatcher import _FakeProc, _fake_shell_factory, _patch_subprocess
 
 
 class TestCodexDispatcher(AivyTestCase):
@@ -17,7 +17,7 @@ class TestCodexDispatcher(AivyTestCase):
         proc = _FakeProc(output=b"codex-out")
         penv = ProviderEnv(app_type="codex", name="Kimi",
                            env={"OPENAI_API_KEY": "ok-secret", "OPENAI_BASE_URL": "https://x/v1"})
-        with mock.patch("asyncio.create_subprocess_shell", _fake_shell_factory(recorder, proc)):
+        with _patch_subprocess(recorder, proc):
             res = asyncio.run(CodexDispatcher().run(AgentTask(agent="codex", prompt="review"), penv))
         self.assertEqual(recorder["env"]["OPENAI_API_KEY"], "ok-secret")
         self.assertEqual(recorder["env"]["OPENAI_BASE_URL"], "https://x/v1")
@@ -29,7 +29,7 @@ class TestCodexDispatcher(AivyTestCase):
         """退出码非零 → ok=False 且 error 含退出码。"""
         proc = _FakeProc(returncode=2, output=b"boom")
         penv = ProviderEnv(app_type="codex", name="Kimi", env={"OPENAI_API_KEY": "k"})
-        with mock.patch("asyncio.create_subprocess_shell", _fake_shell_factory({}, proc)):
+        with _patch_subprocess({}, proc):
             res = asyncio.run(CodexDispatcher().run(AgentTask(agent="codex", prompt="x"), penv))
         self.assertFalse(res.ok)
         self.assertEqual(res.exit_code, 2)
@@ -39,8 +39,14 @@ class TestCodexDispatcher(AivyTestCase):
         """-o 落盘的最终答复优先于混杂 banner/推理的 stdout。"""
         import re
 
-        async def _fake(cmd, **kwargs):
-            m = re.search(r'-o "([^"]+)"', cmd)
+        async def _fake(*args, **kwargs):
+            # Support both shell string and exec list
+            if len(args) == 1 and isinstance(args[0], str):
+                cmd_str = args[0]
+            else:
+                cmd_str = " ".join(str(a) for a in args)
+            # Handle both quoted and unquoted -o path
+            m = re.search(r'-o "([^"]+)"', cmd_str) or re.search(r'-o (\S+)', cmd_str)
             self.assertIsNotNone(m, "命令应包含 -o <file>")
             with open(m.group(1), "w", encoding="utf-8") as f:
                 f.write("干净的最终答复")
@@ -50,7 +56,11 @@ class TestCodexDispatcher(AivyTestCase):
             return _FakeProc()
 
         penv = ProviderEnv(app_type="codex", name="Kimi", env={"OPENAI_API_KEY": "k"})
-        with mock.patch("asyncio.create_subprocess_shell", _fake):
+        with mock.patch.multiple(
+            "asyncio",
+            create_subprocess_shell=_fake,
+            create_subprocess_exec=_fake,
+        ):
             res = asyncio.run(CodexDispatcher().run(AgentTask(agent="codex", prompt="x"), penv))
         self.assertTrue(res.ok)
         self.assertEqual(res.output, "干净的最终答复")

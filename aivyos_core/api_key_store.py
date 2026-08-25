@@ -62,39 +62,96 @@ def _derive_fernet_key(fingerprint: str) -> bytes:
     return base64.urlsafe_b64encode(digest)
 
 
+def _derive_key_material(fingerprint: str, salt: bytes) -> bytes:
+    """用 PBKDF2-HMAC-SHA256 从指纹+盐派生 64 字节密钥材料。
+
+    前 32 字节用于 XOR 加密，后 32 字节用于 HMAC 完整性校验。
+    仅使用 stdlib（hashlib），无需额外依赖。
+    """
+    return hashlib.pbkdf2_hmac(
+        "sha256",
+        fingerprint.encode("utf-8"),
+        salt,
+        iterations=100_000,
+        dklen=64,
+    )
+
+
 def _simple_encrypt(plaintext: str, key: str) -> str:
-    """简单 XOR + base64 加密 (回退方案)。
+    """强化版加密：salt + PBKDF2 + XOR + HMAC + base64。
+
+    格式：base64(salt[16] || ciphertext || hmac[32])
 
     Args:
         plaintext: 明文字符串。
-        key: 加密密钥。
+        key: 机器指纹（用于派生密钥）。
 
     Returns:
         Base64 编码的密文。
     """
-    key_bytes = key.encode("utf-8")
+    import hmac as _hmac
+    import secrets
+
+    salt = secrets.token_bytes(16)
+    material = _derive_key_material(key, salt)
+    enc_key, mac_key = material[:32], material[32:]
+
     plain_bytes = plaintext.encode("utf-8")
-    encrypted = bytes([b ^ key_bytes[i % len(key_bytes)] for i, b in enumerate(plain_bytes)])
-    return base64.b64encode(encrypted).decode("ascii")
+    ciphertext = bytes([b ^ enc_key[i % len(enc_key)] for i, b in enumerate(plain_bytes)])
+
+    mac = _hmac.new(mac_key, salt + ciphertext, hashlib.sha256).digest()
+    return base64.b64encode(salt + ciphertext + mac).decode("ascii")
 
 
 def _simple_decrypt(ciphertext: str, key: str) -> str:
-    """简单 XOR + base64 解密 (回退方案)。
+    """解密强化版格式，验证 HMAC 防篡改。
 
     Args:
         ciphertext: Base64 编码的密文。
-        key: 加密密钥。
+        key: 机器指纹。
 
     Returns:
-        解密后的明文字符串。
+        解密后的明文字符串。HMAC 验证失败或格式错误返回空串。
     """
+    import hmac as _hmac
+
+    padded = ciphertext + "=" * (-len(ciphertext) % 4)
+    try:
+        raw = base64.b64decode(padded)
+    except Exception:
+        return ""
+
+    # 最小长度：16(salt) + 0(明文) + 32(hmac) = 48
+    if len(raw) < 48:
+        # 可能是旧版 XOR 格式（无 salt+hmac），尝试旧方案解密
+        return _legacy_decrypt(ciphertext, key)
+
+    salt = raw[:16]
+    mac = raw[-32:]
+    ct = raw[16:-32]
+
+    material = _derive_key_material(key, salt)
+    enc_key, mac_key = material[:32], material[32:]
+
+    expected_mac = _hmac.new(mac_key, salt + ct, hashlib.sha256).digest()
+    if not _hmac.compare_digest(mac, expected_mac):
+        log.warning("API Key HMAC 验证失败，数据可能被篡改或跨机器读取")
+        return ""
+
+    decrypted = bytes([b ^ enc_key[i % len(enc_key)] for i, b in enumerate(ct)])
+    try:
+        return decrypted.decode("utf-8")
+    except (UnicodeDecodeError, ValueError):
+        return ""
+
+
+def _legacy_decrypt(ciphertext: str, key: str) -> str:
+    """旧版纯 XOR + base64 解密（向后兼容已有存储文件）。"""
     key_bytes = key.encode("utf-8")
-    # 补齐 base64 padding（长度必须是 4 的倍数），防止 Incorrect padding 错误
     padded = ciphertext + "=" * (-len(ciphertext) % 4)
     try:
         cipher_bytes = base64.b64decode(padded)
     except Exception:
-        # 密文格式完全不可用（可能跨方案/跨机器残留），返回空串避免阻塞启动
         return ""
     decrypted = bytes([b ^ key_bytes[i % len(key_bytes)] for i, b in enumerate(cipher_bytes)])
     try:

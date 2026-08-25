@@ -21,7 +21,7 @@ class CodexDispatcher:
 
     async def run(self, task: AgentTask, penv: ProviderEnv) -> AgentResult:
         last_msg = Path(tempfile.gettempdir()) / f"aivyos_codex_{uuid.uuid4().hex[:8]}.md"
-        cmd = " ".join([self.cli_path, "exec", "-o", f'"{last_msg}"', *task.extra_args])
+        cmd = [self.cli_path, "exec", "-o", str(last_msg), *task.extra_args]
         try:
             result = await run_cli(
                 cmd,

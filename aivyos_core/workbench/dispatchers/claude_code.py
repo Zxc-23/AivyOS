@@ -173,11 +173,10 @@ class ClaudeCodeDispatcher:
         if self.skip_permissions:
             cmd_parts.append("--dangerously-skip-permissions")
         cmd_parts.extend(task.extra_args)
-        cmd = " ".join(cmd_parts)
 
-        # 3. 执行
+        # 3. 执行（使用参数列表，避免 shell 注入）
         result = await run_cli(
-            cmd,
+            cmd_parts,
             agent="claude",
             env_extra=penv.env,
             cwd=task.cwd,
