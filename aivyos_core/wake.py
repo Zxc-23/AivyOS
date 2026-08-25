@@ -12,6 +12,7 @@ Phase 4 认证（声纹）就绪后，此处可叠加说话人验证。
 from __future__ import annotations
 
 import re
+import time
 from typing import List, Optional
 
 
@@ -20,8 +21,9 @@ from typing import List, Optional
 _HOMOPHONE_MAP = {
     "艾": ["艾", "哎", "爱", "阿", "还", "哎", "唉"],
     "薇": ["薇", "维", "微", "威", "喂", "味"],
-    "贾": ["贾", "假", "价"],
+    "贾": ["贾", "假", "价", "加", "嘉", "甲"],
     "维": ["维", "围", "唯"],
+    "斯": ["斯", "丝", "思", "司", "私"],
 }
 
 # 额外直接变体（不依赖单字映射的特殊情况）
@@ -63,16 +65,29 @@ def _build_fuzzy_variants(word: str) -> List[str]:
 
 
 class WakeWordDetector:
-    """唤醒词检测器。
+    """唤醒词检测器类。
 
-    支持中英文唤醒词，具备近音容错和英文边界检测。
+    功能：支持中英文唤醒词检测，具备近音容错、英文边界检测和 1 秒同文本去重能力。
+    参数：无（实例化时通过 __init__ 传入 words）。
+    返回：无。
+    异常：无。
     """
 
     def __init__(self, words: Optional[List[str]] = None) -> None:
+        """初始化唤醒词检测器。
+
+        功能：构建唤醒词变体池，初始化去重状态字段。
+        参数：
+            words: 自定义唤醒词列表，默认为 ["Aivy", "艾薇", "贾维斯"]。
+        返回：无。
+        异常：无。
+        """
         raw_words = words or ["Aivy", "艾薇", "贾维斯"]
         self.words: List[str] = []
         self._word_variants: List[List[str]] = []
         self._is_chinese: List[bool] = []
+        self._last_trigger_ts: float = 0.0
+        self._last_trigger_norm: str = ""
 
         for w in raw_words:
             norm = w.lower().replace(" ", "")
@@ -87,32 +102,43 @@ class WakeWordDetector:
     def detect(self, text: str) -> bool:
         """检测文本是否包含唤醒词。
 
+        功能：三层容错策略匹配唤醒词，并做 1 秒同文本去重（防抖动）。
+        参数：
+            text: 待检测的原始文本字符串。
+        返回：
+            bool: True=命中唤醒词且通过去重检查；False=未命中或同文本 1 秒内重复。
+        异常：无。
         三层容错策略：
         1. 完整变体匹配（精确 + 近音变体）
         2. 单字独立匹配（双字变体必须同时出现）
         3. 英文词边界匹配
         """
         norm = text.lower().replace(" ", "")
+        hit = False
         for i, word in enumerate(self.words):
             if self._is_chinese[i]:
-                # 第一层：完整变体匹配
                 for variant in self._word_variants[i]:
                     if variant in norm:
-                        return True
-
-                # 第二层：单字独立匹配（容错 ASR 丢字/错字）
-                if self._char_level_match(norm, word):
-                    return True
+                        hit = True
+                        break
+                if not hit and self._char_level_match(norm, word):
+                    hit = True
             else:
-                # 英文：保留原始空格进行边界匹配
-                # 这样 "hello aivy" 能正确匹配
                 raw_lower = text.lower()
                 if self._english_match(raw_lower, word):
-                    return True
-                # 同时尝试无空格版本
-                if self._english_match(norm, word):
-                    return True
-        return False
+                    hit = True
+                if not hit and self._english_match(norm, word):
+                    hit = True
+            if hit:
+                break
+        if not hit:
+            return False
+        norm_dedup = text.lower().replace(" ", "")
+        if norm_dedup == self._last_trigger_norm and (time.time() - self._last_trigger_ts) < 1.0:
+            return False
+        self._last_trigger_norm = norm_dedup
+        self._last_trigger_ts = time.time()
+        return True
 
     def _char_level_match(self, text: str, word: str) -> bool:
         """单字独立匹配 — 处理 ASR 丢字场景。
@@ -152,7 +178,15 @@ class WakeWordDetector:
         return bool(pattern.search(text))
 
     def strip(self, text: str) -> str:
-        """去除文本开头的唤醒词（如 "Aivy，帮我..." → "帮我..."）。"""
+        """去除文本开头的唤醒词前缀。
+
+        功能：匹配开头的唤醒词（含变体）并剔除，返回用户真正的指令内容。
+        参数：
+            text: 原始文本，如 "Aivy，帮我查天气"。
+        返回：
+            str: 去除唤醒词后的干净文本，如 "帮我查天气"；未命中唤醒词则返回原文本。
+        异常：无。
+        """
         norm = text.strip()
         lower = norm.lower().replace(" ", "")
 

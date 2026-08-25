@@ -11,12 +11,20 @@ class TestWorkbenchModels(AivyTestCase):
     def test_agent_result_to_dict_roundtrip(self):
         """to_dict 包含全部关键字段且可 JSON 序列化。"""
         r = AgentResult(agent="claude", ok=True, output="done", exit_code=0,
-                        elapsed_s=1.234, output_files=["a.py"])
+                        elapsed_s=1.234, output_files=["a.py"],
+                        files_created=["calculator.html"])
         d = r.to_dict()
-        json.dumps(d, ensure_ascii=False)  # 不抛异常即可
+        json.dumps(d, ensure_ascii=False)
         self.assertEqual(d["agent"], "claude")
         self.assertEqual(d["output_files"], ["a.py"])
+        self.assertEqual(d["files_created"], ["calculator.html"])
         self.assertEqual(d["elapsed_s"], 1.23)
+
+    def test_files_created_default_empty(self):
+        """files_created 默认空列表，不影响旧调用。"""
+        r = AgentResult(agent="claude", ok=True)
+        self.assertEqual(r.files_created, [])
+        self.assertEqual(r.to_dict()["files_created"], [])
 
     def test_provider_env_safe_dict_strips_secrets(self):
         """to_safe_dict：机密值替换为 ***，非机密保留。"""

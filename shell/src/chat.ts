@@ -1292,6 +1292,90 @@ export interface WorkbenchStatus {
   last_notice?: string;
 }
 
+// ================================================================
+// AIVY-REPORT-001：贾维斯作业报告 5 区块 DTO（字段全部可选，向后兼容）
+// ================================================================
+
+/** 单个文件的 unified_diff 内容（区块 ②）。 */
+export interface ReportDiffDto {
+  path?: string;
+  unified?: string;
+  hunks?: number;
+  added?: number;
+  removed?: number;
+}
+
+/** 产出文件总览中的单条记录（区块 ①）。 */
+export interface ReportFileItemDto {
+  path?: string;
+  status?: "new" | "modified" | "unchanged" | "missing" | "error";
+  bytes?: number;
+  lines?: number;
+  diff?: ReportDiffDto;
+}
+
+/** unittest 失败摘要（区块 ③ 内部）。 */
+export interface ReportFailSummaryDto {
+  kind?: string;
+  test?: string;
+  class?: string;
+  file?: string;
+  line?: string;
+  msg?: string;
+}
+
+/** TypeScript tsc 错误项（区块 ③ 内部）。 */
+export interface ReportTscItemDto {
+  file?: string;
+  line?: string;
+  col?: string;
+  code?: string;
+  msg?: string;
+}
+
+/** 验证结果（区块 ③）。 */
+export interface ReportValidationDto {
+  unit_total?: number;
+  unit_ok?: number;
+  unit_failures?: number;
+  unit_errors?: number;
+  unit_exit_code?: number;
+  unit_elapsed_s?: number;
+  unit_fail_summary?: ReportFailSummaryDto[];
+  tsc_error_count?: number;
+  tsc_exit_code?: number;
+  tsc_elapsed_s?: number;
+  tsc_items?: ReportTscItemDto[];
+}
+
+/** Codex 审查结构化 3 段摘要（区块 ④）。 */
+export interface ReportReviewSummaryDto {
+  raw_excerpt?: string;
+  strengths?: string[];
+  issues?: string[];
+  suggestions?: string[];
+}
+
+/** 系统状态变更 — 单个字段级变更（区块 ⑤）。 */
+export interface ReportConfigChangeDto {
+  path?: string;
+  before?: any;
+  after?: any;
+  change_type?: "add" | "update" | "remove";
+}
+
+/** 贾维斯作业报告顶层容器（5 区块 + 元数据）。 */
+export interface JobReportDto {
+  job_id?: string;
+  generated_at?: number;
+  generation_ms?: number;
+  error?: string;
+  files?: ReportFileItemDto[];
+  validation?: ReportValidationDto;
+  review_summary?: ReportReviewSummaryDto;
+  config_changes?: ReportConfigChangeDto[];
+}
+
 export interface AgentResultDto {
   ok: boolean;
   error?: string;
@@ -1300,6 +1384,8 @@ export interface AgentResultDto {
   exit_code?: number;
   elapsed_s?: number;
   notice?: string;
+  files_created?: string[];
+  report?: JobReportDto;
 }
 
 export interface TemplateStep {
@@ -1309,6 +1395,8 @@ export interface TemplateStep {
   output: string;
   error: string;
   elapsed_s: number;
+  files_created?: string[];
+  report?: JobReportDto;
 }
 
 export interface TemplateResult {
@@ -1351,4 +1439,144 @@ export async function workbenchDiffReview(cwd: string): Promise<AgentResultDto> 
 /** 在 VS Code 打开路径。 */
 export async function workbenchVscodeOpen(path: string): Promise<AgentResultDto> {
   return bridgeCall<AgentResultDto>("workbench.vscode_open", { path });
+}
+
+// ================================================================
+// AIVY-REPORT-001：贾维斯作业报告 3 动作 Bridge Wrappers
+// ================================================================
+
+export interface CopyReportMarkdownResult {
+  ok: boolean;
+  saved_path?: string;
+  bytes?: number;
+  error?: string;
+}
+
+export interface ExportReportHtmlResult {
+  ok: boolean;
+  saved_path?: string;
+  bytes?: number;
+  preview_path?: string;
+  error?: string;
+}
+
+/** 把作业报告转 Markdown 保存到 ~/.aivyos/report_*.md（本地可再用 navigator.clipboard 先尝试）。 */
+export async function workbenchCopyReportMarkdown(report: JobReportDto): Promise<CopyReportMarkdownResult> {
+  return bridgeCall<CopyReportMarkdownResult>("workbench.copy_report_markdown", { report_dict: report as any });
+}
+
+/** 把作业报告导出为自包含暗色 HTML 文件（离线可打开）。 */
+export async function workbenchExportReportHtml(report: JobReportDto): Promise<ExportReportHtmlResult> {
+  return bridgeCall<ExportReportHtmlResult>("workbench.export_report_html", { report_dict: report as any });
+}
+
+// ================================================================
+// cc-switch UI 融合集成（方案 A 顶部 + 方案 B 侧边）Bridge Wrappers
+// ================================================================
+
+export interface WorkbenchProviderItem {
+  id: string;
+  app_type: "claude" | "codex";
+  name: string;
+  base_url: string;
+  base_url_display: string;
+  model: string;
+  source: "cc-switch" | "aivyos-manual" | "preset";
+  api_key_masked: string;
+  is_current_cc: boolean;
+  is_effective: boolean;
+  preset_id?: string;
+}
+
+export interface WorkbenchPreset {
+  id: string;
+  preset_id: string;
+  name: string;
+  base_url: string;
+  model: string;
+  app_type: "claude" | "codex";
+}
+
+export interface WorkbenchProvidersDto {
+  providers: WorkbenchProviderItem[];
+  presets: WorkbenchPreset[];
+  manual_override_enabled: boolean;
+  ok?: boolean;
+  error?: string;
+}
+
+export interface WorkbenchSaveManualDto {
+  app_type: "claude" | "codex";
+  name: string;
+  base_url: string;
+  model: string;
+  api_key: string;
+  set_override?: boolean;
+}
+
+export interface WorkbenchSavePresetDto extends WorkbenchSaveManualDto {
+  preset_name: string;
+}
+
+export interface WorkbenchHealthCheckDto {
+  app_type: "claude" | "codex";
+  base_url?: string;
+  model?: string;
+  api_key?: string;
+}
+
+export interface WorkbenchSaveResultDto {
+  ok: boolean;
+  source: "aivyos-manual" | "cc-switch" | "";
+  active_name: string;
+  error_message: string;
+}
+
+export interface WorkbenchHealthResultDto {
+  ok: boolean;
+  latency_ms: number | null;
+  error: string | null;
+  display_name: string;
+}
+
+/**
+ * workbench.list_providers — 按 app_type 列出合并后的 Provider 列表
+ * @param app_type "claude" 或 "codex"
+ */
+export function workbenchListProviders(app_type: "claude" | "codex"): Promise<WorkbenchProvidersDto> {
+  return bridgeCall<WorkbenchProvidersDto>("workbench.list_providers", { app_type });
+}
+
+/** workbench.save_manual — 保存 AivyOS 手动覆盖（不修改 cc-switch.db） */
+export function workbenchSaveManual(dto: WorkbenchSaveManualDto): Promise<WorkbenchSaveResultDto> {
+  return bridgeCall<WorkbenchSaveResultDto>("workbench.save_manual", { dto });
+}
+
+/** workbench.set_override — 切换手动覆盖开关 */
+export function workbenchSetOverride(app_type: "claude" | "codex", enabled: boolean): Promise<WorkbenchSaveResultDto> {
+  return bridgeCall<WorkbenchSaveResultDto>("workbench.set_override", { app_type, enabled });
+}
+
+/** workbench.reload — 重扫 cc-switch.db + config */
+export function workbenchReload(): Promise<{
+  ok: boolean;
+  claude?: WorkbenchProvidersDto;
+  codex?: WorkbenchProvidersDto;
+  error?: string;
+}> {
+  return bridgeCall<any>("workbench.reload", {});
+}
+
+/** workbench.save_preset — 另存为预设 */
+export function workbenchSavePreset(dto: WorkbenchSavePresetDto): Promise<{
+  ok: boolean;
+  presets: WorkbenchPreset[];
+  error?: string;
+}> {
+  return bridgeCall<any>("workbench.save_preset", { dto });
+}
+
+/** workbench.health_check — 对给定或当前生效的 provider 发 1 字探活 */
+export function workbenchHealthCheck(dto: WorkbenchHealthCheckDto): Promise<WorkbenchHealthResultDto> {
+  return bridgeCall<WorkbenchHealthResultDto>("workbench.health_check", { dto });
 }

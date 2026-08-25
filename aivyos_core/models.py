@@ -91,10 +91,14 @@ class RouteDecision:
 
 @dataclass
 class SessionState:
-    """会话状态（§14.3 快照对象：会话上下文，JSON 序列化 <100ms）。"""
+    """会话状态（§14.3 快照对象：会话上下文，JSON 序列化 <100ms）。
+
+    persona_name 默认使用"贾维斯"（与 aivyos_core.roles 全局真源一致），
+    避免"Aivy = 品牌名 / 人格名"角色混淆。
+    """
 
     session_id: str = field(default_factory=lambda: "sess_" + uuid.uuid4().hex[:8])
-    persona_name: str = "Aivy"
+    persona_name: str = "贾维斯"
     messages: List[ChatMessage] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
@@ -122,7 +126,7 @@ class SessionState:
     def from_snapshot(cls, data: Dict[str, Any]) -> "SessionState":
         return cls(
             session_id=data.get("session_id"),
-            persona_name=data.get("persona_name", "Aivy"),
+            persona_name=data.get("persona_name", "贾维斯"),
             messages=[ChatMessage.from_dict(m) for m in data.get("messages", [])],
             metadata=data.get("metadata", {}),
             created_at=data.get("created_at", time.time()),

@@ -1,5 +1,6 @@
 """唤醒词检测测试。"""
 
+import time
 import unittest
 
 from aivyos_core.wake import WakeWordDetector
@@ -31,8 +32,10 @@ class TestWakeWord(AivyTestCase):
         self.assertEqual(w.strip("没有唤醒词"), "没有唤醒词")
 
     def test_case_insensitive(self):
+        """大小写不敏感；注意两断言间绕过 1s 归一化去重窗口。"""
         w = WakeWordDetector()
         self.assertTrue(w.detect("aivy 你好"))
+        time.sleep(1.1)
         self.assertTrue(w.detect("AIVY 你好"))
 
 

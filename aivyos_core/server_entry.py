@@ -44,10 +44,12 @@ import logging
 import os
 import signal
 import time
+from pathlib import Path
 from typing import Any, Dict
 
 from aivyos_core.chat.engine import ChatEngine
 from aivyos_core.config import load_config, deep_merge
+from aivyos_core.workbench.report_tools import mask_secrets_in_dict
 from aivyos_core.ipc.server import AivyIpcServer
 from aivyos_core import __version__
 
@@ -77,6 +79,290 @@ def _is_exit_command(text: str, exit_words=DEFAULT_EXIT_WORDS) -> bool:
         if pat.search(clean):
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# AIVY-REPORT-001: 贾维斯作业报告 Markdown / HTML 导出辅助
+# ---------------------------------------------------------------------------
+
+def _build_report_markdown(report: Dict[str, Any]) -> str:
+    """把 JobReport dict 结构化为 5 区块 Markdown 文本。
+
+    Args:
+        report: 经 mask_secrets_in_dict 脱敏后的 JobReport.to_dict() 结构。
+
+    Returns:
+        str: 完整 Markdown，可直接写入 .md 文件或粘贴到文档。
+    """
+    lines: list[str] = []
+    job_id = report.get("job_id") or f"job_{int(time.time())}"
+    lines.append(f"# 📋 贾维斯作业报告 — {job_id}")
+    lines.append("")
+    gen_at = report.get("generated_at") or time.time()
+    gen_ms = report.get("generation_ms") or 0
+    lines.append(f"> 生成时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(gen_at))}  "
+                 f"· 报告生成耗时：{gen_ms} ms")
+    err = report.get("error") or ""
+    if err:
+        lines.append("")
+        lines.append(f"> ⚠️ 报告生成存在警告：{err}")
+    lines.append("")
+
+    # ①📁 产出文件总览
+    lines.append("## ① 📁 产出文件总览")
+    files = report.get("files") or []
+    if not files:
+        lines.append("_（本次作业未产出/修改任何文件）_")
+    else:
+        lines.append("| # | 文件 | 状态 | 字节 | 行 | Diff Hunk |")
+        lines.append("|---:|---|:---:|---:|---:|---:|")
+        for i, f in enumerate(files, 1):
+            diff = f.get("diff") or {}
+            hunk = diff.get("hunks", 0)
+            lines.append(f"| {i} | `{f.get('path','')}` | "
+                         f"{'🆕 新增' if f.get('status')=='new' else '✏️ 修改' if f.get('status')=='modified' else f.get('status','-')} | "
+                         f"{f.get('bytes',0)} | {f.get('lines',0)} | {hunk} |")
+        for f in files:
+            diff = f.get("diff") or {}
+            uni = diff.get("unified") or ""
+            if uni.strip():
+                lines.append("")
+                lines.append(f"### Diff — `{f.get('path','')}`")
+                lines.append("```diff")
+                lines.append(uni.rstrip("\n"))
+                lines.append("```")
+    lines.append("")
+
+    # ③🧪 验证结果
+    lines.append("## ③ 🧪 验证结果")
+    v = report.get("validation") or {}
+    unit_total = v.get("unit_total", 0)
+    unit_ok = v.get("unit_ok", 0)
+    unit_fail = v.get("unit_failures", 0) + v.get("unit_errors", 0)
+    tsc_cnt = v.get("tsc_error_count", 0)
+    icon = "✅" if (unit_fail == 0 and tsc_cnt == 0 and unit_total > 0) else "❌" if unit_fail > 0 or tsc_cnt > 0 else "🤷"
+    lines.append(f"- **{icon} unittest**：{unit_ok} / {unit_total} 通过（failures={v.get('unit_failures',0)}, errors={v.get('unit_errors',0)}，耗时 {v.get('unit_elapsed_s',0)} s，exit={v.get('unit_exit_code',0)}）")
+    lines.append(f"- **{'✅' if tsc_cnt==0 else '❌'} TypeScript tsc --noEmit**：{tsc_cnt} 个错误（耗时 {v.get('tsc_elapsed_s',0)} s，exit={v.get('tsc_exit_code',0)}）")
+    fails = v.get("unit_fail_summary") or []
+    if fails:
+        lines.append("")
+        lines.append("### ⚠️ unittest 失败摘要")
+        for f in fails[:8]:
+            lines.append(f"- **{f.get('kind','')} `{f.get('test','')}`** ({f.get('file','')}:{f.get('line','')}) — {f.get('msg','')[:120]}")
+    tsc_items = v.get("tsc_items") or []
+    if tsc_items:
+        lines.append("")
+        lines.append("### ⚠️ TypeScript 错误摘要")
+        for it in tsc_items[:8]:
+            lines.append(f"- **{it.get('code','')}** `{it.get('file','')}:{it.get('line','')}` — {it.get('msg','')[:120]}")
+    lines.append("")
+
+    # ④🔍 Codex 审查摘要
+    lines.append("## ④ 🔍 Codex 审查摘要")
+    rs = report.get("review_summary") or {}
+    strengths = rs.get("strengths") or []
+    issues = rs.get("issues") or []
+    suggestions = rs.get("suggestions") or []
+    excerpt = rs.get("raw_excerpt") or ""
+    if not (strengths or issues or suggestions):
+        lines.append("_（Codex 未输出结构化摘要，以下为原文截取）_")
+        lines.append("")
+        lines.append("```")
+        lines.append((excerpt or "")[:1200])
+        lines.append("```")
+    else:
+        if strengths:
+            lines.append("### ✅ 优点")
+            for s in strengths:
+                lines.append(f"- {s}")
+        if issues:
+            lines.append("### ⚠️ 问题")
+            for s in issues:
+                lines.append(f"- {s}")
+        if suggestions:
+            lines.append("### 💡 建议")
+            for s in suggestions:
+                lines.append(f"- {s}")
+    lines.append("")
+
+    # ⑤⚙️ 系统状态变更
+    lines.append("## ⑤ ⚙️ 系统状态变更（config.json 字段级对比）")
+    cc = report.get("config_changes") or []
+    if not cc:
+        lines.append("_（本次作业未修改 AivyOS 配置项）_")
+    else:
+        lines.append("| # | 字段路径 | 变更类型 | Before | After |")
+        lines.append("|---:|---|:---:|---|---|")
+        for i, c in enumerate(cc, 1):
+            ct = c.get("change_type")
+            ct_disp = "➕ 新增" if ct == "add" else "➖ 删除" if ct == "remove" else "🔄 更新"
+            def _fmt(v):
+                if v is None:
+                    return "—"
+                s = json.dumps(v, ensure_ascii=False)
+                return s if len(s) < 40 else s[:37] + "..."
+            lines.append(f"| {i} | `{c.get('path','')}` | {ct_disp} | {_fmt(c.get('before'))} | {_fmt(c.get('after'))} |")
+    lines.append("")
+    lines.append("---")
+    lines.append(f"_本报告由贾维斯（AivyOS Agent）自动生成于 {time.strftime('%Y-%m-%d %H:%M:%S')}_")
+    return "\n".join(lines) + "\n"
+
+
+def _build_report_html(report: Dict[str, Any]) -> str:
+    """把 JobReport dict 包装为自包含 HTML（inline 暗色玻璃态 CSS，离线可用）。
+
+    Args:
+        report: 经 mask_secrets_in_dict 脱敏后的 JobReport.to_dict() 结构。
+
+    Returns:
+        str: 完整 HTML 字符串（含 <!doctype html><html><head><body>）。
+    """
+    md = _build_report_markdown(report)
+    # 轻量 md → HTML（避免引入依赖）：标题、表格、代码块、列表、加粗、行内代码
+    html_body = _minimal_md_to_html(md)
+    css = (
+        ":root{--bg:#050914;--ink:#e5e7eb;--muted:#94a3b8;--line:rgba(255,255,255,0.12);"
+        "--accent:#6c8cff;--accent2:#4db8c7;--ok:#4ade80;--warn:#facc15;--err:#f87171;}"
+        "*{box-sizing:border-box}"
+        "body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,'Segoe UI',Roboto,'Noto Sans CJK SC',sans-serif;"
+        "padding:32px;line-height:1.65}"
+        ".wrap{max-width:1120px;margin:0 auto;background:rgba(255,255,255,0.03);border:1px solid var(--line);"
+        "border-radius:16px;padding:28px 32px;backdrop-filter:blur(6px)}"
+        "h1{font-size:22px;margin:0 0 6px;background:linear-gradient(135deg,var(--accent),var(--accent2));"
+        "-webkit-background-clip:text;background-clip:text;color:transparent}"
+        "h2{font-size:15px;margin:28px 0 12px;padding-left:8px;border-left:3px solid var(--accent)}"
+        "h3{font-size:13px;margin:16px 0 8px;color:var(--muted)}"
+        "blockquote{margin:8px 0 16px;padding:8px 14px;background:rgba(108,140,255,0.06);"
+        "border-left:2px solid var(--accent);border-radius:4px;color:var(--muted);font-size:12px}"
+        "table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0 16px}"
+        "th,td{border:1px solid var(--line);padding:6px 10px;text-align:left}"
+        "th{background:rgba(255,255,255,0.04);color:var(--muted);font-weight:600}"
+        "tr:nth-child(even) td{background:rgba(255,255,255,0.015)}"
+        "code,pre{font-family:ui-monospace,Consolas,'Courier New',monospace;font-size:11.5px}"
+        ":not(pre)>code{background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px}"
+        "pre{background:#0b1020;border:1px solid var(--line);border-radius:6px;padding:10px 12px;overflow:auto;max-height:360px}"
+        "pre .add{color:#4ade80}pre .del{color:#f87171}pre .hunk{color:#60a5fa}"
+        "ul{padding-left:20px;margin:6px 0}"
+        "em{color:var(--muted)}hr{border:0;border-top:1px solid var(--line);margin:24px 0}"
+    )
+    job_id = report.get("job_id") or "report"
+    return (
+        "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
+        f"<title>贾维斯作业报告 — {job_id}</title>"
+        f"<style>{css}</style></head><body>"
+        f"<div class=\"wrap\">{html_body}</div>"
+        "</body></html>"
+    )
+
+
+def _minimal_md_to_html(md: str) -> str:
+    """零依赖 Markdown → HTML（仅支持报告用到的子集：标题/引用/表格/代码块/列表/加粗/行内代码/水平线/段落）。"""
+    lines = md.splitlines()
+    out: list[str] = []
+    i = 0
+    # 表格列对齐缓存
+    while i < len(lines):
+        line = lines[i]
+        # 代码块
+        if line.startswith("```"):
+            lang = line[3:].strip()
+            is_diff = lang == "diff"
+            buf: list[str] = []
+            i += 1
+            while i < len(lines) and not lines[i].startswith("```"):
+                buf.append(lines[i])
+                i += 1
+            i += 1  # 跳过闭合 ```
+            code = "\n".join(buf)
+            if is_diff:
+                escaped_lines: list[str] = []
+                for cl in code.splitlines():
+                    import html as _html
+                    safe = _html.escape(cl)
+                    if cl.startswith("@@"):
+                        escaped_lines.append(f"<span class=\"hunk\">{safe}</span>")
+                    elif cl.startswith("+") and not cl.startswith("+++"):
+                        escaped_lines.append(f"<span class=\"add\">{safe}</span>")
+                    elif cl.startswith("-") and not cl.startswith("---"):
+                        escaped_lines.append(f"<span class=\"del\">{safe}</span>")
+                    else:
+                        escaped_lines.append(safe)
+                out.append("<pre>" + "\n".join(escaped_lines) + "</pre>")
+            else:
+                import html as _html
+                out.append(f"<pre>{_html.escape(code)}</pre>")
+            continue
+        # 表格（下一行是 |---:|---|:---:| 分隔行）
+        if line.startswith("|") and i + 1 < len(lines) and set(lines[i + 1].replace("|", "").replace(":", "").replace("-", "").replace(" ", "")) == set():
+            header = [c.strip() for c in line.strip("|").split("|")]
+            i += 2
+            rows: list[list[str]] = []
+            while i < len(lines) and lines[i].startswith("|"):
+                rows.append([c.strip() for c in lines[i].strip("|").split("|")])
+                i += 1
+            import html as _html
+            thead = "".join(f"<th>{_html.escape(c)}</th>" for c in header)
+            tbody = "".join(
+                "<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in row) + "</tr>"
+                for row in rows
+            )
+            out.append(f"<table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>")
+            continue
+        stripped = line.strip()
+        if not stripped:
+            i += 1
+            continue
+        import html as _html
+        # 标题
+        if stripped.startswith("# "):
+            out.append(f"<h1>{_inline(stripped[2:])}</h1>")
+        elif stripped.startswith("## "):
+            out.append(f"<h2>{_inline(stripped[3:])}</h2>")
+        elif stripped.startswith("### "):
+            out.append(f"<h3>{_inline(stripped[4:])}</h3>")
+        elif stripped.startswith("> "):
+            out.append(f"<blockquote>{_inline(stripped[2:])}</blockquote>")
+        elif stripped == "---":
+            out.append("<hr>")
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            # 连续列表合并
+            items: list[str] = []
+            while i < len(lines):
+                s = lines[i].strip()
+                if s.startswith("- ") or s.startswith("* "):
+                    items.append(_inline(s[2:]))
+                    i += 1
+                else:
+                    break
+            out.append("<ul>" + "".join(f"<li>{x}</li>" for x in items) + "</ul>")
+            continue
+        else:
+            out.append(f"<p>{_inline(stripped)}</p>")
+        i += 1
+    return "\n".join(out)
+
+
+def _inline(text: str) -> str:
+    """行内 md → HTML：`code` **bold** 普通文本转义。"""
+    import html as _html
+    # code
+    parts: list[str] = []
+    rest = text
+    while "`" in rest:
+        pre, _, rest = rest.partition("`")
+        parts.append(_html.escape(pre))
+        if "`" in rest:
+            code, _, rest = rest.partition("`")
+            parts.append(f"<code>{_html.escape(code)}</code>")
+        else:
+            parts.append("`")
+            break
+    parts.append(_html.escape(rest))
+    joined = "".join(parts)
+    # **bold**
+    import re as _re
+    joined = _re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", joined)
+    return joined
 
 
 def build_server(engine: ChatEngine, cfg: dict, stop_event: "asyncio.Event | None" = None) -> AivyIpcServer:
@@ -2236,6 +2522,107 @@ def build_server(engine: ChatEngine, cfg: dict, stop_event: "asyncio.Event | Non
             return (await get_wb_svc().open_vscode(params.get("path", ""))).to_dict()
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    # ─────────────────────────────────────────────────────────────
+    # cc-switch Provider 管理（方案 A+B 融合 UI 的统一后端）
+    # ─────────────────────────────────────────────────────────────
+
+    @server.method("workbench.list_providers")
+    async def workbench_list_providers(params):
+        """列出指定 app_type（claude/codex）合并后的 Provider 列表 + override 开关 + 预设。
+        params: {app_type: "claude"|"codex"}
+        """
+        try:
+            return get_wb_svc().list_providers(str(params.get("app_type")))
+        except Exception as e:
+            return {"ok": False, "error": str(e), "providers": [], "presets": [], "manual_override_enabled": False}
+
+    @server.method("workbench.save_manual")
+    async def workbench_save_manual(params):
+        """保存 AivyOS 手动覆盖（不修改 cc-switch.db）。
+        params: {dto: {app_type, name, base_url, model, api_key, set_override?}}
+        """
+        try:
+            return get_wb_svc().save_manual(dict(params.get("dto") or {}))
+        except Exception as e:
+            return {"ok": False, "error_message": str(e), "source": "", "active_name": ""}
+
+    @server.method("workbench.set_override")
+    async def workbench_set_override(params):
+        """切换 AivyOS 手动覆盖的启用开关。
+        params: {app_type: "claude"|"codex", enabled: bool}
+        """
+        try:
+            return get_wb_svc().set_override(
+                str(params.get("app_type")), bool(params.get("enabled")),
+            )
+        except Exception as e:
+            return {"ok": False, "error_message": str(e), "source": "", "active_name": ""}
+
+    @server.method("workbench.reload")
+    async def workbench_reload(_params):
+        """重新扫 cc-switch.db + 当前 config。params 未使用。"""
+        try:
+            return get_wb_svc().reload_from_ccswitch()
+        except Exception as e:
+            return {"ok": False, "error": str(e), "claude": {}, "codex": {}}
+
+    @server.method("workbench.save_preset")
+    async def workbench_save_preset(params):
+        """另存当前配置为预设（不出现在 override 决策）。
+        params: {dto: {app_type, preset_name, base_url, model, api_key}}
+        """
+        try:
+            return get_wb_svc().save_preset(dict(params.get("dto") or {}))
+        except Exception as e:
+            return {"ok": False, "error": str(e), "presets": []}
+
+    @server.method("workbench.health_check")
+    async def workbench_health_check(params):
+        """对当前生效或给定的 provider 发送 1 字探活（1 token）。
+        params: {dto: {app_type: "claude"|"codex", base_url?: string, model?: string, api_key?: string}}
+        """
+        try:
+            return get_wb_svc().health_check_provider(dict(params.get("dto") or {}))
+        except Exception as e:
+            return {"ok": False, "latency_ms": None, "error": str(e), "display_name": ""}
+
+    @server.method("workbench.copy_report_markdown")
+    async def workbench_copy_report_markdown(params):
+        """把贾维斯作业报告转换为 Markdown 保存到 ~/.aivyos/report_*.md（Windows 无统一剪贴板，回退文件方式）。
+        params: {report_dict: JobReport 字典}
+        returns: {ok, saved_path, bytes, error?}
+        """
+        try:
+            report = mask_secrets_in_dict(dict(params.get("report_dict") or {}))
+            md = _build_report_markdown(report)
+            out_dir = Path.home() / ".aivyos"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ts = int(time.time())
+            path = out_dir / f"report_{ts}.md"
+            path.write_text(md, encoding="utf-8")
+            return {"ok": True, "saved_path": str(path), "bytes": len(md.encode("utf-8")), "error": ""}
+        except Exception as e:
+            return {"ok": False, "saved_path": "", "bytes": 0, "error": str(e)}
+
+    @server.method("workbench.export_report_html")
+    async def workbench_export_report_html(params):
+        """把贾维斯作业报告导出为自包含 HTML（inline CSS，暗色，可离线打开）。
+        params: {report_dict: JobReport 字典}
+        returns: {ok, saved_path, bytes, preview_path, error?}
+        """
+        try:
+            report = mask_secrets_in_dict(dict(params.get("report_dict") or {}))
+            html = _build_report_html(report)
+            out_dir = Path.home() / ".aivyos"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ts = int(time.time())
+            path = out_dir / f"report_{ts}.html"
+            path.write_text(html, encoding="utf-8")
+            return {"ok": True, "saved_path": str(path), "bytes": len(html.encode("utf-8")),
+                    "preview_path": str(path), "error": ""}
+        except Exception as e:
+            return {"ok": False, "saved_path": "", "bytes": 0, "preview_path": "", "error": str(e)}
 
     return server
 

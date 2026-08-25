@@ -119,12 +119,22 @@ class TestPTT(AivyTestCase):
         return s
 
     def test_ptt_start_stop_empty(self):
-        """未采集到音频 → no_speech_detected（不崩溃）。"""
-        s = self._session()
-        ok = asyncio.run(s.start_ptt())
-        self.assertTrue(ok)
-        self.assertFalse(asyncio.run(s.start_ptt()))  # 重复启动被拒
-        result = asyncio.run(s.stop_ptt())
+        """未采集到音频 → no_speech_detected（不崩溃）。
+
+        修复说明：原测试拆成 3 个独立 asyncio.run() 会跨事件循环共享 VoiceSession。
+        第一次 asyncio.run 的 finalizer 清理 pending _ptt_collect 任务时，
+        SyntheticSource（默认 3s 合成音）会在 cancel 前把正弦音帧全量写入 _ptt_buffer，
+        导致 stop_ptt 读到非空 PCM 走 process_pcm 成功分支，返回的 dict 没有 "error" 键。
+        合并为单事件循环同协程内执行 3 个 await，_ptt_collect 在 cancel 前根本不会被调度执行。
+        """
+        async def _scenario():
+            s = self._session()
+            ok = await s.start_ptt()
+            self.assertTrue(ok)
+            self.assertFalse(await s.start_ptt())  # 重复启动被拒
+            return await s.stop_ptt()
+
+        result = asyncio.run(_scenario())
         self.assertEqual(result["error"], "no_speech_detected")
 
     def test_ptt_process_pcm_direct(self):

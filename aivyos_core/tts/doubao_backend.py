@@ -36,27 +36,66 @@ VALID_SAMPLE_RATES = {8000, 16000, 22050, 24000, 32000, 44100, 48000}
 
 
 class DoubaoTTSBackend(TTSBackend):
-    """豆包 TTS 引擎（火山引擎 V3 API，新版单鉴权）。
+    """豆包 TTS 引擎类（火山引擎 OpenSpeech V3 API）。
 
-    使用新版控制台的 API Key 进行鉴权，调用 V3 单向流式 TTS 接口。
+    功能：火山引擎新版 V3 单向流式 TTS，支持 API Key / Access Key / 环境变量三种鉴权；
+          无 Key 时自动降级到 Mock 合成静音音频。
+    参数：无（实例化通过 __init__ 传入 config）。
+    返回：无。
+    异常：无。
     """
 
     name = "doubao"
     sample_rate = 24000
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
-        """初始化豆包 TTS。
+    @staticmethod
+    def availability_check(api_key=None, access_key=None, env_key: str = "VOLCENGINE_API_KEY") -> Dict[str, Any]:
+        """静态可用性检查（无需实例化即可调用）。
 
-        Args:
-            config: 配置字典，支持以下参数：
-                - api_key: API Key（从控制台 > API Key 管理获取）
-                - resource_id: 资源 ID（默认 seed-tts-2.0）
-                - voice_type: 音色 speaker ID（如 zh_female_xiaohe_uranus_bigtts）
-                - speed_ratio: 语速倍率（0.5 ~ 2.0）
-                - volume_ratio: 音量倍率（0.1 ~ 3.0，仅本地记录）
-                - pitch_ratio: 语调倍率（0.1 ~ 3.0，仅本地记录）
-                - sample_rate: 采样率（默认 24000）
-                - max_retries: 最大重试次数
+        功能：按优先级检查 api_key → access_key → 环境变量，判断豆包 TTS 是否可调用云端接口。
+        参数：
+            api_key: 直接传入的 API Key（新版 X-Api-Key 单鉴权）。
+            access_key: 别名参数，含义与 api_key 相同（兼容多命名调用方）。
+            env_key: 回退读取的环境变量名，默认 VOLCENGINE_API_KEY。
+        返回：
+            Dict[str, Any]: 结构 {
+                ok: bool,                  # 是否存在有效 Key
+                reason: "has_key"|"missing_key",
+                supports_access_key_param: True,
+                sample_rate: 24000,
+                default_voice: "zh_female_xiaohe_uranus_bigtts",
+            }
+        异常：无。
+        """
+        effective = (
+            (api_key or "").strip()
+            or (access_key or "").strip()
+            or (os.environ.get(env_key or "VOLCENGINE_API_KEY") or "").strip()
+        )
+        return {
+            "ok": bool(effective),
+            "reason": "has_key" if effective else "missing_key",
+            "supports_access_key_param": True,
+            "sample_rate": 24000,
+            "default_voice": "zh_female_xiaohe_uranus_bigtts",
+        }
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        """初始化豆包 TTS 后端实例。
+
+        功能：解析 config / 环境变量中的 Key，设置音色/语速/采样率等参数；无 Key 时标记为不可用。
+        参数：
+            config: 配置字典，支持：
+                - api_key / access_key: API Key（二选一即可）
+                - resource_id: 资源 ID，默认 seed-tts-2.0
+                - voice_type: 音色 speaker ID，默认 zh_female_xiaohe_uranus_bigtts
+                - speed_ratio: 语速倍率 0.5~2.0，默认 1.0
+                - volume_ratio: 音量倍率 0.1~3.0，默认 1.0（仅本地记录）
+                - pitch_ratio: 语调倍率 0.1~3.0，默认 1.0（仅本地记录）
+                - sample_rate: 采样率，默认 24000
+                - max_retries: 最大重试次数，默认 1
+        返回：无。
+        异常：无。
         """
         cfg = config or {}
         # 支持多种API Key参数名：api_key或access_key
@@ -80,19 +119,26 @@ class DoubaoTTSBackend(TTSBackend):
 
     @property
     def available(self) -> bool:
-        """引擎是否可用。"""
+        """当前实例的可用状态（是否有有效 API Key）。
+
+        功能：只读属性，反映 __init__ 时解析出的 Key 是否有效。
+        参数：无。
+        返回：
+            bool: True=存在有效 Key，可走云端合成；False=降级到 Mock 静音合成。
+        异常：无。
+        """
         return self._available
 
     def synthesize(self, text: str) -> TTSResult:
-        """文本转语音（带自动重试）。
+        """文本转语音（带指数退避重试）。
 
-        无 API Key 时自动降级到 Mock 模式，返回合成静音音频。
-
-        Args:
-            text: 要合成的文本。
-
-        Returns:
-            TTSResult 合成结果。
+        功能：无 Key → Mock 静音；有 Key → 云端 V3 API，失败自动重试 max_retries+1 次。
+        参数：
+            text: 要合成的纯文本（中英文混合均可）。
+        返回：
+            TTSResult: 含 pcm 字节、采样率、后端名、延迟、meta 信息的结果对象。
+        异常：
+            RuntimeError: 全部重试次数耗尽后仍失败时抛出，附带最后一次异常信息。
         """
         if not self._available:
             # Mock 降级：生成1秒静音PCM数据
@@ -322,17 +368,16 @@ class DoubaoTTSBackend(TTSBackend):
         )
 
     def clone_voice(self, ref_pcm: bytes, text: str) -> TTSResult:
-        """音色克隆 — V3 API 通过声音复刻接口实现。
+        """音色克隆（简化版，当前回退到普通 synthesize）。
 
-        Args:
-            ref_pcm: 参考音频 PCM 数据。
-            text: 要合成的文本。
-
-        Returns:
-            TTSResult 合成结果。
+        功能：预留接口，完整实现需先通过音色训练接口获取 speaker_id 再合成。
+        参数：
+            ref_pcm: 参考音频 16-bit PCM 字节（用于音色复刻训练）。
+            text: 要合成的目标文本。
+        返回：
+            TTSResult: 当前版本与 synthesize 返回结构一致。
+        异常：无。
         """
-        # 声音复刻需要先通过音色训练接口获取 speaker_id，
-        # 这里简化处理：使用复刻的 speaker_id 直接合成
         return self.synthesize(text)
 
     def update_params(
@@ -342,13 +387,16 @@ class DoubaoTTSBackend(TTSBackend):
         pitch_ratio: Optional[float] = None,
         voice_type: Optional[str] = None,
     ) -> None:
-        """动态更新合成参数。
+        """运行时动态更新合成参数（无需重建实例）。
 
-        Args:
-            speed_ratio: 语速倍率（0.5 ~ 2.0）。
-            volume_ratio: 音量倍率（0.1 ~ 3.0）。
-            pitch_ratio: 语调倍率（0.1 ~ 3.0）。
-            voice_type: 音色类型（speaker ID）。
+        功能：按字段覆盖语速/音量/语调/音色，并做合法范围裁剪。
+        参数：
+            speed_ratio: 语速倍率 0.5~2.0，None 表示不修改。
+            volume_ratio: 音量倍率 0.1~3.0，None 表示不修改。
+            pitch_ratio: 语调倍率 0.1~3.0，None 表示不修改。
+            voice_type: 音色 speaker ID 字符串，None 表示不修改。
+        返回：无。
+        异常：无。
         """
         if speed_ratio is not None:
             self._speed_ratio = max(0.5, min(2.0, speed_ratio))
@@ -365,10 +413,13 @@ class DoubaoTTSBackend(TTSBackend):
 
 
 def register_doubao_tts(registry) -> None:
-    """注册豆包 TTS 引擎到 VoiceEngineRegistry。
+    """将豆包 TTS 后端注册到引擎注册表。
 
-    Args:
-        registry: VoiceEngineRegistry 实例。
+    功能：以 name="doubao" 为键，将 DoubaoTTSBackend 类注册到全局 TTS 引擎注册表。
+    参数：
+        registry: 具备 register_tts(name, cls) 方法的 VoiceEngineRegistry 实例。
+    返回：无。
+    异常：无（注册表内部抛错除外）。
     """
     registry.register_tts("doubao", DoubaoTTSBackend)
     log.info("豆包 TTS 引擎已注册（V3 API 单鉴权模式）")

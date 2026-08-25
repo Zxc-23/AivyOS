@@ -46,3 +46,9 @@ test_reports/
 
 # Windows 快捷方式（用户本地创建，不入库）
 *.lnk
+
+# Tauri updater 签名私钥（绝不入库，泄露后需重新生成密钥对）
+.aivyos-updater.key
+.aivyos-updater-raw.key
+.aivyos-updater-pure.key
+.aivyos-updater.key.pub

@@ -98,9 +98,11 @@ class CompiledGraph:
 
         current = start
         while current != END:
-            t0 = time.monotonic()
+            t0 = time.perf_counter()
             state = await self._run_node(current, state, ctx)
-            self.node_timings_ms[current] = round((time.monotonic() - t0) * 1000, 2)
+            # 使用 perf_counter（高精度，Windows ~微秒级）而非 monotonic（Windows ~15ms 粗精度），
+            # 避免快速机器 mock 节点全为 0.0ms 的误报；保留 6 位小数（微秒精度）。
+            self.node_timings_ms[current] = round((time.perf_counter() - t0) * 1000, 6)
             self.last_trace.append(current)
             if self.checkpointer is not None:
                 # 剥离内部瞬态键（如 _preview_server），避免不可序列化对象入库

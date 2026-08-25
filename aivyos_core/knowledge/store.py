@@ -298,6 +298,52 @@ class KnowledgeStore:
         self._save()
         return count
 
+    def semantic_search(
+        self, query: str, top_k: int = 5, min_score: float = 0.1, vector_store: Any = None
+    ) -> List[Dict[str, Any]]:
+        """语义搜索：优先向量相似度，不足时回退到 token overlap。
+
+        功能: 若提供 vector_store 则先使用向量检索，命中不足或得分过低时
+              回退到 find_similar（token overlap）。vector_store 为 None 时
+              直接调用 find_similar，100% 向后兼容。
+        参数:
+            query: 查询文本。
+            top_k: 返回结果最大条数，默认 5。
+            min_score: 最低相似度阈值（向量/overlap 均使用），默认 0.1。
+            vector_store: 可选向量存储实例（需实现 upsert_batch/query）。
+        返回:
+            List[Dict[str,Any]]: 带相似度的卡片列表，每项:
+                {"card": card.to_dict(), "score": float}
+        """
+        import asyncio
+
+        if vector_store is None:
+            return self.find_similar(query, limit=top_k, min_score=min_score)
+
+        tuples: list = [
+            (
+                card.id,
+                card.title + "\n" + card.summary + "\n" + card.content + "\n" + card.category + "\n" + " ".join(card.tags),
+            )
+            for card in self._cards.values()
+        ]
+        items = [{"id": tid, "text": text} for tid, text in tuples]
+        asyncio.run(vector_store.upsert_batch(items))
+        results = asyncio.run(vector_store.query(query, top_k=top_k * 2))
+        filtered = [r for r in results if r.score >= min_score]
+        if len(filtered) >= 1:
+            out = []
+            for r in filtered[:top_k]:
+                c = self.get(r.id)
+                if c is None:
+                    continue
+                c.usage += 1
+                out.append({"card": c.to_dict(), "score": round(r.score, 3)})
+            if out:
+                self._save()
+            return out
+        return self.find_similar(query, limit=top_k, min_score=min(min_score, 0.05))
+
     def clear(self) -> int:
         n = len(self._cards)
         self._cards.clear()

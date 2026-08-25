@@ -26,9 +26,24 @@ log = logging.getLogger(__name__)
 
 
 class VoiceSession:
-    """一轮语音对话的编排器（§3.1 → §9 认证 → §4.1 → §6.1）。"""
+    """语音会话编排器类。
+
+    功能：全链路编排采集 → VAD → ASR → 唤醒词 → LLM → TTS → 播放；组件优雅降级。
+    参数：无（实例化时通过 __init__ 传入 config / engine）。
+    返回：无。
+    异常：无。
+    """
 
     def __init__(self, config: Dict[str, Any], engine: Optional[ChatEngine] = None) -> None:
+        """初始化语音会话编排器。
+
+        功能：根据配置实例化 ASR/TTS/VAD/音源/音槽/唤醒/认证等组件。
+        参数：
+            config: 全局配置字典，包含 asr/tts/audio/voice/auth 等子配置。
+            engine: 可选的 ChatEngine 实例；未提供时按 config 新建。
+        返回：无。
+        异常：无。
+        """
         self.config = config
         self.engine = engine or ChatEngine(config)
         self.asr = create_asr(config.get("asr", {}))
@@ -59,6 +74,15 @@ class VoiceSession:
         self.backend_play = bool(voice_cfg.get("backend_play", True))
 
     def status(self) -> Dict[str, Any]:
+        """获取语音会话当前状态快照。
+
+        功能：汇总当前 ASR/TTS/VAD/音源/音槽/唤醒/认证等组件状态。
+        参数：无。
+        返回：
+            Dict[str, Any]: 状态字典，键包括 asr/tts/vad/source/sink/wake_required/
+                           wake_words/llm_route_mode/auth_enabled 等。
+        异常：无。
+        """
         st = {
             "asr": self.asr.name,
             "tts": self.tts.name,
@@ -78,12 +102,16 @@ class VoiceSession:
     # ---- 一轮对话 ----
 
     async def run_turn(self, text_override: Optional[str] = None, skip_wake: bool = False) -> Optional[Dict[str, Any]]:
-        """执行一轮语音对话，返回 {text, reply, wav_len, latency_ms, ...} 或 None。
+        """执行一轮完整语音对话（真实采集路径 or 文本覆盖模式）。
 
-        text_override：跳过真实音频链路（测试/文本模拟模式）。
-        skip_wake：跳过唤醒词检查（连续对话模式：唤醒后窗口内无需重复唤醒词）。
-        认证门控（§9）：真实音频路径下未通过认证 → 静默拒绝（不暴露系统存在）。
-        耗时细分：asr_ms / llm_ms / tts_ms / playback_ms，用于诊断瓶颈。
+        功能：采集→VAD→ASR→唤醒→LLM→TTS→播放全链路编排，text_override 可跳音频链。
+        参数：
+            text_override: 不为 None 时跳过真实采集，直接以此文本作为 ASR 结果（测试/模拟）。
+            skip_wake: True 时跳过唤醒词门控（连续对话窗口内无需重复说唤醒词）。
+        返回：
+            Optional[Dict[str, Any]]: 结果字典含 text/reply/tts_error_detail/latency_ms 等；
+                                     或采集为空时的错误字典；正常不会返回 None（历史兼容）。
+        异常：无（内部 try/except 降级，异常通过返回字典 error/tts_error_detail 暴露）。
         """
         start = time.perf_counter()
         asr_ms = 0.0
@@ -138,6 +166,7 @@ class VoiceSession:
         # TTS + 输出 — 用线程池避免阻塞事件循环
         tts_t0 = time.perf_counter()
         loop = asyncio.get_running_loop()
+        tts_error_detail: Optional[str] = None
         try:
             audio = await loop.run_in_executor(
                 None, lambda: self.tts.synthesize(reply.text)
@@ -145,6 +174,7 @@ class VoiceSession:
         except Exception as e:
             log.exception("TTS 合成失败")
             audio = None
+            tts_error_detail = str(e)
         tts_ms = (time.perf_counter() - tts_t0) * 1000
 
         wav_b64 = ""
@@ -181,6 +211,7 @@ class VoiceSession:
             "route": reply.route.to_dict(),
             "asr_backend": asr_backend,
             "tts_backend": audio.backend if audio else "tts-failed",
+            "tts_error_detail": tts_error_detail,
             "wav_len": len(audio.pcm) if audio else 0,
             "wav_b64": wav_b64,
             "sample_rate": audio.sample_rate if audio else 24000,
@@ -199,10 +230,13 @@ class VoiceSession:
     # ---- PTT（按住说话）：分离采集与处理 ----
 
     async def start_ptt(self) -> bool:
-        """开始 PTT 采集：持续把麦克风帧追加到 buffer，不自动结束。
+        """启动 PTT（按住说话）采集。
 
-        与 run_turn 的 VAD 自动端点检测不同，PTT 由用户按键控制起止。
-        返回是否成功启动（重复启动返回 False）。
+        功能：异步启动后台采集循环，把麦克风帧持续追加到内部 buffer；由用户按键控制而非 VAD。
+        参数：无。
+        返回：
+            bool: True=首次启动成功；False=已处于 PTT 激活状态（重复启动拒绝）。
+        异常：无。
         """
         if self._ptt_active:
             return False
@@ -225,7 +259,15 @@ class VoiceSession:
             log.warning("PTT 采集异常: %s", e)
 
     async def stop_ptt(self, skip_wake: bool = False) -> Dict[str, Any]:
-        """停止 PTT 采集并处理 buffer（认证→ASR→唤醒→LLM→TTS）。"""
+        """停止 PTT 采集并进入完整对话处理流程。
+
+        功能：停止采集循环、取消任务、将 buffer 转为 PCM 后委托 process_pcm 处理。
+        参数：
+            skip_wake: True 时跳过唤醒词检查（连续对话窗口内复用）。
+        返回：
+            Dict[str, Any]: 同 process_pcm 返回结构；buffer 为空时返回 no_speech_detected 错误。
+        异常：无。
+        """
         self._ptt_active = False
         if self._ptt_task is not None:
             self._ptt_task.cancel()
@@ -248,7 +290,16 @@ class VoiceSession:
         return await self.process_pcm(pcm, skip_wake=skip_wake)
 
     async def process_pcm(self, pcm: bytes, skip_wake: bool = False) -> Dict[str, Any]:
-        """处理一段完整 PCM：认证 → ASR → 唤醒词 → LLM → TTS（run_turn 与 PTT 共用）。"""
+        """处理一段完整 PCM 音频（run_turn 与 PTT 共用的核心链路）。
+
+        功能：认证 → ASR → 唤醒词门控 → LLM 对话 → TTS 合成 → 非阻塞播放。
+        参数：
+            pcm: 完整 16-bit PCM 音频字节（采样率由 source 决定，通常 16kHz 或 48kHz）。
+            skip_wake: True 时跳过唤醒词检查。
+        返回：
+            Dict[str, Any]: 含 text/reply/tts_backend/tts_error_detail/wav_len/latency_ms 等的结果字典。
+        异常：无。
+        """
         start = time.perf_counter()
         asr_ms = 0.0
         llm_ms = 0.0
@@ -301,6 +352,7 @@ class VoiceSession:
         # TTS + 输出 — 用线程池避免阻塞事件循环
         tts_t0 = time.perf_counter()
         loop = asyncio.get_running_loop()
+        tts_error_detail: Optional[str] = None
         try:
             audio = await loop.run_in_executor(
                 None, lambda: self.tts.synthesize(reply.text)
@@ -308,6 +360,7 @@ class VoiceSession:
         except Exception as e:
             log.exception("TTS 合成失败")
             audio = None
+            tts_error_detail = str(e)
         tts_ms = (time.perf_counter() - tts_t0) * 1000
 
         wav_b64 = ""
@@ -344,6 +397,7 @@ class VoiceSession:
             "route": reply.route.to_dict(),
             "asr_backend": asr_backend,
             "tts_backend": audio.backend if audio else "tts-failed",
+            "tts_error_detail": tts_error_detail,
             "wav_len": len(audio.pcm) if audio else 0,
             "wav_b64": wav_b64,
             "sample_rate": audio.sample_rate if audio else 24000,
@@ -362,10 +416,15 @@ class VoiceSession:
     # ---- 独立播报（连续对话提醒/退出确认）----
 
     def speak(self, text: str) -> bool:
-        """合成并播放一段提示语（如'还需要我吗？'）。返回是否成功。
+        """同步（兼容异步上下文）播报提示语音。
 
-        与 run_turn 的 TTS 播放解耦，供 server_entry 在连续对话窗口
-        到期提醒 / 退出确认时直接调用（fire-and-forget，不阻塞）。
+        功能：独立于 run_turn 的 TTS 播报接口，用于连续对话窗口到期提醒、退出确认等场景。
+              同步上下文走后台线程 + join 30s；异步上下文直接返回 False（留待 aspeak 调用）。
+        参数：
+            text: 要播报的纯文本。
+        返回：
+            bool: True=播报成功启动；False=在 async 上下文或合成/播放异常。
+        异常：无（内部吞异常，失败返回 False）。
         """
         try:
             import asyncio
@@ -397,7 +456,15 @@ class VoiceSession:
             return False
 
     async def aspeak(self, text: str) -> bool:
-        """异步版：合成并播放提示语（用于 async 上下文，如 voice.turn 内）。"""
+        """异步播报提示语音（用于 async 上下文）。
+
+        功能：异步 TTS 合成 + 非阻塞后端播放，供 run_turn 内部或 server_entry 异步调用。
+        参数：
+            text: 要播报的纯文本。
+        返回：
+            bool: True=合成并开始播放成功；False=合成失败或播放异常。
+        异常：无（内部吞异常，失败返回 False）。
+        """
         try:
             loop = asyncio.get_running_loop()
             audio = await loop.run_in_executor(None, lambda: self.tts.synthesize(text))

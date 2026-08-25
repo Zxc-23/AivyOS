@@ -64,7 +64,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "persona": {
         # §4.3 Big Five 人格参数
-        "name": "Aivy",
+        # Agent 名称固定使用"贾维斯"（见 roles.py AGENT_NAME_PRIMARY 全局真源）
+        # "Aivy" 作为系统品牌/产品名保留，不再作为人格默认值
+        "name": "贾维斯",
         "openness": 0.8,
         "conscientiousness": 0.9,
         "extraversion": 0.3,
@@ -216,6 +218,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "timezone": "local",
         "tick_s": 5,                 # 调度循环 tick
     },
+    # ---- 全局手动 Provider 覆盖（ProviderStore 真源）----
+    # 由 UI save_manual / set_override 写入；绝不写入 cc-switch.db
+    # 与 workbench.manual_override 配合使用：override 开时优先取 agents.*.manual
+    "agents": {
+        "claude": {"manual": None},   # None = 未启用 AivyOS 手动
+        "codex":  {"manual": None},
+    },
     # ---- 双模型协同工作台（workbench 计划书 Phase 1）----
     "workbench": {
         "cc_switch": {
@@ -226,7 +235,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "claude_code": {
                 "enabled": True,
                 "cli_path": "claude",
-                # cc-switch 不可用时的降级凭据（api_key 非空才生效）
+                "skip_permissions": True,  # 非交互模式自动跳过写入权限确认
                 "manual": {"api_key": "", "base_url": "", "model": ""},
             },
             "codex": {
@@ -238,8 +247,16 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "collaboration": {
             "default_mode": "sequential",   # sequential | parallel | human_in_the_loop
             "auto_open_vscode": True,       # 实现类任务产出文件后自动在 VS Code 打开
+            "review_via_files": True,       # Codex 审查时优先传递实际文件内容
         },
         "timeout_s": 300,            # 子进程默认超时（长任务可调大）
+        # cc-switch 集成：manual 覆盖优先级开关（ProviderStore 读它）
+        # True  时 resolve_credentials() 优先取 agents.<app_type>.manual
+        # False 时完全退回 cc-switch.db 当前激活项
+        "manual_override": {
+            "claude_enabled": False,
+            "codex_enabled":  False,
+        },
     },
     # ---- Phase 2 Week 6：代码生成（§10 一句话做软件 / §11 预览）----
     "codegen": {

@@ -24,7 +24,7 @@ def _tokenize(text: str) -> set[str]:
     for ch in text:
         if "\u4e00" <= ch <= "\u9fff" and ch not in _STOP:
             tokens.add(ch)
-    tokens.update(re.findall(r"[a-zA-Z0-9_]{2,}", text.lower()))
+    tokens.update(re.findall(r"[a-zA-Z0-9_]{1,}", text.lower()))
     return tokens
 
 

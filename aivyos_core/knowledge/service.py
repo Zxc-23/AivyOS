@@ -55,9 +55,17 @@ class KnowledgeService:
 
     # ---- 调用（相似内容识别 → 对话中呈现）----
 
-    def recall(self, text: str, limit: int = 3, min_score: float = 0.05) -> List[Dict[str, Any]]:
-        """对话中自动调用相似知识卡片（带相似度）。"""
-        return self.store.find_similar(text, limit=limit, min_score=min_score)
+    def recall(
+        self, text: str, limit: int = 3, min_score: float = 0.05, vector_store: Any = None
+    ) -> List[Dict[str, Any]]:
+        """对话中自动调用相似知识卡片（带相似度）。
+
+        兼容可选 vector_store：默认 None 时 semantic_search 内部走 find_similar，
+        100% 向后兼容现有调用链（server 端 knowledge.recall 不传 vector_store）。
+        """
+        return self.store.semantic_search(
+            text, top_k=limit, min_score=min_score, vector_store=vector_store
+        )
 
     # ---- 透传 store 操作 ----
 

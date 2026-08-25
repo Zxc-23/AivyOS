@@ -1,7 +1,10 @@
 """双模型协作模板（计划书 §4.2.2）：串行/并行编排 Claude 与 Codex。
 
 每个模板返回 {"template": ..., "ok": ..., "steps": [...]}，steps 记录每步
-agent/输出/耗时，供 CLI 与前端面板展示进度。任一步失败即短路返回。
+agent/输出/耗时/创建文件，供 CLI 与前端面板展示进度。任一步失败即短路返回。
+
+关键改进：implement_then_review 模板现在会将 Claude 实际创建的文件内容
+读取后传给 Codex 审查，而非仅传递 Claude 的文字描述。
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ import asyncio
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from aivyos_core.workbench.models import AgentResult
+from aivyos_core.workbench.dispatchers.claude_code import _build_review_prompt_with_files
 
 _FUSION_MAX = 6000  # 融合时每个模型输出的截断长度
 
@@ -17,8 +21,16 @@ TEMPLATES = ("implement_then_review", "parallel_design", "doc_after_api")
 
 
 def _step(name: str, res: AgentResult) -> Dict[str, Any]:
-    return {"name": name, "agent": res.agent, "ok": res.ok,
-            "output": res.output, "error": res.error, "elapsed_s": round(res.elapsed_s, 2)}
+    """将 AgentResult 转为前端展示用的 step dict。"""
+    return {
+        "name": name,
+        "agent": res.agent,
+        "ok": res.ok,
+        "output": res.output,
+        "error": res.error,
+        "elapsed_s": round(res.elapsed_s, 2),
+        "files_created": list(res.files_created),
+    }
 
 
 async def run_template(
@@ -40,17 +52,25 @@ async def run_template(
 
 
 async def _implement_then_review(prompt, run_claude, run_codex, cwd) -> Dict[str, Any]:
-    """Claude 实现 → Codex 审查（§3.1 串行协作）。"""
+    """Claude 实现 → Codex 审查（§3.1 串行协作）。
+
+    改进：当 Claude 创建了实际文件时，将文件内容读取后传给 Codex 审查，
+    使 Codex 能基于真实代码进行审查而非仅依赖 Claude 的文字描述。
+    """
     steps: List[Dict[str, Any]] = []
     impl = await run_claude(prompt, cwd=cwd)
     steps.append(_step("claude 实现", impl))
     if not impl.ok:
         return {"template": "implement_then_review", "ok": False, "steps": steps,
                 "error": f"Claude 实现失败: {impl.error}"}
-    review = await run_codex(
-        f"请审查以下 Claude Code 的实现输出，指出问题与改进建议：\n\n{impl.output[:_FUSION_MAX]}",
-        cwd=cwd,
-    )
+
+    # 构建审查 prompt：优先使用实际文件内容，回退到文字描述
+    if impl.files_created:
+        review_prompt = _build_review_prompt_with_files(impl.output, impl.files_created)
+    else:
+        review_prompt = f"请审查以下 Claude Code 的实现输出，指出问题与改进建议：\n\n{impl.output[:_FUSION_MAX]}"
+
+    review = await run_codex(review_prompt, cwd=cwd)
     steps.append(_step("codex 审查", review))
     return {"template": "implement_then_review", "ok": review.ok, "steps": steps,
             "error": "" if review.ok else review.error}
@@ -85,11 +105,18 @@ async def _doc_after_api(prompt, run_claude, run_codex, cwd) -> Dict[str, Any]:
     if not design.ok:
         return {"template": "doc_after_api", "ok": False, "steps": steps,
                 "error": f"Claude 设计失败: {design.error}"}
-    doc = await run_codex(
-        "请根据以下 API 设计生成 Swagger (OpenAPI 3.0) YAML 文档：\n\n"
-        f"{design.output[:_FUSION_MAX]}",
-        cwd=cwd,
-    )
+
+    # 如果 Claude 创建了 API 相关文件，读取实际内容传给 Codex
+    if design.files_created:
+        review_prompt = _build_review_prompt_with_files(
+            f"请根据以下 API 设计生成 Swagger (OpenAPI 3.0) YAML 文档。\n\n原始需求：{prompt}",
+            design.files_created,
+        )
+    else:
+        review_prompt = "请根据以下 API 设计生成 Swagger (OpenAPI 3.0) YAML 文档：\n\n" \
+                        f"{design.output[:_FUSION_MAX]}"
+
+    doc = await run_codex(review_prompt, cwd=cwd)
     steps.append(_step("codex 生成 Swagger", doc))
     return {"template": "doc_after_api", "ok": doc.ok, "steps": steps,
             "error": "" if doc.ok else doc.error}

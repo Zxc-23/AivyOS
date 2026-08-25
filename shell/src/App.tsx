@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   ChatReply, StatusInfo, fetchStatus, sendChat, inTauri,
   getVoiceStatus, runVoiceTurn, listenVoice, pttStart, pttStop,
@@ -44,7 +44,12 @@ import {
   UpdateStatus, UpdateResult,
   getWorkbenchStatus, workbenchClaude, workbenchCodex, workbenchRunTemplate,
   workbenchDiffReview, workbenchVscodeOpen,
+  workbenchListProviders, workbenchSaveManual, workbenchSetOverride,
+  workbenchReload, workbenchSavePreset, workbenchHealthCheck,
+  workbenchCopyReportMarkdown, workbenchExportReportHtml,
   WorkbenchStatus, AgentResultDto, TemplateResult, TemplateStep,
+  WorkbenchProviderItem, WorkbenchSaveManualDto, WorkbenchHealthCheckDto,
+  WorkbenchSaveResultDto, JobReportDto,
 } from "./chat";
 import {
   TrayStateName,
@@ -63,7 +68,7 @@ const TRAY_LABEL: Record<string, string> = {
 };
 
 type NavId =
-  | "chat" | "voice" | "task" | "sched" | "vibe"
+  | "chat" | "voice" | "task" | "sched" | "vibe" | "knowledge"
   | "memory" | "boot" | "voiceset" | "models" | "settings"
   | "skills" | "tools" | "workbench";
 
@@ -331,7 +336,7 @@ function getMemoryColor(category?: string): { color: string; bg: string } {
 export default function App() {
   const [nav, setNav] = useState<NavId>("boot"); // 启动先进入系统自检
   const [messages, setMessages] = useState<Msg[]>([
-    { role: "assistant", text: "早上好！我是 Aivy，您的私人 AI 助理。有什么可以帮您？" },
+    { role: "assistant", text: "您好，我是贾维斯，您的系统资源调度与任务执行者。无论开发、审查、语音交互或定时任务，随时告诉我。" },
   ]);
   const [input, setInput] = useState("");
   // 待发送图片附件（拖拽/粘贴）：{path 原始路径, dataUrl 预览, mime}
@@ -1722,7 +1727,7 @@ export default function App() {
         const res: AgentResultDto = await fn(wbPrompt, wbCwd || undefined);
         setWbSteps([{ name: wbMode === "claude" ? "Claude 执行" : "Codex 执行",
           agent: wbMode, ok: res.ok, output: res.output || "", error: res.error || "",
-          elapsed_s: res.elapsed_s || 0 }]);
+          elapsed_s: res.elapsed_s || 0, files_created: res.files_created || [] }]);
         if (!res.ok) setWbError(res.error || "执行失败");
       } else if (wbMode === "diff") {
         const res = await workbenchDiffReview(wbCwd || ".");
@@ -1767,6 +1772,515 @@ export default function App() {
     const res = await workbenchVscodeOpen(wbCwd || ".");
     if (!res.ok) showNotification("VS Code", res.error || "打开失败", "warning");
   }, [bridgeReady, wbCwd, showNotification]);
+
+  // ── cc-switch UI 融合（方案 A 顶部 + 方案 B 侧边） state ──
+  type CCAppType = "claude" | "codex";
+
+  const [ccActiveId, setCcActiveId] = useState<Record<CCAppType, string>>({ claude: "", codex: "" });
+  type CCForm = { name: string; base_url: string; model: string; api_key: string; override: boolean; };
+  const [ccForm, setCcForm] = useState<Record<CCAppType, CCForm>>({
+    claude: { name: "", base_url: "", model: "", api_key: "", override: false },
+    codex:  { name: "", base_url: "", model: "", api_key: "", override: false },
+  });
+  const [ccLoading, setCcLoading] = useState<Record<CCAppType, boolean>>({ claude: false, codex: false });
+  const [ccMsg, setCcMsg] = useState<Record<CCAppType, {type: "ok"|"warn"|"err", text: string} | null>>({ claude: null, codex: null });
+  const [ccApplyBusy, setCcApplyBusy] = useState(false);
+  const [ccConfigOpen, setCcConfigOpen] = useState(true);
+  const [ccProviders, setCcProviders] = useState<Record<CCAppType, WorkbenchProviderItem[]>>({ claude: [], codex: [] });
+  const [ccSourceBadge, setCcSourceBadge] = useState<Record<CCAppType, "cc-switch"|"aivyos-manual"|"">>({ claude: "", codex: "" });
+
+  // ================================================================
+  // AIVY-REPORT-001：贾维斯作业报告页 state + handlers
+  // ================================================================
+  const [jrVisible, setJrVisible] = useState(false);
+  const [jrReport, setJrReport] = useState<JobReportDto | null>(null);
+  const [jrToast, setJrToast] = useState<string>("");
+  const [jrBusy, setJrBusy] = useState<"copy"|"export"|"vscode"|"">("");
+
+  // ---------- 本地辅助纯函数（动作 ①② 调用，bridge fallback 之前优先零依赖实现） ----------
+  /** 把 JobReport 结构化为 5 区块 Markdown（前端版，逻辑与 Python server_entry._build_report_markdown 对齐）。 */
+  const jrBuildMarkdownLocal = (r: JobReportDto): string => {
+    const L: string[] = [];
+    const jobId = r.job_id || `job_${Date.now()}`;
+    L.push(`# 📋 贾维斯作业报告 — ${jobId}`); L.push("");
+    const genAt = new Date((r.generated_at || Date.now() / 1000) * 1000);
+    const fmt = (d: Date) => d.toLocaleString("zh-CN", { hour12: false });
+    L.push(`> 生成时间：${fmt(genAt)} · 报告生成耗时：${r.generation_ms || 0} ms`);
+    if (r.error) { L.push(""); L.push(`> ⚠️ 报告生成警告：${r.error}`); }
+    L.push("");
+
+    // ①📁 文件总览
+    L.push("## ① 📁 产出文件总览");
+    const files = r.files || [];
+    if (!files.length) L.push("_（本次作业无产出/修改文件）_");
+    else {
+      L.push("| # | 文件 | 状态 | 字节 | 行 |");
+      L.push("|---:|---|:---:|---:|---:|");
+      files.forEach((f, i) => {
+        const st = f.status === "new" ? "🆕 新增" : f.status === "modified" ? "✏️ 修改" : f.status || "-";
+        L.push(`| ${i + 1} | \`${f.path || ""}\` | ${st} | ${f.bytes ?? 0} | ${f.lines ?? 0} |`);
+      });
+      files.forEach(f => {
+        if (f.diff && f.diff.unified && f.diff.unified.trim()) {
+          L.push(""); L.push(`### Diff — \`${f.path || ""}\``);
+          L.push("```diff"); L.push(f.diff.unified.trim()); L.push("```");
+        }
+      });
+    }
+    L.push("");
+
+    // ③🧪 验证结果
+    L.push("## ③ 🧪 验证结果");
+    const v = r.validation || {};
+    const unitFail = (v.unit_failures || 0) + (v.unit_errors || 0);
+    const tscFail = v.tsc_error_count || 0;
+    const unitIcon = (v.unit_total || 0) > 0 ? (unitFail === 0 ? "✅" : "❌") : "🤷";
+    L.push(`- **${unitIcon} unittest**：${v.unit_ok || 0} / ${v.unit_total || 0} 通过（failures=${v.unit_failures || 0}, errors=${v.unit_errors || 0}，耗时 ${v.unit_elapsed_s || 0}s，exit=${v.unit_exit_code || 0}）`);
+    L.push(`- **${tscFail === 0 ? "✅" : "❌"} tsc --noEmit**：${tscFail} 个错误（耗时 ${v.tsc_elapsed_s || 0}s，exit=${v.tsc_exit_code || 0}）`);
+    const fsFail = v.unit_fail_summary || [];
+    if (fsFail.length) {
+      L.push(""); L.push("### ⚠️ unittest 失败摘要");
+      fsFail.slice(0, 8).forEach(f => L.push(`- **${f.kind || ""} \`${f.test || ""}\`** (${f.file || ""}:${f.line || ""}) — ${(f.msg || "").slice(0, 120)}`));
+    }
+    const tscItems = v.tsc_items || [];
+    if (tscItems.length) {
+      L.push(""); L.push("### ⚠️ TypeScript 错误摘要");
+      tscItems.slice(0, 8).forEach(it => L.push(`- **${it.code || ""}** \`${it.file || ""}:${it.line || ""}\` — ${(it.msg || "").slice(0, 120)}`));
+    }
+    L.push("");
+
+    // ④🔍 Codex 摘要
+    L.push("## ④ 🔍 Codex 审查摘要");
+    const rs = r.review_summary || {};
+    const strs = rs.strengths || [], iss = rs.issues || [], sug = rs.suggestions || [];
+    if (!(strs.length || iss.length || sug.length)) {
+      L.push("_（Codex 未输出结构化 3 段，以下为原文截取）_"); L.push("");
+      L.push("```"); L.push((rs.raw_excerpt || "").slice(0, 1200)); L.push("```");
+    } else {
+      if (strs.length) { L.push("### ✅ 优点"); strs.forEach(s => L.push(`- ${s}`)); }
+      if (iss.length)  { L.push("### ⚠️ 问题"); iss.forEach(s => L.push(`- ${s}`)); }
+      if (sug.length)  { L.push("### 💡 建议"); sug.forEach(s => L.push(`- ${s}`)); }
+    }
+    L.push("");
+
+    // ⑤⚙️ 配置变更
+    L.push("## ⑤ ⚙️ 系统状态变更（config.json 字段级对比）");
+    const cc = r.config_changes || [];
+    if (!cc.length) L.push("_（本次作业未修改配置项）_");
+    else {
+      L.push("| # | 字段路径 | 变更类型 | Before | After |");
+      L.push("|---:|---|:---:|---|---|");
+      const fmt = (v: any) => {
+        if (v === undefined || v === null) return "—";
+        const s = JSON.stringify(v);
+        return s.length < 40 ? s : s.slice(0, 37) + "...";
+      };
+      cc.forEach((c, i) => {
+        const ct = c.change_type === "add" ? "➕ 新增" : c.change_type === "remove" ? "➖ 删除" : "🔄 更新";
+        L.push(`| ${i + 1} | \`${c.path || ""}\` | ${ct} | ${fmt(c.before)} | ${fmt(c.after)} |`);
+      });
+    }
+    L.push(""); L.push("---");
+    L.push(`_本报告由贾维斯（AivyOS Agent）于 ${fmt(new Date())} 生成_`);
+    return L.join("\n") + "\n";
+  };
+
+  /** 最小 md → HTML（与 Python server_entry 版对齐：标题/表格/代码块 diff着色/列表/加粗/行内代码/水平线/段落）。 */
+  const jrBuildHtmlLocal = (md: string, jobId: string): string => {
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const inline = (t: string): string => {
+      const parts: string[] = [];
+      let rest = t;
+      while (rest.includes("`")) {
+        const [pre, _1, after] = [rest.slice(0, rest.indexOf("`")), "`", rest.slice(rest.indexOf("`") + 1)];
+        parts.push(esc(pre));
+        const idx2 = after.indexOf("`");
+        if (idx2 >= 0) {
+          const code = after.slice(0, idx2);
+          parts.push(`<code>${esc(code)}</code>`);
+          rest = after.slice(idx2 + 1);
+        } else {
+          parts.push("`"); rest = after;
+        }
+      }
+      parts.push(esc(rest));
+      return parts.join("").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    };
+    const lines = md.split(/\r?\n/);
+    const out: string[] = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      // fenced code
+      if (line.startsWith("```")) {
+        const lang = line.slice(3).trim();
+        const isDiff = lang === "diff";
+        const buf: string[] = [];
+        i++;
+        while (i < lines.length && !lines[i].startsWith("```")) { buf.push(lines[i]); i++; }
+        i++;
+        if (isDiff) {
+          const colored = buf.map(cl => {
+            const safe = esc(cl);
+            if (cl.startsWith("@@")) return `<span style="color:#60a5fa;font-weight:600">${safe}</span>`;
+            if (cl.startsWith("+") && !cl.startsWith("+++")) return `<span style="color:#4ade80;background:rgba(74,222,128,0.06)">${safe}</span>`;
+            if (cl.startsWith("-") && !cl.startsWith("---")) return `<span style="color:#f87171;background:rgba(248,113,113,0.06)">${safe}</span>`;
+            return safe;
+          }).join("\n");
+          out.push(`<pre style="background:#0b1020;border:1px solid rgba(255,255,255,0.06);border-radius:7px;padding:10px 12px;font-family:ui-monospace,Consolas,'Courier New',monospace;font-size:11px;color:#cbd5e1;white-space:pre;overflow:auto;max-height:360px">${colored}</pre>`);
+        } else {
+          out.push(`<pre style="background:#0b1020;border:1px solid rgba(255,255,255,0.06);border-radius:7px;padding:10px 12px;font-family:ui-monospace,Consolas,'Courier New',monospace;font-size:11px;color:#cbd5e1;white-space:pre;overflow:auto;max-height:360px">${esc(buf.join("\n"))}</pre>`);
+        }
+        continue;
+      }
+      // table
+      if (line.startsWith("|") && i + 1 < lines.length) {
+        const sep = lines[i + 1];
+        const cleaned = sep.replace(/\|/g, "").replace(/:/g, "").replace(/-/g, "").replace(/ /g, "");
+        if (cleaned === "") {
+          const header = line.slice(1, -1).split("|").map(x => x.trim());
+          i += 2;
+          const rows: string[][] = [];
+          while (i < lines.length && lines[i].startsWith("|")) {
+            rows.push(lines[i].slice(1, -1).split("|").map(x => x.trim()));
+            i++;
+          }
+          const thead = `<tr>${header.map(h => `<th style="border:1px solid rgba(255,255,255,0.12);padding:6px 9px;background:rgba(255,255,255,0.04);color:#94a3b8;font-size:10.5px;text-align:left">${inline(h)}</th>`).join("")}</tr>`;
+          const tbody = rows.map(row => `<tr>${row.map(cell => `<td style="border:1px solid rgba(255,255,255,0.12);padding:6px 9px;text-align:left;vertical-align:top;font-size:11px;color:#e5e7eb">${inline(cell)}</td>`).join("")}</tr>`).join("");
+          out.push(`<table style="width:100%;border-collapse:collapse;margin:8px 0">${thead}${tbody}</table>`);
+          continue;
+        }
+      }
+      const st = line.trim();
+      if (!st) { i++; continue; }
+      if (st.startsWith("# "))      { out.push(`<h1 style="font-size:22px;margin:4px 0 10px;background:linear-gradient(135deg,#6c8cff,#4db8c7);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:700">${inline(st.slice(2))}</h1>`); i++; continue; }
+      if (st.startsWith("## "))     { out.push(`<h2 style="font-size:15px;margin:24px 0 10px;padding-left:8px;border-left:3px solid #6c8cff;color:#e5e7eb;font-weight:700">${inline(st.slice(3))}</h2>`); i++; continue; }
+      if (st.startsWith("### "))    { out.push(`<h3 style="font-size:12.5px;margin:14px 0 6px;color:#94a3b8;font-weight:700">${inline(st.slice(4))}</h3>`); i++; continue; }
+      if (st.startsWith("> "))      { out.push(`<blockquote style="margin:8px 0 14px;padding:8px 14px;background:rgba(108,140,255,0.06);border-left:2px solid #6c8cff;border-radius:4px;color:#94a3b8;font-size:12px">${inline(st.slice(2))}</blockquote>`); i++; continue; }
+      if (st === "---")            { out.push(`<hr style="border:0;border-top:1px solid rgba(255,255,255,0.12);margin:22px 0">`); i++; continue; }
+      if (st.startsWith("- ") || st.startsWith("* ")) {
+        const items: string[] = [];
+        while (i < lines.length) {
+          const s = lines[i].trim();
+          if (s.startsWith("- ") || s.startsWith("* ")) { items.push(inline(s.slice(2))); i++; } else break;
+        }
+        out.push(`<ul style="padding-left:18px;margin:6px 0;color:#e5e7eb;font-size:12px;line-height:1.6">${items.map(x => `<li>${x}</li>`).join("")}</ul>`);
+        continue;
+      }
+      out.push(`<p style="margin:4px 0;color:#e5e7eb;font-size:12.5px;line-height:1.65">${inline(st)}</p>`);
+      i++;
+    }
+    const body = out.join("\n");
+    const css = "body{margin:0;background:#050914;color:#e5e7eb;font-family:system-ui,-apple-system,'Segoe UI',Roboto,'Noto Sans CJK SC',sans-serif;padding:28px;line-height:1.65}" +
+                ".wrap{max-width:1120px;margin:0 auto;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.12);border-radius:16px;padding:26px 30px;backdrop-filter:blur(6px)}";
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>贾维斯作业报告 — ${esc(jobId)}</title><style>${css}</style></head><body><div class="wrap">${body}</div></body></html>`;
+  };
+
+  /** 关闭贾维斯作业报告弹层。 */
+  const jrClose = useCallback(() => {
+    setJrVisible(false);
+  }, []);
+
+  /** 从协同步骤打开贾维斯作业报告：优先 step.report；若 report 为空但 files_created 非空，则构造最小骨架报告供前端 5 区块渲染。 */
+  const jrOpenFromStep = useCallback((s: TemplateStep) => {
+    if (s.report) {
+      setJrReport(s.report);
+    } else {
+      // 兼容骨架：当后端还没生成 report 字段（旧版本 / mock）时，基于 files_created 构造最小可用报告，仍能展示区块 ①/③ 骨架
+      const minReport: JobReportDto = {
+        job_id: `step_${Date.now().toString(36)}`,
+        generated_at: Date.now() / 1000,
+        generation_ms: 0,
+        error: s.ok ? "" : `步骤原始错误：${s.error || "未提供"}。报告骨架已根据产出文件自动构造。`,
+        files: (s.files_created || []).map(p => ({ path: p, status: "new" as const, bytes: 0, lines: 0, diff: undefined })),
+        validation: { unit_total: 0, unit_ok: 0, unit_failures: 0, unit_errors: 0, unit_exit_code: 0, unit_elapsed_s: 0, unit_fail_summary: [], tsc_error_count: 0, tsc_exit_code: 0, tsc_elapsed_s: 0, tsc_items: [] },
+        review_summary: { raw_excerpt: s.output || "", strengths: [], issues: [], suggestions: [] },
+        config_changes: [],
+      };
+      setJrReport(minReport);
+    }
+    setJrVisible(true);
+  }, []);
+
+  /** 简单 toast 提示（2.2s 自动消失）。 */
+  const jrFlashToast = useCallback((msg: string) => {
+    setJrToast(msg);
+    window.setTimeout(() => setJrToast(prev => (prev === msg ? "" : prev)), 2200);
+  }, []);
+
+  /** 动作 ① / 1：复制 Markdown。优先 navigator.clipboard.writeText（即时）；失败再 fallback 到 bridge（存 ~/.aivyos/report_*.md，并提示复制失败已保存到文件）。 */
+  const jrCopyMarkdown = useCallback(async () => {
+    if (!jrReport) return;
+    setJrBusy("copy");
+    try {
+      const md = jrBuildMarkdownLocal(jrReport);
+      try {
+        await navigator.clipboard.writeText(md);
+        jrFlashToast("✅ Markdown 已复制到剪贴板");
+      } catch (_clipErr) {
+        const r = await workbenchCopyReportMarkdown(jrReport);
+        if (r.ok) jrFlashToast(`💾 Markdown 已保存：${r.saved_path || "~/.aivyos"}（剪贴板不可用 fallback 文件）`);
+        else     jrFlashToast(`❌ 复制失败：${r.error || "未知错误"}`);
+      }
+    } finally {
+      setJrBusy("");
+    }
+  }, [jrReport, jrFlashToast]);
+
+  /** 动作 ② / 2：导出 HTML。优先本地 Blob + URL.createObjectURL（纯浏览器零依赖）；失败再 bridge fallback。 */
+  const jrExportHtml = useCallback(async () => {
+    if (!jrReport) return;
+    setJrBusy("export");
+    try {
+      const md = jrBuildMarkdownLocal(jrReport);
+      const html = jrBuildHtmlLocal(md, jrReport.job_id || "report");
+      try {
+        const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const stamp = Math.floor(Date.now() / 1000);
+        a.href = url;
+        a.download = `jarvis-report_${jrReport.job_id || stamp}.html`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        jrFlashToast("📄 HTML 报告已下载（离线可打开）");
+      } catch (_blobErr) {
+        const r = await workbenchExportReportHtml(jrReport);
+        if (r.ok) jrFlashToast(`💾 HTML 报告已保存：${r.saved_path || "~/.aivyos"}`);
+        else     jrFlashToast(`❌ 导出失败：${r.error || "未知错误"}`);
+      }
+    } finally {
+      setJrBusy("");
+    }
+  }, [jrReport, jrFlashToast]);
+
+  /** 动作 ③ / 3：在 VS Code 中对比 Diff。优先收集 report.files[*] 中存在 diff.unified 的文件；若存在，依次为每个文件通过 bridge 在 VS Code 打开（或 code --diff）；否则提示“仅对修改过的文件可对比 Diff”。 */
+  const jrVscodeDiff = useCallback(async () => {
+    if (!jrReport) return;
+    setJrBusy("vscode");
+    try {
+      const diffs = (jrReport.files || []).filter(f => f.diff && f.diff.unified && f.path);
+      if (!diffs.length) {
+        jrFlashToast("⚠️ 仅对修改过的文件可对比 Diff（当前没有 unified_diff 数据）");
+        return;
+      }
+      let opened = 0;
+      for (const f of diffs.slice(0, 5)) {
+        try { await workbenchVscodeOpen(f.path!); opened++; } catch {}
+      }
+      if (opened > 0) jrFlashToast(`💻 已请求 VS Code 打开 ${opened} 个产出文件`);
+      else           jrFlashToast("❌ VS Code 打开失败：bridge 未就绪或路径无效");
+    } finally {
+      setJrBusy("");
+    }
+  }, [jrReport, jrFlashToast]);
+
+  const loadCCProviders = useCallback(async (only?: CCAppType) => {
+    const targets: CCAppType[] = only ? [only] : ["claude", "codex"];
+    for (const t of targets) {
+      try {
+        setCcLoading(prev => ({ ...prev, [t]: true }));
+        const dto = await workbenchListProviders(t);
+        setCcProviders(prev => ({ ...prev, [t]: dto.providers }));
+        const eff = dto.providers.find(p => p.is_effective);
+        if (eff) {
+          setCcActiveId(prev => ({ ...prev, [t]: eff.id }));
+          const src = eff.source === "preset" ? "" : eff.source as "cc-switch"|"aivyos-manual"|"";
+          setCcSourceBadge(prev => ({ ...prev, [t]: src }));
+          const fillSrc = dto.providers.find(p => p.source === "aivyos-manual") || eff;
+          if (fillSrc) {
+            setCcForm(prev => ({
+              ...prev,
+              [t]: {
+                name: fillSrc.name,
+                base_url: fillSrc.base_url,
+                model: fillSrc.model,
+                api_key: prev[t].api_key,
+                override: dto.manual_override_enabled,
+              },
+            }));
+          }
+        }
+        setCcMsg(prev => ({ ...prev, [t]: null }));
+      } catch (e) {
+        setCcMsg(prev => ({ ...prev, [t]: { type: "err", text: `加载失败：${(e as Error).message.slice(0, 60)}` } }));
+      } finally {
+        setCcLoading(prev => ({ ...prev, [t]: false }));
+      }
+    }
+  }, []);
+
+  // 进入 workbench tab 时加载一次
+  useEffect(() => {
+    if (nav === "workbench") {
+      void loadCCProviders();
+    }
+  }, [nav, loadCCProviders]);
+
+  // 方案 B：侧边点击 provider row → 顶部下拉 + 表单全部同步
+  const onSelectProvider = useCallback((t: CCAppType, id: string) => {
+    const list = ccProviders[t];
+    const item = list.find(p => p.id === id);
+    if (!item) return;
+    setCcActiveId(prev => ({ ...prev, [t]: id }));
+    if (item.source !== "preset") {
+      setCcForm(prev => ({
+        ...prev,
+        [t]: {
+          name: item.name,
+          base_url: item.base_url,
+          model: item.model,
+          api_key: prev[t].api_key,
+          override: item.source === "aivyos-manual" ? prev[t].override : false,
+        },
+      }));
+    } else {
+      setCcForm(prev => ({
+        ...prev,
+        [t]: { ...prev[t], name: item.name, base_url: item.base_url, model: item.model },
+      }));
+      setCcMsg(prev => ({
+        ...prev, [t]: { type: "warn", text: "已填入预设：请点'应用切换'把该预设加载为 AivyOS 手动覆盖。" },
+      }));
+    }
+  }, [ccProviders]);
+
+  const applyCC = useCallback(async (t: CCAppType) => {
+    const f = ccForm[t];
+    if (!f.base_url || !/^https?:\/\//i.test(f.base_url)) {
+      setCcMsg(prev => ({ ...prev, [t]: { type: "err", text: "Base URL 必须以 http:// 或 https:// 开头" } }));
+      return;
+    }
+    if (!f.model.trim()) {
+      setCcMsg(prev => ({ ...prev, [t]: { type: "err", text: "模型名不能为空" } }));
+      return;
+    }
+    try {
+      setCcApplyBusy(true);
+      setCcLoading(prev => ({ ...prev, [t]: true }));
+      const saveDto: WorkbenchSaveManualDto = {
+        app_type: t,
+        name: f.name || `AivyOS 手动（${t}）`,
+        base_url: f.base_url,
+        model: f.model,
+        api_key: f.api_key,
+        set_override: f.override,
+      };
+      const saved = await workbenchSaveManual(saveDto);
+      if (!saved.ok) {
+        setCcMsg(prev => ({ ...prev, [t]: { type: "err", text: saved.error_message || "保存失败" } }));
+        return;
+      }
+      const hcDto: WorkbenchHealthCheckDto = {
+        app_type: t,
+        base_url: f.base_url, model: f.model, api_key: f.api_key || undefined,
+      };
+      const hc = await workbenchHealthCheck(hcDto);
+      await loadCCProviders(t);
+      if (hc.ok) {
+        setCcMsg(prev => ({
+          ...prev, [t]: { type: "ok", text: `✔ 已切换 · 健康检查 ${hc.latency_ms ?? "?"}ms` },
+        }));
+      } else {
+        setCcMsg(prev => ({
+          ...prev, [t]: { type: "warn", text: `⚠ 已保存但健康检查失败：${hc.error?.slice(0, 80) ?? ""}` },
+        }));
+      }
+    } catch (e) {
+      setCcMsg(prev => ({ ...prev, [t]: { type: "err", text: `应用失败：${(e as Error).message.slice(0, 80)}` } }));
+    } finally {
+      setCcApplyBusy(false);
+      setCcLoading(prev => ({ ...prev, [t]: false }));
+      setTimeout(() => {
+        setCcMsg(prev => ({ ...prev, [t]: (prev[t] && prev[t]!.type === "err") ? prev[t] : null }));
+      }, 3800);
+    }
+  }, [ccForm, loadCCProviders]);
+
+  const pingCC = useCallback(async (t: CCAppType) => {
+    try {
+      setCcLoading(prev => ({ ...prev, [t]: true }));
+      const f = ccForm[t];
+      const dto: WorkbenchHealthCheckDto = f.base_url
+        ? { app_type: t, base_url: f.base_url, model: f.model, api_key: f.api_key || undefined }
+        : { app_type: t };
+      const res = await workbenchHealthCheck(dto);
+      setCcMsg(prev => ({
+        ...prev, [t]: res.ok
+          ? { type: "ok",   text: `✔ 健康检查 ${res.latency_ms ?? "?"}ms (${res.display_name})` }
+          : { type: "err",  text: `✖ 健康失败：${res.error?.slice(0, 70) ?? ""}` },
+      }));
+    } catch (e) {
+      setCcMsg(prev => ({ ...prev, [t]: { type: "err", text: `健康检查异常：${(e as Error).message.slice(0, 70)}` } }));
+    } finally {
+      setCcLoading(prev => ({ ...prev, [t]: false }));
+    }
+  }, [ccForm]);
+
+  const reloadCC = useCallback(async () => {
+    try {
+      setCcApplyBusy(true);
+      await workbenchReload();
+      await loadCCProviders();
+      setCcMsg({
+        claude: { type: "ok", text: "✔ 已从 cc-switch + config 重载（丢弃本地草稿）" },
+        codex:  null,
+      });
+    } catch (e) {
+      setCcMsg({
+        claude: { type: "err", text: `重载失败：${(e as Error).message.slice(0, 70)}` },
+        codex:  null,
+      });
+    } finally {
+      setCcApplyBusy(false);
+    }
+  }, [loadCCProviders]);
+
+  const saveAsPresetCC = useCallback(async (t: CCAppType) => {
+    const f = ccForm[t];
+    if (!f.name || !f.base_url || !f.model) {
+      setCcMsg(prev => ({ ...prev, [t]: { type: "warn", text: "请先填完名称、Base URL、模型名" } }));
+      return;
+    }
+    const preset_name = window.prompt("预设名称（如：Ollama-qwen7b）", f.name)?.trim();
+    if (!preset_name) return;
+    try {
+      await workbenchSavePreset({
+        app_type: t, preset_name, name: f.name,
+        base_url: f.base_url, model: f.model, api_key: f.api_key,
+      });
+      setCcMsg(prev => ({ ...prev, [t]: { type: "ok", text: `✔ 已保存预设：${preset_name}` } }));
+      await loadCCProviders(t);
+    } catch (e) {
+      setCcMsg(prev => ({ ...prev, [t]: { type: "err", text: `保存预设失败：${(e as Error).message.slice(0, 70)}` } }));
+    }
+  }, [ccForm, loadCCProviders]);
+
+  const toggleOverride = useCallback(async (t: CCAppType, on: boolean) => {
+    setCcForm(prev => ({ ...prev, [t]: { ...prev[t], override: on } }));
+    try {
+      await workbenchSetOverride(t, on);
+      await loadCCProviders(t);
+      setCcMsg(prev => ({
+        ...prev, [t]: on
+          ? { type: "ok",   text: "✔ AivyOS 手动覆盖：已启用（优先级高于 cc-switch）" }
+          : { type: "warn", text: "⚠ 手动覆盖：已关闭（退回 cc-switch 当前激活项）" },
+      }));
+    } catch (e) {
+      setCcMsg(prev => ({ ...prev, [t]: { type: "err", text: `切换失败：${(e as Error).message.slice(0, 70)}` } }));
+    }
+  }, [loadCCProviders]);
+
+  const providerLabel = (p: WorkbenchProviderItem) => {
+    const srcMark =
+        p.source === "aivyos-manual" ? "(AivyOS 手动)"
+      : p.source === "preset"       ? "(预设)"
+      : p.is_current_cc             ? "(cc-switch · 当前)"
+      : "(cc-switch)";
+    return `${p.name} — ${p.model} ${srcMark}`;
+  };
 
   const handleInstallUpdate = useCallback(async () => {
     if (!bridgeReady) { showNotification("演示模式", "连接核心后可安装更新", "warning"); return; }
@@ -2102,6 +2616,7 @@ export default function App() {
       case "voiceset": loadVoiceSettings(); break;
       case "models": loadModels(); break;
       case "memory": loadMemory(); loadKnowledge(); break;
+      case "knowledge": loadKnowledge(); break;
       case "skills": loadSkills(); void loadMarketSources(); void loadMarket("builtin", ""); break;
       case "tools": loadTools(); break;
       case "settings": void loadUpdateStatus(); break;
@@ -2129,7 +2644,7 @@ export default function App() {
 
   const currentTitle: Record<NavId, string> = {
     chat: "对话", voice: "语音模式", task: "自主任务", sched: "定时任务",
-    vibe: "Vibe Coding", memory: "知识卡片", boot: "系统自检",
+    vibe: "Vibe Coding", knowledge: "知识卡片", memory: "对话记忆", boot: "系统自检",
     voiceset: "语音设置", models: "模型管理", settings: "设置",
     skills: "技能管理", tools: "工具管理", workbench: "协同工作台",
   };
@@ -2156,7 +2671,8 @@ export default function App() {
     { id: "task" as NavId, label: "自主任务", desc: "AI 自动执行复杂任务", icon: "⚡" },
     { id: "sched" as NavId, label: "定时任务", desc: "周期定时与触发器配置", icon: "⏰" },
     { id: "vibe" as NavId, label: "Vibe Coding", desc: "AI 辅助代码生成与预览", icon: "💻" },
-    { id: "memory" as NavId, label: "知识卡片", desc: "知识自动沉淀、管理与调用", icon: "🧠" },
+    { id: "knowledge" as NavId, label: "知识卡片", desc: "知识自动沉淀、管理与调用", icon: "🧠" },
+    { id: "memory" as NavId, label: "对话记忆", desc: "历史对话记忆、检索与沉淀", icon: "📝" },
     { id: "boot" as NavId, label: "系统自检", desc: "启动时自动检测各模块状态", icon: "🔒" },
     { id: "voiceset" as NavId, label: "语音设置", desc: "TTS 音色选择与 ASR 引擎", icon: "🎛️" },
     { id: "models" as NavId, label: "模型管理", desc: "模型部署、路由与切换策略", icon: "🧩" },
@@ -2241,7 +2757,7 @@ export default function App() {
                   )}
                   {messages.map((m, i) => (
                     <div key={i} className={`msg-row ${m.role === "user" ? "user" : ""}`}>
-                      {m.role === "assistant" && <div className="msg-avatar">薇</div>}
+                      {m.role === "assistant" && <div className="msg-avatar">贾</div>}
                       <div className={`msg-bubble ${m.role}`}>
                         {m.image && (
                           <img
@@ -2778,7 +3294,7 @@ export default function App() {
             </div>
 
             {/* ============ 6. 知识卡片 (memory) ============ */}
-            <div className={`screen ${nav === "memory" ? "active" : ""}`}>
+            <div className={`screen ${nav === "knowledge" ? "active" : ""}`}>
               <div className="memory-layout">
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
                   <div style={{ fontSize: 18, fontWeight: 700 }}>🧠 知识卡片</div>
@@ -4705,106 +5221,404 @@ export default function App() {
             {/* ============ 13. 协同工作台 (workbench) ============ */}
             <div className={`screen ${nav === "workbench" ? "active" : ""}`}>
               <div className="settings-screen">
-                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>协同工作台 — Claude × Codex</div>
+                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>贾维斯调度台 — 驱动 Claude · Codex 双模型完成任务</div>
                 <div style={{ fontSize: 12, color: "var(--muted2)", marginBottom: 14 }}>
-                  读取 cc-switch 配置免登录调用双 CLI，串行/并行协作，结果可回 VS Code
+                  贾维斯统一读取 cc-switch 配置、调度双 CLI 资源（串行/并行/文档模板），完成后自动输出结构化作业报告并汇报给你
                 </div>
 
-                {/* 环境状态 */}
+                {/* 环境状态 pill 条：仍保留 + 新增 cc-source badge */}
                 {wbStatus && (
                   <div style={{ fontSize: 11, color: "var(--muted2)", marginBottom: 10 }}>
-                    cc-switch: {wbStatus.cc_switch?.enabled ? "已启用" : "已停用"}
-                    {wbStatus.agents && ` · Claude: ${wbStatus.agents.claude_code?.enabled ? "开" : "关"} · Codex: ${wbStatus.agents.codex?.enabled ? "开" : "关"}`}
-                    {` · VS Code: ${wbStatus.vscode_available ? "可用" : "不在 PATH"}`}
-                  </div>
-                )}
-
-                {/* 模式选择 */}
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-                  {[
-                    { id: "serial", label: "🔗 串行：实现→审查" },
-                    { id: "parallel", label: "⚖️ 并行：双方案对比" },
-                    { id: "doc", label: "📄 API→Swagger" },
-                    { id: "claude", label: "仅 Claude" },
-                    { id: "codex", label: "仅 Codex" },
-                    { id: "diff", label: "🔀 Diff 审查" },
-                  ].map(m => (
-                    <button key={m.id} className="btn btn-approve"
-                      style={{
-                        fontSize: 11, padding: "6px 12px",
-                        opacity: wbMode === m.id ? 1 : 0.45,
-                      }}
-                      onClick={() => setWbMode(m.id)}
-                    >{m.label}</button>
-                  ))}
-                </div>
-
-                {/* 输入区 */}
-                <div className="glass-card" style={{ padding: 14, marginBottom: 10 }}>
-                  {wbMode !== "diff" && (
-                    <textarea
-                      value={wbPrompt}
-                      onChange={e => setWbPrompt(e.target.value)}
-                      placeholder={wbMode === "doc" ? "描述要设计的 API（如：用户登录/注册接口）" : "描述需求（如：写一个天气网页）"}
-                      style={{
-                        width: "100%", minHeight: 72, resize: "vertical", fontSize: 12,
-                        padding: 8, borderRadius: 6, marginBottom: 8,
-                        background: "rgba(255,255,255,0.04)", color: "inherit",
-                        border: "1px solid rgba(255,255,255,0.12)",
-                      }}
-                    />
-                  )}
-                  <input
-                    value={wbCwd}
-                    onChange={e => setWbCwd(e.target.value)}
-                    placeholder={wbMode === "diff" ? "仓库路径（默认当前目录）" : "工作目录（可选，如 F:\\project）"}
-                    style={{
-                      width: "100%", fontSize: 12, padding: "6px 8px", borderRadius: 6, marginBottom: 10,
-                      background: "rgba(255,255,255,0.04)", color: "inherit",
-                      border: "1px solid rgba(255,255,255,0.12)",
-                    }}
-                  />
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button className="btn btn-approve" style={{ fontSize: 11, padding: "6px 14px" }}
-                      disabled={wbRunning} onClick={handleWbRun}>
-                      {wbRunning ? "执行中（双模型可能耗时数分钟）..." : "▶ 开始协同"}
-                    </button>
-                    {wbSteps.some(s => s.agent === "codex" && s.ok) && wbMode === "serial" && (
-                      <button className="btn btn-approve" style={{ fontSize: 11, padding: "6px 14px", opacity: 0.8 }}
-                        disabled={wbRunning} onClick={handleWbRevise}>
-                        🔁 再改一轮
-                      </button>
+                    cc-switch: {wbStatus.cc_switch?.enabled ? (
+                      <span className="pill on"><span className="dot"></span>已启用</span>
+                    ) : (
+                      <span className="pill warn"><span className="dot"></span>未启用（仍可用 AivyOS 手动模式）</span>
                     )}
-                    <button className="btn btn-approve" style={{ fontSize: 11, padding: "6px 14px", opacity: 0.6 }}
-                      disabled={wbRunning} onClick={handleWbOpenVscode}>
-                      在 VS Code 打开
-                    </button>
+                    {"  "}Claude: <span className="pill on"><span className="dot"></span>{wbStatus.agents?.claude_code?.enabled ? "开" : "关"}</span>
+                    {"  "}Codex:  <span className="pill on"><span className="dot"></span>{wbStatus.agents?.codex?.enabled ? "开" : "关"}</span>
+                    {"  "}<span className="pill off">VS Code: {wbStatus.vscode_available ? "可用" : "不在 PATH"}</span>
+                    {"  "}
+                    {ccSourceBadge.claude && <span className={`pill ${ccSourceBadge.claude === "aivyos-manual" ? "on" : ""}`} style={{marginRight:6}}>Claude={ccSourceBadge.claude}</span>}
+                    {ccSourceBadge.codex  && <span className={`pill ${ccSourceBadge.codex  === "aivyos-manual" ? "on" : ""}`}>Codex={ccSourceBadge.codex}</span>}
+                  </div>
+                )}
+
+                {/* ======================================================
+                 * 方案 A：顶部一行快切 cctop
+                 * ====================================================== */}
+                <div className="cctop">
+                  {(["claude", "codex"] as CCAppType[]).map((t, idx) => (
+                    <Fragment key={t}>
+                      {idx > 0 && <div className="cc-divider"></div>}
+                      <div className="cc-section">
+                        <span className={`cc-label c-${t}`}>{t === "claude" ? "▸ Claude" : "▸ Codex"}</span>
+                        <div className="cc-select">
+                          <select
+                            value={ccActiveId[t]}
+                            disabled={ccLoading[t] || ccApplyBusy}
+                            onChange={(e) => onSelectProvider(t, e.target.value)}
+                            title={t === "claude" ? "快速选择 Claude Provider" : "快速选择 Codex Provider"}
+                          >
+                            {ccProviders[t].length === 0 && <option value="">（无 Provider）</option>}
+                            {ccProviders[t].map(p => (
+                              <option key={p.id} value={p.id}>
+                                {providerLabel(p)}
+                                {p.is_effective ? " ✔ 当前生效" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <button
+                          className={`cc-icon-btn ${ccConfigOpen ? "active" : ""}`}
+                          onClick={() => setCcConfigOpen(v => !v)}
+                          title="展开/收起内联配置编辑（方案 A+）"
+                        >✎</button>
+                        <button
+                          className="cc-icon-btn"
+                          disabled={ccLoading[t]}
+                          onClick={() => pingCC(t)}
+                          title={`对${t === "claude" ? "Claude" : "Codex"}当前配置做健康检查`}
+                        >❤</button>
+                        {ccMsg[t] && (
+                          ccMsg[t]!.type === "ok" ? <span className="ok-inline">{ccMsg[t]!.text}</span>
+                          : ccMsg[t]!.type === "warn" ? <span className="pill warn">{ccMsg[t]!.text}</span>
+                          : <span className="pill err">{ccMsg[t]!.text}</span>
+                        )}
+                      </div>
+                    </Fragment>
+                  ))}
+
+                  <div className="cc-divider"></div>
+
+                  <div className="cc-actions">
+                    <button className="btn btn-warn"  disabled={ccApplyBusy} onClick={() => reloadCC()}>↺ 从 cc-switch 重载</button>
+                    <button className="btn btn-ghost" disabled={ccApplyBusy} onClick={() => saveAsPresetCC("claude")}>＋ 保存 Claude 预设</button>
+                    <button className="btn btn-ghost" disabled={ccApplyBusy} onClick={() => saveAsPresetCC("codex")}>＋ 保存 Codex 预设</button>
+                    <div style={{display:"flex", gap:6}}>
+                      <button className="btn btn-primary" disabled={ccApplyBusy || ccLoading.claude} onClick={() => applyCC("claude")}>
+                        {ccLoading.claude && <span className="spin"></span>}应用 Claude
+                      </button>
+                      <button className="btn btn-primary" disabled={ccApplyBusy || ccLoading.codex} onClick={() => applyCC("codex")}>
+                        {ccLoading.codex && <span className="spin"></span>}应用 Codex
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                {/* 错误 */}
-                {wbError && (
-                  <div style={{
-                    fontSize: 11, color: "#f87171", marginBottom: 10, padding: 8,
-                    background: "rgba(239,68,68,0.08)", borderRadius: 6,
-                    border: "1px solid rgba(239,68,68,0.2)",
-                  }}>⚠ {wbError}</div>
+                {/* ======================================================
+                 * A+ 扩展：展开式内联配置编辑（Claude 左 + Codex 右两列）
+                 * ====================================================== */}
+                {ccConfigOpen && (
+                  <div className="ccconfig">
+                    {(["claude", "codex"] as CCAppType[]).map(t => (
+                      <div key={t}>
+                        <h5 style={{margin:"0 0 10px", paddingBottom:6, borderBottom:"1px dashed var(--line)", fontSize:11, fontWeight:700, letterSpacing:".5px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+                          <span style={{color: t === "claude" ? "#f472b6" : "#a78bfa"}}>
+                            {t === "claude" ? "🤖 Claude 配置" : "⚙️ Codex 配置"}
+                          </span>
+                          <span style={{fontSize:9, fontWeight:500, padding:"2px 7px", borderRadius:4,
+                                   background: ccSourceBadge[t] === "aivyos-manual" ? "rgba(16,185,129,0.15)" : "rgba(59,130,246,0.15)",
+                                   color: ccSourceBadge[t] === "aivyos-manual" ? "#34d399" : "#60a5fa"}}>
+                            当前来源：{ccSourceBadge[t] || "—"}
+                          </span>
+                        </h5>
+                        <div className="cc-field">
+                          <label>Base URL<span style={{color:"#475569", fontSize:9}}>{t === "claude" ? "ANTHROPIC_BASE_URL" : "OPENAI_API_BASE"}</span></label>
+                          <input
+                            type="text"
+                            value={ccForm[t].base_url}
+                            placeholder={t === "claude" ? "https://api.anthropic.com 或 http://127.0.0.1:11434/v1" : "http://127.0.0.1:11434/v1"}
+                            onChange={(e) => setCcForm(p => ({ ...p, [t]: { ...p[t], base_url: e.target.value }}))}
+                          />
+                        </div>
+                        <div className="cc-row-2">
+                          <div className="cc-field">
+                            <label>模型名<span style={{color:"#475569", fontSize:9}}>{t === "claude" ? "ANTHROPIC_MODEL" : "OPENAI_MODEL"}</span></label>
+                            <input type="text" value={ccForm[t].model} placeholder="qwen2.5:7b / claude-3-5-sonnet 等"
+                                   onChange={(e) => setCcForm(p => ({ ...p, [t]: { ...p[t], model: e.target.value }}))} />
+                          </div>
+                          <div className="cc-field">
+                            <label>&nbsp;</label>
+                            <button className="btn btn-warn" style={{padding:"5px 0", justifyContent:"center", width:"100%"}}
+                                    onClick={() => pingCC(t)} disabled={ccLoading[t]}>探测</button>
+                          </div>
+                        </div>
+                        <div className="cc-field">
+                          <label>API Key<span style={{color:"#475569", fontSize:9}}>Ollama 可填任意非空串，如 ollama</span></label>
+                          <input type="password" value={ccForm[t].api_key}
+                                 placeholder="sk-..."
+                                 onChange={(e) => setCcForm(p => ({ ...p, [t]: { ...p[t], api_key: e.target.value }}))} />
+                        </div>
+                        <div className="cc-toggle" style={{marginTop:4}}>
+                          <div className={`sw ${ccForm[t].override ? "on" : ""}`}
+                               onClick={() => toggleOverride(t, !ccForm[t].override)} style={{
+                                 width: 28, height: 15, borderRadius: 999,
+                                 background: ccForm[t].override ? "linear-gradient(90deg, #10b981, #059669)" : "#475569",
+                                 position: "relative", transition: "background .2s",
+                               }} data-cctoggle-sw="1"></div>
+                          <span onClick={() => toggleOverride(t, !ccForm[t].override)}>
+                            覆盖 cc-switch 激活项（{ccForm[t].override ? "开：AivyOS 手动优先" : "关：只用 cc-switch"}）
+                          </span>
+                        </div>
+                        <div className="cc-hint">
+                          开启后：<b>AivyOS 手动配置优先</b>（不修改 cc-switch.db 文件本身）；<br/>
+                          Ollama：<b>Base URL 必须只填到 /v1</b>（不要写 /v1/chat/completions）。
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
 
-                {/* 步骤进度与输出 */}
-                {wbSteps.map((s, i) => (
-                  <div key={i} className="glass-card" style={{ padding: 12, marginBottom: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                      {s.ok ? "✅" : "❌"} 步骤 {i + 1}：{s.name}
-                      <span style={{ fontWeight: 400, color: "var(--muted2)", marginLeft: 8 }}>{s.elapsed_s}s</span>
+                {/* ======================================================
+                 * A+B 融合布局：左 aside（方案 B 常驻列表+详情） + 右主区（任务输入+步骤输出）
+                 * ====================================================== */}
+                <div className="wb-layout">
+                  {/* ---------- 左侧：方案 B 常驻面板 ---------- */}
+                  <aside className="cc-aside">
+                    {(["claude", "codex"] as CCAppType[]).map((t, idx) => (
+                      <Fragment key={t}>
+                        <div>
+                          <h5>
+                            <span style={{color: t === "claude" ? "#f472b6" : "#a78bfa"}}>
+                              {t === "claude" ? "🤖 Claude Provider" : "⚙️ Codex Provider"}
+                            </span>
+                            <span className={`src ${ccSourceBadge[t] === "aivyos-manual" ? "aivy" : "cc"}`}>
+                              {ccSourceBadge[t] || "未配置"}
+                            </span>
+                          </h5>
+
+                          <div className="provider-list">
+                            {ccProviders[t].length === 0 && (
+                              <div style={{fontSize:11, color:"var(--muted2)", padding:"6px 8px"}}>
+                                暂无 Provider：请先在上方保存 AivyOS 手动配置，或安装 cc-switch 桌面版。
+                              </div>
+                            )}
+                            {ccProviders[t].map(p => (
+                              <div
+                                key={p.id}
+                                className={`provider-row ${ccActiveId[t] === p.id ? "active" : ""} ${p.is_effective ? "effective" : ""}`}
+                                onClick={() => onSelectProvider(t, p.id)}
+                                title={`${p.name} · ${p.base_url}`}
+                              >
+                                <div className="radio"></div>
+                                <div className="pi-meta">
+                                  <div className="pi-name">{p.name}</div>
+                                  <div className="pi-sub">
+                                    {p.model} · {p.base_url_display || p.base_url}
+                                  </div>
+                                </div>
+                                <span className={`pi-tag ${p.source === "aivyos-manual" ? "aivy" : p.source === "preset" ? "ps" : "cc"}`}>
+                                  {p.source === "aivyos-manual" ? "AivyOS" : p.source === "preset" ? "预设" : "cc-s"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="cc-field">
+                            <label>名称</label>
+                            <input type="text" value={ccForm[t].name}
+                                   onChange={(e) => setCcForm(p => ({ ...p, [t]: { ...p[t], name: e.target.value }}))} />
+                          </div>
+                          <div className="cc-field">
+                            <label>Base URL<span style={{color:"#475569", fontSize:9}}>http(s) 前缀</span></label>
+                            <input type="text" value={ccForm[t].base_url}
+                                   onChange={(e) => setCcForm(p => ({ ...p, [t]: { ...p[t], base_url: e.target.value }}))} />
+                          </div>
+                          <div className="cc-field">
+                            <label>模型名</label>
+                            <input type="text" value={ccForm[t].model}
+                                   onChange={(e) => setCcForm(p => ({ ...p, [t]: { ...p[t], model: e.target.value }}))} />
+                          </div>
+                          <div className="cc-field">
+                            <label>API Key<span style={{color:"#475569", fontSize:9}}>不回显真实值</span></label>
+                            <input type="password" value={ccForm[t].api_key}
+                                   onChange={(e) => setCcForm(p => ({ ...p, [t]: { ...p[t], api_key: e.target.value }}))} />
+                          </div>
+                          <div className="cc-toggle" style={{margin:"4px 0 8px"}}>
+                            <div className={`sw ${ccForm[t].override ? "on" : ""}`}
+                                 onClick={() => toggleOverride(t, !ccForm[t].override)} style={{
+                                   width: 28, height: 15, borderRadius: 999,
+                                   background: ccForm[t].override ? "linear-gradient(90deg, #10b981, #059669)" : "#475569",
+                                   position: "relative", transition: "background .2s",
+                                 }}></div>
+                            <span onClick={() => toggleOverride(t, !ccForm[t].override)}>
+                              AivyOS 手动 {ccForm[t].override ? "生效中" : "未启用"}
+                            </span>
+                          </div>
+                          <div style={{display:"flex", gap:6, marginTop:4}}>
+                            <button className="btn btn-primary" style={{padding:"5px 8px", fontSize:11}}
+                                    disabled={ccApplyBusy || ccLoading[t]}
+                                    onClick={() => applyCC(t)}>
+                              {ccLoading[t] && <span className="spin"></span>}保存 & 应用
+                            </button>
+                            <button className="btn btn-warn"  style={{padding:"5px 8px", fontSize:11}}
+                                    disabled={ccLoading[t]} onClick={() => pingCC(t)}>❤ 健康</button>
+                          </div>
+                        </div>
+                        {idx === 0 && <div className="cc-split"></div>}
+                      </Fragment>
+                    ))}
+                  </aside>
+
+                  {/* ---------- 右侧：模式 + 任务输入 + 步骤输出（原逻辑保留） ---------- */}
+                  <div>
+                    {/* 模式选择（原有按钮样式保留） */}
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                      {[
+                        { id: "serial", label: "🔗 串行：实现→审查" },
+                        { id: "parallel", label: "⚖️ 并行：双方案对比" },
+                        { id: "doc", label: "📄 API→Swagger" },
+                        { id: "claude", label: "仅 Claude" },
+                        { id: "codex", label: "仅 Codex" },
+                        { id: "diff", label: "🔀 Diff 审查" },
+                      ].map(m => (
+                        <button key={m.id} className="btn btn-approve"
+                          style={{
+                            fontSize: 11, padding: "6px 12px",
+                            opacity: wbMode === m.id ? 1 : 0.45,
+                          }}
+                          onClick={() => setWbMode(m.id)}
+                        >{m.label}</button>
+                      ))}
                     </div>
-                    <pre style={{
-                      fontSize: 11, whiteSpace: "pre-wrap", wordBreak: "break-word",
-                      maxHeight: 260, overflow: "auto", margin: 0,
-                      color: s.ok ? "inherit" : "#f87171",
-                    }}>{s.ok ? s.output : s.error}</pre>
+
+                    {/* 工作目录 + 输入区（原有 glass-card 保留） */}
+                    <div style={{marginBottom:8, display:"flex", alignItems:"center", gap:8}}>
+                      <span style={{fontSize:11, color:"var(--muted2)"}}>工作目录（可选，如 F:\project）：</span>
+                      <input style={{flex:1, background:"var(--bg-2)", border:"1px solid var(--line)",
+                                    borderRadius:6, color:"var(--text)", padding:"5px 9px", fontSize:12}}
+                             value={wbCwd}
+                             placeholder="默认用当前工作区"
+                             onChange={e => setWbCwd(e.target.value)} />
+                    </div>
+
+                    <div className="glass-card" style={{ padding: 14, marginBottom: 10 }}>
+                      {wbMode !== "diff" && (
+                        <textarea
+                          value={wbPrompt}
+                          onChange={e => setWbPrompt(e.target.value)}
+                          placeholder={wbMode === "doc" ? "描述要设计的 API（如：用户登录/注册接口）" : "描述需求（如：写一个天气网页）"}
+                          style={{
+                            width: "100%", minHeight: 72, resize: "vertical", fontSize: 12,
+                            padding: 8, borderRadius: 6, marginBottom: 8,
+                            background: "rgba(255,255,255,0.04)", color: "inherit",
+                            border: "1px solid rgba(255,255,255,0.12)",
+                          }}
+                        />
+                      )}
+                      <input
+                        value={wbCwd}
+                        onChange={e => setWbCwd(e.target.value)}
+                        placeholder={wbMode === "diff" ? "仓库路径（默认当前目录）" : "工作目录（可选）— 上方大 cwd 输入"}
+                        style={{
+                          width: "100%", fontSize: 12, padding: "6px 8px", borderRadius: 6, marginBottom: 10,
+                          background: "rgba(255,255,255,0.04)", color: "inherit",
+                          border: "1px solid rgba(255,255,255,0.12)",
+                          display: "none",
+                        }}
+                      />
+                      <div className="run-row" style={{ display: "flex", gap: 8, marginTop: 2, alignItems: "center", flexWrap: "wrap" }}>
+                        <button className="btn btn-primary" onClick={handleWbRun} disabled={wbRunning}>
+                          {wbRunning && <span className="spin"></span>}
+                          {wbRunning ? "贾维斯调度执行中..." : "▶ 交给贾维斯执行"}
+                        </button>
+                        {wbSteps.some(s => s.agent === "codex" && s.ok) && wbMode === "serial" && (
+                          <button className="btn btn-approve" style={{ fontSize: 11, padding: "6px 14px", opacity: 0.8 }}
+                            disabled={wbRunning} onClick={handleWbRevise}>
+                            🔁 再改一轮
+                          </button>
+                        )}
+                        <button className="btn btn-approve" style={{ fontSize: 11, padding: "6px 14px", opacity: 0.6 }}
+                          disabled={wbRunning} onClick={handleWbOpenVscode}>
+                          在 VS Code 打开
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 错误（保留） */}
+                    {wbError && (
+                      <div style={{
+                        fontSize: 11, color: "#f87171", marginBottom: 10, padding: 8,
+                        background: "rgba(239,68,68,0.08)", borderRadius: 6,
+                        border: "1px solid rgba(239,68,68,0.2)",
+                      }}>⚠ {wbError}</div>
+                    )}
+
+                    {/* 步骤进度与输出（原有 glass-card 保留） */}
+                    {wbSteps.map((s, i) => (
+                      <div key={i} className="glass-card" style={{ padding: 12, marginBottom: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                          {s.ok ? "✅" : s.error ? "❌" : "⏳"} 步骤 {i + 1}：{s.name}
+                          <span style={{ fontWeight: 400, color: "var(--muted2)", marginLeft: 8 }}>{s.elapsed_s}s</span>
+                        </div>
+                        {s.files_created && s.files_created.length > 0 && (
+                          <div style={{
+                            fontSize: 11, marginBottom: 8, padding: "6px 8px",
+                            background: "rgba(59,130,246,0.08)", borderRadius: 4,
+                            border: "1px solid rgba(59,130,246,0.2)",
+                          }}>
+                            <span style={{ color: "#60a5fa", fontWeight: 600 }}>📁 贾维斯产出文件 ({s.files_created.length})：</span>
+                            <span style={{ color: "var(--muted2)", marginLeft: 4 }}>
+                              {s.files_created.slice(0, 8).join(" · ")}
+                              {s.files_created.length > 8 ? ` 等 ${s.files_created.length} 个` : ""}
+                            </span>
+                          </div>
+                        )}
+                        {/* AIVY-REPORT-001：步骤内联「查看贾维斯作业报告」入口 */}
+                        {(s.report || (s.files_created && s.files_created.length > 0)) && (
+                          <button
+                            type="button"
+                            className="jr-open-btn"
+                            disabled={jrBusy !== ""}
+                            onClick={() => jrOpenFromStep(s)}
+                          >📋 查看贾维斯作业报告</button>
+                        )}
+                        <pre style={{
+                          fontSize: 11, whiteSpace: "pre-wrap", wordBreak: "break-word",
+                          maxHeight: 260, overflow: "auto", margin: 0,
+                          color: s.ok ? "inherit" : "#f87171",
+                        }}>{s.ok ? s.output : s.error}</pre>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </div>
+
+                {/* 贾维斯系统状态展示卡片（4 列 infocard 风格保留；新增 manual override card） */}
+                {wbStatus && (
+                  <div style={{display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10, marginTop:14}}>
+                    <div className="infocard" style={{background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:8, padding:10, fontSize:11}}>
+                      <div style={{display:"flex", justifyContent:"space-between"}}>
+                        <span style={{color:"var(--muted2)"}}>Claude</span>
+                        <span style={{color: wbStatus.agents?.claude_code?.enabled ? "#34d399" : "#94a3b8", fontWeight:700}}>
+                          {wbStatus.agents?.claude_code?.enabled ? "✔ 就绪" : "✖ 未配置"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="infocard" style={{background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:8, padding:10, fontSize:11}}>
+                      <div style={{display:"flex", justifyContent:"space-between"}}>
+                        <span style={{color:"var(--muted2)"}}>Codex</span>
+                        <span style={{color: wbStatus.agents?.codex?.enabled ? "#34d399" : "#94a3b8", fontWeight:700}}>
+                          {wbStatus.agents?.codex?.enabled ? "✔ 就绪" : "✖ 未配置"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="infocard" style={{background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:8, padding:10, fontSize:11}}>
+                      <div style={{display:"flex", justifyContent:"space-between"}}>
+                        <span style={{color:"var(--muted2)"}}>手动覆盖</span>
+                        <span style={{fontWeight:700,
+                                     color: (ccSourceBadge.claude === "aivyos-manual" || ccSourceBadge.codex === "aivyos-manual") ? "#34d399" : "#94a3b8"}}>
+                          {ccSourceBadge.claude === "aivyos-manual" || ccSourceBadge.codex === "aivyos-manual" ? "部分启用" : "未启用"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="infocard" style={{background:"var(--bg-2)", border:"1px solid var(--line)", borderRadius:8, padding:10, fontSize:11}}>
+                      <div style={{display:"flex", justifyContent:"space-between"}}>
+                        <span style={{color:"var(--muted2)"}}>作业报告</span>
+                        <span style={{fontWeight:700, color:"#a78bfa"}}>设计就绪</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -5017,6 +5831,216 @@ export default function App() {
 
         </div>
       </div>
+      {/* AIVY-REPORT-001：贾维斯作业报告全屏 overlay（z-index:9999）*/}
+      {jrVisible && jrReport && (
+        <div className="jr-overlay" onClick={(e) => { if (e.target === e.currentTarget) jrClose(); }}>
+          <div className="jr-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="jr-header">
+              <div className="jr-title">
+                <span className="jr-emoji">📋</span>贾维斯作业报告 — {jrReport.job_id || "未命名任务"}
+              </div>
+              <button type="button" className="jr-close" onClick={jrClose} aria-label="关闭报告">✕</button>
+            </div>
+            <div className="jr-meta">
+              <span className="jr-meta-pill">🕒 <strong>{new Date((jrReport.generated_at||Date.now()/1000)*1000).toLocaleString('zh-CN',{hour12:false})}</strong></span>
+              <span className="jr-meta-pill">⚡ <strong>{jrReport.generation_ms || 0} ms</strong> 生成耗时</span>
+              {jrReport.error && (
+                <span className="jr-meta-pill jr-error-tag">⚠️ 警告：{jrReport.error.length > 40 ? jrReport.error.slice(0,37)+"..." : jrReport.error}</span>
+              )}
+            </div>
+            <div className="jr-body">
+              <div className="jr-sections">
+                {/* ①📁 产出文件总览（跨两列 jr-span-2） */}
+                <div className="jr-card jr-span-2">
+                  <div className="jr-card-title"><span className="jr-num">①</span>📁 产出文件总览（{jrReport.files?.length || 0} 个）</div>
+                  {!jrReport.files?.length ? (
+                    <div className="jr-empty">（本次作业未产出/修改任何文件）</div>
+                  ) : (
+                    <>
+                      <div className="jr-file-list">
+                        {(jrReport.files || []).map((f, i) => (
+                          <div key={i} className="jr-file-row">
+                            <span className="jr-path">{f.path}</span>
+                            <span className={`jr-pill jr-status-${f.status || "new"}`}>
+                              {f.status === "new" ? "🆕 新增" : f.status === "modified" ? "✏️ 修改" : f.status === "unchanged" ? "➖ 未变" : f.status === "missing" ? "❓ 缺失" : f.status === "error" ? "❗ 错误" : (f.status || "-")}
+                            </span>
+                            <span className="jr-num-col">{(f.bytes || 0).toLocaleString()} B</span>
+                            <span className="jr-num-col">{f.lines || 0} 行</span>
+                          </div>
+                        ))}
+                      </div>
+                      {/* ②📊 unified_diff：在 ① 卡片下方紧接着展开 */}
+                      {(jrReport.files || []).some(f => f.diff && f.diff.unified && f.diff.unified.trim()) && (
+                        <div style={{marginTop: 14}}>
+                          <div className="jr-card-title"><span className="jr-num">②</span>📊 行级 unified_diff 对比</div>
+                          {(jrReport.files || []).filter(f => f.diff && f.diff.unified && f.diff.unified.trim()).map((f, i) => (
+                            <div key={i} style={{marginBottom: 10}}>
+                              {f.path && <div className="jr-diff-file-header">Diff — {f.path}</div>}
+                              <div className="jr-diff-block">
+                                <pre dangerouslySetInnerHTML={{__html: (() => {
+                                  const lines = (f.diff!.unified || "").split("\n");
+                                  return lines.map((l: string) => {
+                                    const safe = l.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+                                    if (l.startsWith("@@")) return `<span class="jr-d-hunk">${safe}</span>\n`;
+                                    if (l.startsWith("+") && !l.startsWith("+++")) return `<span class="jr-d-add">${safe}</span>\n`;
+                                    if (l.startsWith("-") && !l.startsWith("---")) return `<span class="jr-d-del">${safe}</span>\n`;
+                                    return safe + "\n";
+                                  }).join("");
+                                })()}} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+                {/* ③🧪 验证结果 */}
+                <div className="jr-card">
+                  <div className="jr-card-title"><span className="jr-num">③</span>🧪 验证结果</div>
+                  {(() => {
+                    const v = jrReport.validation || {};
+                    const unitTotal = v.unit_total || 0;
+                    const unitFail = (v.unit_failures || 0) + (v.unit_errors || 0);
+                    const tscFail = v.tsc_error_count || 0;
+                    const unitCls = unitTotal === 0 ? "jr-valid-idle" : unitFail === 0 ? "jr-valid-ok" : "jr-valid-fail";
+                    const unitIcon = unitTotal === 0 ? "🤷" : unitFail === 0 ? "✅" : "❌";
+                    const tscCls = (v.tsc_exit_code === undefined || v.tsc_exit_code === null) ? "jr-valid-idle" : tscFail === 0 ? "jr-valid-ok" : "jr-valid-fail";
+                    const tscIcon = (v.tsc_exit_code === undefined || v.tsc_exit_code === null) ? "🤷" : tscFail === 0 ? "✅" : "❌";
+                    return (
+                      <>
+                        <div className="jr-valid-row">
+                          <span className={`jr-pill ${unitCls}`}>{unitIcon} unittest {v.unit_ok || 0} / {unitTotal} 通过</span>
+                          <span className={`jr-pill ${tscCls}`}>{tscIcon} tsc {tscFail} 错误</span>
+                          <span style={{color:"var(--muted2)", fontSize: 10.5, marginLeft:"auto"}}>
+                            unittest exit={v.unit_exit_code ?? 0} · tsc exit={v.tsc_exit_code ?? 0}
+                          </span>
+                        </div>
+                        {unitTotal > 0 && unitFail > 0 && (v.unit_fail_summary || []).length > 0 && (
+                          <div className="jr-fail-list">
+                            {(v.unit_fail_summary || []).slice(0, 8).map((f: any, i: number) => (
+                              <div key={i} className="jr-fail-item">
+                                <div className="jr-fi-head">{f.kind || ""} {f.test || ""}</div>
+                                <div className="jr-fi-loc">{f.file || ""}{f.line ? `:${f.line}` : ""}</div>
+                                {f.msg && <div className="jr-fi-msg">{typeof f.msg === "string" && f.msg.length > 140 ? f.msg.slice(0, 137) + "..." : f.msg}</div>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {tscFail > 0 && (v.tsc_items || []).length > 0 && (
+                          <div className="jr-fail-list">
+                            {(v.tsc_items || []).slice(0, 8).map((it: any, i: number) => (
+                              <div key={i} className="jr-fail-item">
+                                <div className="jr-fi-head" style={{color:"#facc15"}}>{it.code || ""} — {it.file || ""}:{it.line || ""}</div>
+                                {it.msg && <div className="jr-fi-msg">{typeof it.msg === "string" && it.msg.length > 140 ? it.msg.slice(0, 137) + "..." : it.msg}</div>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {unitTotal === 0 && (v.tsc_exit_code === undefined || v.tsc_exit_code === null) && (
+                          <div className="jr-empty">（本次作业未触发 unittest/tsc 自动验证；可手动执行 python unittest + npx tsc 复现。）</div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+                {/* ④🔍 Codex 审查摘要 */}
+                <div className="jr-card">
+                  <div className="jr-card-title"><span className="jr-num">④</span>🔍 Codex 审查摘要</div>
+                  {(() => {
+                    const rs = jrReport.review_summary || {};
+                    const strengths: string[] = (rs as any).strengths || [], issues: string[] = (rs as any).issues || [], suggestions: string[] = (rs as any).suggestions || [];
+                    if (!(strengths.length || issues.length || suggestions.length)) {
+                      return <>
+                        <div className="jr-empty">（Codex 未输出结构化 3 段；以下为原文截取）</div>
+                        <div className="jr-review-excerpt">{((rs as any).raw_excerpt || "").slice(0, 1200)}</div>
+                      </>;
+                    }
+                    return (
+                      <div className="jr-review-cols">
+                        <div className="jr-review-sub jr-str">
+                          <h5>✅ 优点（{strengths.length}）</h5>
+                          {strengths.length === 0 ? <div className="jr-empty" style={{padding: 4}}>无</div> : <ul>{strengths.map((s,i)=><li key={i}>{s}</li>)}</ul>}
+                        </div>
+                        <div className="jr-review-sub jr-iss">
+                          <h5>⚠️ 问题（{issues.length}）</h5>
+                          {issues.length === 0 ? <div className="jr-empty" style={{padding: 4}}>无</div> : <ul>{issues.map((s,i)=><li key={i}>{s}</li>)}</ul>}
+                        </div>
+                        <div className="jr-review-sub jr-sug">
+                          <h5>💡 建议（{suggestions.length}）</h5>
+                          {suggestions.length === 0 ? <div className="jr-empty" style={{padding: 4}}>无</div> : <ul>{suggestions.map((s,i)=><li key={i}>{s}</li>)}</ul>}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+                {/* ⑤⚙️ 系统状态变更（跨两列 jr-span-2） */}
+                <div className="jr-card jr-span-2">
+                  <div className="jr-card-title"><span className="jr-num">⑤</span>⚙️ 系统状态变更 — config.json 字段级对比（{jrReport.config_changes?.length || 0} 项）</div>
+                  {!jrReport.config_changes?.length ? (
+                    <div className="jr-empty">（本次作业未修改 AivyOS 配置项）</div>
+                  ) : (
+                    <table className="jr-table">
+                      <thead><tr>
+                        <th style={{width: 40}}>#</th>
+                        <th>字段路径</th>
+                        <th style={{width: 88}}>变更类型</th>
+                        <th>Before</th>
+                        <th>After</th>
+                      </tr></thead>
+                      <tbody>
+                        {(jrReport.config_changes || []).map((c: any, i: number) => {
+                          const fmt = (v: any) => {
+                            if (v === undefined || v === null) return <em style={{color:"var(--muted2)"}}>—</em>;
+                            try { const s = JSON.stringify(v); return <code>{s.length < 40 ? s : s.slice(0,37)+"..."}</code>; }
+                            catch { return <code>{String(v).slice(0, 37)}</code>; }
+                          };
+                          const ct = c.change_type;
+                          const ctCls = ct === "add" ? "jr-change-add" : ct === "remove" ? "jr-change-del" : "jr-change-upd";
+                          const ctText = ct === "add" ? "➕ 新增" : ct === "remove" ? "➖ 删除" : "🔄 更新";
+                          return (
+                            <tr key={i}>
+                              <td>{i + 1}</td>
+                              <td><code>{c.path}</code></td>
+                              <td><span className={ctCls}>{ctText}</span></td>
+                              <td className="jr-before-val">{fmt(c.before)}</td>
+                              <td className="jr-after-val">{fmt(c.after)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            </div>
+            {/* 底部 3 动作 sticky bar */}
+            <div className="jr-actions">
+              <button type="button" className="jr-btn jr-btn-secondary" disabled={jrBusy !== ""} onClick={jrVscodeDiff}>
+                💻 {jrBusy === "vscode" ? "打开中…" : "VS Code 对比 Diff"}
+              </button>
+              <button type="button" className="jr-btn jr-btn-secondary" disabled={jrBusy !== ""} onClick={jrExportHtml}>
+                📄 {jrBusy === "export" ? "导出中…" : "导出 HTML"}
+              </button>
+              <button type="button" className="jr-btn jr-btn-primary" disabled={jrBusy !== ""} onClick={jrCopyMarkdown}>
+                📋 {jrBusy === "copy" ? "复制中…" : "复制 Markdown"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 全局 toast 胶囊（不依赖 jrVisible 也能显示） */}
+      {jrToast && (
+        <div style={{
+          position: "fixed", top: 20, right: 20, zIndex: 10001,
+          padding: "10px 18px", borderRadius: 999,
+          background: "rgba(7,12,28,0.96)",
+          border: "1px solid var(--line)",
+          boxShadow: "0 10px 30px rgba(0,0,0,0.45)",
+          color: "var(--ink)", fontSize: 12, fontWeight: 600,
+          animation: "jr-popIn .18s ease-out",
+        }}>{jrToast}</div>
+      )}
     </>
   );
 }

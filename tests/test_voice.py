@@ -88,5 +88,36 @@ class TestVoiceSession(AivyTestCase):
         self.assertTrue(tts_ready)
 
 
+class MockTTSFailAlways:
+    """始终抛出异常的 Mock TTS 后端，用于验证 tts_error_detail 上报。"""
+    name = "mock-tts-fail"
+    sample_rate = 24000
+
+    def synthesize(self, text: str):
+        raise RuntimeError("boom")
+
+    def clone_voice(self, ref_pcm, text):
+        raise RuntimeError("boom")
+
+
+class TestTTSErrorDetail(AivyTestCase):
+    def test_tts_fail_reports_error_detail(self):
+        """TTS 合成异常时：tts_error_detail == 异常字符串；tts_backend == 'tts-failed'。"""
+        session = VoiceSession(voice_config())
+        session.tts = MockTTSFailAlways()
+        result = asyncio.run(session.run_turn(text_override="你好"))
+        self.assertIsNotNone(result)
+        self.assertEqual(result["tts_backend"], "tts-failed")
+        self.assertEqual(result["tts_error_detail"], "boom")
+
+    def test_tts_success_tts_error_detail_is_none(self):
+        """TTS 正常成功场景：返回 dict 必须含 tts_error_detail 键且值为 None。"""
+        session = VoiceSession(voice_config())
+        result = asyncio.run(session.run_turn(text_override="你好"))
+        self.assertIsNotNone(result)
+        self.assertIn("tts_error_detail", result)
+        self.assertIsNone(result["tts_error_detail"])
+
+
 if __name__ == "__main__":
     unittest.main()
