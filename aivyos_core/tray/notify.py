@@ -12,6 +12,9 @@
 
 from __future__ import annotations
 
+import logging
+log = logging.getLogger(__name__)
+
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -61,18 +64,18 @@ class TrayNotificationManager:
         if cfg["icon_flash"] and self.icon_flash is not None:
             try:
                 await self.icon_flash("error")
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
         if cfg["sound"] and self.sound is not None:
             try:
                 await self.sound("notification.wav")
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
         if self.sender is not None:
             try:
                 await self.sender(title, body, level, actions)
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
         self._sent.append({"title": title, "body": body, "level": level, "ts": time.time()})
 
     async def flush_pending(self) -> int:

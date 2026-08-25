@@ -44,8 +44,8 @@ def _get_machine_fingerprint() -> str:
         import uuid
         mac = uuid.getnode()
         parts.append(f"{mac:012x}")
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("忽略预期内异常: %s", e, exc_info=True)
     return "-".join(parts)
 
 
@@ -135,7 +135,10 @@ def _simple_decrypt(ciphertext: str, key: str) -> str:
 
     expected_mac = _hmac.new(mac_key, salt + ct, hashlib.sha256).digest()
     if not _hmac.compare_digest(mac, expected_mac):
-        log.warning("API Key HMAC 验证失败，数据可能被篡改或跨机器读取")
+        log.error(
+            "API Key HMAC 验证失败：数据可能被篡改、跨机器复制或存储文件损坏；"
+            "相关 Key 已被跳过，请检查 api_keys.enc 是否被异常修改"
+        )
         return ""
 
     decrypted = bytes([b ^ enc_key[i % len(enc_key)] for i, b in enumerate(ct)])
@@ -256,8 +259,8 @@ class ApiKeyStore:
         # 设置文件权限 (仅限当前用户读写)
         try:
             self._set_secure_permissions()
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("忽略预期内异常: %s", e, exc_info=True)
 
         log.info("已保存 %d 个 API Key 到 %s", len(self._cache), self._path)
 
@@ -423,13 +426,18 @@ class ApiKeyStore:
         """
         if not ciphertext:
             return ""
+        value = ""
         if _HAS_CRYPTOGRAPHY and self._fernet:
             try:
                 return self._fernet.decrypt(ciphertext.encode("ascii")).decode("utf-8")
             except (InvalidToken, Exception):
                 log.warning("Fernet 解密失败，尝试回退方案")
-                return _simple_decrypt(ciphertext, self._fingerprint)
-        return _simple_decrypt(ciphertext, self._fingerprint)
+                value = _simple_decrypt(ciphertext, self._fingerprint)
+        else:
+            value = _simple_decrypt(ciphertext, self._fingerprint)
+        if not value:
+            log.error("API Key 解密失败（存储文件 %s），该 Key 不会被加载", self._path)
+        return value
 
     # ---- 文件读写 ----
 
@@ -460,8 +468,8 @@ class ApiKeyStore:
                      f"{os.environ.get('USERNAME', 'SYSTEM')}:(R,W)"],
                     capture_output=True, timeout=5
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
         else:
             # Unix: chmod 600
             self._path.chmod(stat.S_IRUSR | stat.S_IWUSR)

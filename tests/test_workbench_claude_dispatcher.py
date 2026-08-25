@@ -111,15 +111,15 @@ class TestClaudeDispatcher(AivyTestCase):
     def test_timeout_kills_process(self):
         """超时后 proc.kill() 被调用，返回超时错误。"""
         proc = _FakeProc(hang=True)
-        with mock.patch("asyncio.create_subprocess_shell", _fake_shell_factory({}, proc)):
-            res = asyncio.run(run_cli("claude -p", agent="claude", timeout_s=0.05, input_text="x"))
+        with mock.patch("asyncio.create_subprocess_exec", _fake_shell_factory({}, proc)):
+            res = asyncio.run(run_cli(["claude", "-p"], agent="claude", timeout_s=0.05, input_text="x"))
         self.assertTrue(proc.killed)
         self.assertFalse(res.ok)
         self.assertIn("超时", res.error)
 
     def test_real_subprocess_stdin_roundtrip(self):
         """真实子进程（python -c）：stdin 输入被读取，输出 utf-8 解码。"""
-        cmd = f'"{sys.executable}" -c "import sys; print(sys.stdin.read().upper())"'
+        cmd = [sys.executable, "-c", "import sys; print(sys.stdin.read().upper())"]
         res = asyncio.run(run_cli(cmd, agent="claude", input_text="hello aivyos", timeout_s=30))
         self.assertTrue(res.ok, res.error)
         self.assertIn("HELLO AIVYOS", res.output)

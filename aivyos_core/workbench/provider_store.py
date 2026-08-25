@@ -11,6 +11,9 @@
 """
 from __future__ import annotations
 
+import logging
+log = logging.getLogger(__name__)
+
 import copy
 import json
 import os
@@ -382,8 +385,8 @@ class ProviderStore:
                     env=env,
                     display_name=cred.get("name") or f"cc-switch {at}",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
         if cc_current is None:
             raise RuntimeError(
                 f"[{at}] 既没有启用 AivyOS 手动覆盖，cc-switch.db 也没有 is_current 行；"

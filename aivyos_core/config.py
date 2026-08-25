@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+import logging
+log = logging.getLogger(__name__)
+
 import copy
 import json
 import os
@@ -346,8 +349,8 @@ def _load_json_or_yaml(path: Path) -> Dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except ImportError:
         pass
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("忽略预期内异常: %s", e, exc_info=True)
     try:
         data = json.loads(text)
         return data if isinstance(data, dict) else {}

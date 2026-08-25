@@ -167,8 +167,8 @@ class MicSource(AudioSource):
                 data = _apply_gain(data, gain)
             try:
                 loop.call_soon_threadsafe(queue.put_nowait, data)
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
 
         import time
 
@@ -193,8 +193,8 @@ class MicSource(AudioSource):
                 if self._stream is not None:
                     try:
                         self._stream.close()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("忽略预期内异常: %s", e, exc_info=True)
                     self._stream = None
                 time.sleep(0.3)  # 等待 WASAPI 释放设备
 
@@ -208,8 +208,8 @@ class MicSource(AudioSource):
             try:
                 self._stream.stop()
                 self._stream.close()
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
             self._stream = None
         self._started = False
         log.info("MicSource 已关闭")

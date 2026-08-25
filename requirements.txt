@@ -1,6 +1,9 @@
-# AivyOS Python AI 核心 — 最小依赖（保证核心对话链路零外部依赖可运行）
+# AivyOS Python AI 核心 — 最小依赖
 # Python 3.11+
 PyYAML>=6.0
+
+# API Key 存储安全依赖（Fernet 强加密，缺失时自动降级为 PBKDF2+XOR 回退）
+cryptography>=42.0.0
 
 # Windows Named Pipe 传输（可选；未安装时 IPC 自动降级为 TCP 回环）
 pywin32>=306 ; platform_system == "Windows"

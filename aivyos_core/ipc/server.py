@@ -173,8 +173,8 @@ class AivyIpcServer:
             writer.close()
             try:
                 await writer.wait_closed()
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
             log.debug("IPC 连接关闭: %s", peer)
 
     @staticmethod

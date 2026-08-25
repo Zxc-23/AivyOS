@@ -700,8 +700,8 @@ class SkillMarketplace:
                     skill["installed"] = self.local.get_skill(sid) is not None
                     out.append(skill)
                     continue
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
             # raw 拉取失败（限速/网络）→ 用路径生成最小条目，安装时再拉取
             name = _path_skill_name(path)
             sid = name.lower().replace(" ", "-")

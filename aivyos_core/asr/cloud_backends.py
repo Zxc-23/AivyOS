@@ -254,8 +254,8 @@ class AliyunASRBackend(CloudASRBase):
             # 清理临时文件
             try:
                 os.remove(wav_path)
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
 
     def _prepare_audio(self, wav_path: str) -> str:
         """准备音频URL。

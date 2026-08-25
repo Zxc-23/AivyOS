@@ -8,6 +8,9 @@ Week 1 实现：
 
 from __future__ import annotations
 
+import logging
+log = logging.getLogger(__name__)
+
 import time
 from typing import Any, Dict, List, Optional
 
@@ -117,8 +120,8 @@ class ContextManager:
             try:
                 archive_callback(old)
                 stats["archived"] = len(old)
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
 
         if kept:
             messages.append({"role": Role.SYSTEM.value, "content": ARCHIVE_MARKER})

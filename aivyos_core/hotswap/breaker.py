@@ -52,8 +52,8 @@ class HotSwapCircuitBreaker:
             if self.on_degrade is not None:
                 try:
                     self.on_degrade("cold_install")
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("忽略预期内异常: %s", e, exc_info=True)
 
     def status(self) -> Dict[str, Any]:
         return {

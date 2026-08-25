@@ -22,5 +22,5 @@ class VSCodeDispatcher:
     async def open(self, path: str, timeout_s: float = 30.0) -> AgentResult:
         if not self.available():
             return AgentResult(agent="vscode", error=f"VS Code CLI 不可用（{self.cli_path} 不在 PATH）")
-        # Windows 路径含空格需双引号包裹；路径来自内部调用方，不来自 LLM 直接输入
-        return await run_cli(f'"{self.cli_path}" "{path}"', agent="vscode", timeout_s=timeout_s)
+        # 使用参数列表避免 shell 注入；路径来自内部调用方，不来自 LLM 直接输入
+        return await run_cli([self.cli_path, path], agent="vscode", timeout_s=timeout_s)

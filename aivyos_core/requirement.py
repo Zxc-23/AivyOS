@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import logging
+log = logging.getLogger(__name__)
+
 import re
 import time
 from dataclasses import dataclass, field
@@ -118,8 +121,8 @@ class RequirementParser:
                 spec.features = enhanced.get("features") or spec.features
                 spec.tech = enhanced.get("tech") or spec.tech
                 spec.source = "rule+llm"
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("忽略预期内异常: %s", e, exc_info=True)
         return spec
 
     def _real_llm(self) -> bool:

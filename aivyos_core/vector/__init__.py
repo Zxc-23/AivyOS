@@ -1,3 +1,6 @@
+
+import logging
+log = logging.getLogger(__name__)
 """向量数据库模块（Core-F2）。
 
 stdlib 优先，Chroma 为可选依赖，未安装时自动降级 Mock。
@@ -53,8 +56,8 @@ def get_default_vector_store(
                 in_memory=in_memory,
                 persist_dir=persist_dir,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("忽略预期内异常: %s", e, exc_info=True)
     return MockInMemoryVectorStore()
 
 

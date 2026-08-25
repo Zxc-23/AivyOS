@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shlex
 import subprocess
@@ -15,13 +16,15 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
+
+log = logging.getLogger(__name__)
 
 from aivyos_core.workbench.models import AgentResult
 
 
 async def run_cli(
-    command: Union[str, List[str]],
+    command: List[str],
     *,
     agent: str = "",
     env_extra: Optional[Dict[str, str]] = None,
@@ -30,37 +33,37 @@ async def run_cli(
     input_text: Optional[str] = None,
     max_output: int = 32768,
 ) -> AgentResult:
+    """执行外部 CLI（参数列表形式，避免 shell 注入）。
+
+    Args:
+        command: 命令参数列表（第一个元素为可执行文件）。
+        agent: Agent 标识，用于错误信息。
+        env_extra: 额外环境变量（合并到子进程环境）。
+        cwd: 子进程工作目录。
+        timeout_s: 超时秒数。
+        input_text: 通过 stdin 传入子进程的文本。
+        max_output: 最大输出字符数，超出截断。
+
+    Returns:
+        AgentResult: 包含输出、退出码、耗时和错误信息。
+    """
     started = time.monotonic()
     out_path = Path(tempfile.gettempdir()) / f"aivyos_wb_{uuid.uuid4().hex[:8]}.txt"
     env = {**os.environ, **(env_extra or {})}
     proc = None
     # Pre-compute display string so FileNotFoundError handler can reference it
-    if isinstance(command, str):
-        cmd_display = command
-    else:
-        cmd_display = " ".join(shlex.quote(str(p)) for p in command)
+    cmd_display = " ".join(shlex.quote(str(p)) for p in command)
     try:
         with open(out_path, "wb") as f:
-            if isinstance(command, str):
-                # 兼容旧调用：对 shell 字符串做最小安全转义
-                proc = await asyncio.create_subprocess_shell(
-                    command,
-                    stdin=asyncio.subprocess.PIPE if input_text is not None else None,
-                    stdout=f,
-                    stderr=subprocess.STDOUT,
-                    cwd=cwd,
-                    env=env,
-                )
-            else:
-                # 推荐：参数列表，避免 shell 注入
-                proc = await asyncio.create_subprocess_exec(
-                    *command,
-                    stdin=asyncio.subprocess.PIPE if input_text is not None else None,
-                    stdout=f,
-                    stderr=subprocess.STDOUT,
-                    cwd=cwd,
-                    env=env,
-                )
+            # 统一使用 create_subprocess_exec，杜绝 shell 注入
+            proc = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.PIPE if input_text is not None else None,
+                stdout=f,
+                stderr=subprocess.STDOUT,
+                cwd=cwd,
+                env=env,
+            )
             try:
                 data = input_text.encode("utf-8") if input_text is not None else None
                 await asyncio.wait_for(proc.communicate(data), timeout_s)
@@ -85,7 +88,7 @@ async def run_cli(
         )
     except FileNotFoundError:
         return AgentResult(
-            agent=agent, error=f"CLI 不可用（不在 PATH）: {cmd_display.split()[0]}",
+            agent=agent, error=f"CLI 不可用（不在 PATH）: {command[0] if command else cmd_display}",
             elapsed_s=time.monotonic() - started,
         )
     except Exception as e:
@@ -94,4 +97,4 @@ async def run_cli(
         try:
             out_path.unlink()
         except OSError:
-            pass  # 子进程可能仍持有句柄，忽略
+            log.debug("清理临时输出文件失败: %s", out_path, exc_info=True)

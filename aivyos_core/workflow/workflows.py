@@ -291,15 +291,15 @@ def stop_preview_server(state: Dict[str, Any]) -> None:
     if controller is not None:
         try:
             controller.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("忽略预期内异常: %s", e, exc_info=True)
     srv = state.pop("_preview_server", None)
     if srv is not None:
         try:
             srv.shutdown()
             srv.server_close()
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("忽略预期内异常: %s", e, exc_info=True)
 
 
 # ---- ChatFlow：对话工作流（集成 ChatEngine，检查点化）----

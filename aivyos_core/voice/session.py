@@ -193,8 +193,8 @@ class VoiceSession:
                 # backend_play=False 时后端不播（避免双播 + 打断失效）
                 if self.backend_play:
                     self.sink.play(audio.pcm)
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
             playback_ms = 0.0  # 非阻塞，不计时
 
         total_ms = (time.perf_counter() - start) * 1000
@@ -379,8 +379,8 @@ class VoiceSession:
                 # backend_play=False 时后端不播（避免双播 + 打断失效）
                 if self.backend_play:
                     self.sink.play(audio.pcm)
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
             playback_ms = 0.0  # 非阻塞，不计时
 
         total_ms = (time.perf_counter() - start) * 1000
@@ -531,8 +531,8 @@ class VoiceSession:
         finally:
             try:
                 stream_iter.aclose()
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
 
         if not started:
             log.info("未检测到语音输入 (总帧数=%d)", total_frames)

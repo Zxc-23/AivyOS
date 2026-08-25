@@ -11,6 +11,9 @@
 
 from __future__ import annotations
 
+import logging
+log = logging.getLogger(__name__)
+
 from typing import Any, Callable, Dict, List, Optional
 
 # 8 状态定义（§3.1）
@@ -91,8 +94,8 @@ class TrayStateMachine:
         for fn in self._listeners:
             try:
                 fn(old, to_state, event)
-            except Exception:
-                pass  # 监听器异常不阻断状态机
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)  # 监听器异常不阻断状态机
         return True
 
     # ---- 守卫（§3.2 左键 / §3.4 双击）----

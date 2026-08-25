@@ -18,8 +18,8 @@ class TestVSCodeDispatcher(AivyTestCase):
         self.assertFalse(res.ok)
         self.assertIn("VS Code CLI 不可用", res.error)
 
-    def test_command_built_with_quoted_path(self):
-        """命令构建：code 与路径均加双引号（Windows 空格路径）。"""
+    def test_command_built_as_list(self):
+        """命令构建：使用参数列表，路径作为独立元素（Windows 空格路径安全）。"""
         captured: dict = {}
 
         async def _fake_run_cli(cmd, **kwargs):
@@ -32,7 +32,7 @@ class TestVSCodeDispatcher(AivyTestCase):
              mock.patch("aivyos_core.workbench.dispatchers.vscode.run_cli", _fake_run_cli):
             res = asyncio.run(VSCodeDispatcher().open("F:/My Dir/file.py"))
         self.assertTrue(res.ok)
-        self.assertIn('"F:/My Dir/file.py"', captured["cmd"])
+        self.assertEqual(captured["cmd"], ["code", "F:/My Dir/file.py"])
 
 
 if __name__ == "__main__":

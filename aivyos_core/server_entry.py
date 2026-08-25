@@ -762,8 +762,8 @@ def build_server(engine: ChatEngine, cfg: dict, stop_event: "asyncio.Event | Non
                 if text_override is None and wake_was_running:
                     try:
                         await wake_loop.start()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("忽略预期内异常: %s", e, exc_info=True)
                 raise
             # 更新连续对话会话状态
             if continuous:
@@ -831,8 +831,8 @@ def build_server(engine: ChatEngine, cfg: dict, stop_event: "asyncio.Event | Non
                     # 语音确认（fire-and-forget 异步播放）
                     try:
                         await get_voice().aspeak("好的，随时叫我。")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("忽略预期内异常: %s", e, exc_info=True)
                     log.info("连续对话：退出命令词 %r 结束会话", clean)
                     # 会话结束 → 恢复后台唤醒监听（麦克风已释放）
                     wl = _wake_loop_ref["loop"]
@@ -850,8 +850,8 @@ def build_server(engine: ChatEngine, cfg: dict, stop_event: "asyncio.Event | Non
                     if remind:
                         try:
                             await get_voice().aspeak("还需要我吗？")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug("忽略预期内异常: %s", e, exc_info=True)
                         result["continuous"]["reminded"] = True
                         log.info("连续对话：窗口即将到期，已提醒（剩 %.0fs / %d 轮）", window_left, turns_left)
             return {"ok": True, **result}
@@ -1820,8 +1820,8 @@ def build_server(engine: ChatEngine, cfg: dict, stop_event: "asyncio.Event | Non
                 body = ""
                 try:
                     body = e.read().decode()[:200]
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("忽略预期内异常: %s", e, exc_info=True)
                 return {"ok": False, "error": f"HTTP {e.code}: {body}"}
             except urllib.error.URLError as e:
                 return {"ok": False, "error": f"连接失败: {str(e.reason)}"}
@@ -1894,8 +1894,8 @@ def build_server(engine: ChatEngine, cfg: dict, stop_event: "asyncio.Event | Non
                 body = ""
                 try:
                     body = e.read().decode()[:150]
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("忽略预期内异常: %s", e, exc_info=True)
                 results.append({
                     "provider": p.get("id", ""),
                     "name": p.get("name", ""),

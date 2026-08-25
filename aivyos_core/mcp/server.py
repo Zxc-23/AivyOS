@@ -138,8 +138,8 @@ class McpServer:
                 writer.close()
                 try:
                     await writer.wait_closed()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("忽略预期内异常: %s", e, exc_info=True)
 
         server = await asyncio.start_server(handle_conn, host, port)
         log.info("MCP TCP 服务: %s:%d（%d 工具）", host, port, len(self.tools))

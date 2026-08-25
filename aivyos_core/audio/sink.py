@@ -71,8 +71,8 @@ class PlaybackSink(AudioSink):
             self._current_audio = None
         try:
             self.sd.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("忽略预期内异常: %s", e, exc_info=True)
         log.debug("PlaybackSink.stop() 已调用")
 
     def play(self, pcm: bytes) -> None:

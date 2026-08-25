@@ -13,7 +13,7 @@ _DIFF_MAX = 12000  # 发给模型审查的 diff 截断长度
 
 async def capture_diff(cwd: str, timeout_s: float = 30.0) -> AgentResult:
     """捕获 cwd 所在仓库的 git diff（工作区 + 暂存区 vs HEAD）。"""
-    result = await run_cli("git diff HEAD", agent="git", cwd=cwd, timeout_s=timeout_s,
+    result = await run_cli(["git", "diff", "HEAD"], agent="git", cwd=cwd, timeout_s=timeout_s,
                            max_output=_DIFF_MAX * 2)
     if not result.ok:
         result.error = f"git diff 失败（{cwd} 不是 git 仓库或无 git）: {result.error}"

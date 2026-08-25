@@ -99,13 +99,13 @@ class PreviewController:
                 try:
                     srv.shutdown()
                     srv.server_close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("忽略预期内异常: %s", e, exc_info=True)
             if proc is not None:
                 try:
                     proc.terminate()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("忽略预期内异常: %s", e, exc_info=True)
 
     def list_servers(self) -> list[Dict[str, Any]]:
         """列出全部 dev server（§11 开发服务器管理）。"""

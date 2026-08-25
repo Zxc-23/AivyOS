@@ -7,6 +7,9 @@ Week 2 不处理分片（continuation）与大帧（>2GB）场景。
 
 from __future__ import annotations
 
+import logging
+log = logging.getLogger(__name__)
+
 import asyncio
 import base64
 import hashlib
@@ -116,13 +119,13 @@ class WebSocketConnection:
     async def close(self, code: int = 1000) -> None:
         try:
             await self.send_frame(0x8, struct.pack(">H", code))
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("忽略预期内异常: %s", e, exc_info=True)
         self.writer.close()
         try:
             await self.writer.wait_closed()
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("忽略预期内异常: %s", e, exc_info=True)
 
 
 MessageHandler = Callable[["WebSocketConnection", str], Awaitable[None]]
@@ -175,8 +178,8 @@ class WebSocketServer:
             self.connections.discard(conn)
             try:
                 writer.close()
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
 
     async def stop(self) -> None:
         for conn in list(self.connections):

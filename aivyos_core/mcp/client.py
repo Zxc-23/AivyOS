@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+log = logging.getLogger(__name__)
+
 import asyncio
 from typing import Any, Callable, Dict, List, Optional
 
@@ -28,8 +31,8 @@ class McpClient:
             self._writer.close()
             try:
                 await self._writer.wait_closed()
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
 
     async def _rpc(self, method: str, params: Dict[str, Any]) -> Any:
         self._seq += 1

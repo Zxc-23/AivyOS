@@ -11,6 +11,9 @@
 
 from __future__ import annotations
 
+import logging
+log = logging.getLogger(__name__)
+
 import json
 import re
 import sqlite3
@@ -96,8 +99,8 @@ def _parse_codex_base_url(config_toml: str) -> Optional[str]:
         found = _find_key(doc, "base_url")
         if found:
             return found
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("忽略预期内异常: %s", e, exc_info=True)
     m = _BASE_URL_RE.search(config_toml)
     return m.group(1) if m else None
 

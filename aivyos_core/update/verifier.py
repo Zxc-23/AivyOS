@@ -133,15 +133,15 @@ class UpdateVerifier:
             from aivyos_core.update import security_log
 
             security_log(self.now, code, message)
-        except Exception:
-            pass  # 日志失败不阻断
+        except Exception as e:
+            log.debug("忽略预期内异常: %s", e, exc_info=True)  # 日志失败不阻断
 
     def _send_alert(self, code: str, message: str) -> None:
         if self.alert is not None:
             try:
                 self.alert(code, message)
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("忽略预期内异常: %s", e, exc_info=True)
 
     def _quarantine(self, package_dir: Path) -> None:
         """§1.4 隔离可疑更新包到 quarantine/（仅篡改类事件）。"""
