@@ -177,10 +177,14 @@ class UpdateService:
     def _check_github(self, timeout: float = 10.0) -> Dict[str, Any]:
         """从 GitHub Releases 检查更新：
 
-        1) GET /repos/{repo}/releases/latest → 最新 release（tag 即版本）
-        2) 找到 manifest.signed.json asset → 下载
-        3) 找到更新包 asset（*.zip / *.upd）→ 下载并解压到 .update_pending
-        4) 七步验签 → 报告新版本
+        优先适配 Tauri updater 格式（latest.json + .exe + .sig），
+        回退到原有 manifest.signed.json + .zip/.upd 七步验签格式。
+
+        Args:
+            timeout: 网络请求超时秒数。
+
+        Returns:
+            包含 ok/update_available/version/status 等字段的字典。
         """
         import io
         import json as _json
@@ -227,6 +231,13 @@ class UpdateService:
 
         # 找 assets（用 API url：browser_download_url 对私有库不带 token 上下文会 404）
         assets = {a.get("name", ""): a.get("url", "") for a in release.get("assets", [])}
+
+        # 优先适配 Tauri updater 格式：latest.json
+        latest_json_url = assets.get("latest.json")
+        if latest_json_url:
+            return self._check_tauri_manifest(tag, latest_json_url, headers, timeout)
+
+        # 回退：原有 manifest.signed.json 格式
         manifest_url = assets.get("manifest.signed.json")
         pkg_name = next((n for n in assets if n.endswith(".zip") or n.endswith(".upd")), None)
         pkg_url = assets.get(pkg_name) if pkg_name else None
@@ -304,6 +315,79 @@ class UpdateService:
         self._state["update_available"] = False
         self._save_state()
         return {"ok": False, "error": self._last_check_error, "status": self.status()}
+
+    def _check_tauri_manifest(
+        self, tag: str, latest_json_url: str, headers: Dict[str, str], timeout: float
+    ) -> Dict[str, Any]:
+        """适配 Tauri updater latest.json 格式（dev 降级用）。
+
+        从 GitHub Release 下载 latest.json → 读取版本号和下载 URL →
+        与 current_version 比较 → 报告更新可用（不下载安装，安装由
+        Tauri 原生 updater 或前端 installUpdateTauri 处理）。
+
+        Args:
+            tag: Release tag_name（如 "v0.1.1"）。
+            latest_json_url: latest.json asset 的 API URL。
+            headers: HTTP 请求头（含 Authorization）。
+            timeout: 网络请求超时秒数。
+
+        Returns:
+            包含 ok/update_available/version/status 等字段的字典。
+        """
+        asset_headers = {**headers, "Accept": "application/octet-stream"}
+        try:
+            manifest = self._download_json(latest_json_url, asset_headers, timeout)
+        except Exception as e:
+            self._last_check_error = f"下载 latest.json 失败: {e}"
+            self._state["last_check"] = int(time.time())
+            self._state["last_check_result"] = "error"
+            self._state["update_available"] = False
+            self._save_state()
+            return {"ok": False, "error": self._last_check_error, "status": self.status()}
+
+        # 从 latest.json 读取版本号
+        manifest_version = str(manifest.get("version", tag.lstrip("v")))
+        if not Version.is_valid(manifest_version):
+            self._last_check_error = f"latest.json 版本非法: {manifest_version}"
+            self._state["last_check"] = int(time.time())
+            self._state["last_check_result"] = "error"
+            self._state["update_available"] = False
+            self._save_state()
+            return {"ok": False, "error": self._last_check_error, "status": self.status()}
+
+        if not Version.is_higher(manifest_version, self.current_version):
+            # 已是最新
+            self._state["last_check"] = int(time.time())
+            self._state["last_check_result"] = "ok"
+            self._state["update_available"] = False
+            self._state["available_version"] = None
+            self._state.pop("pending_manifest", None)
+            self._state["source"] = f"github:{self.github_repo}"
+            self._save_state()
+            return {
+                "ok": True,
+                "update_available": False,
+                "latest_version": manifest_version,
+                "status": self.status(),
+            }
+
+        # 发现新版本（Tauri updater 格式，不需要七步验签，安装由前端 Tauri 原生 API 处理）
+        self._state["last_check"] = int(time.time())
+        self._state["last_check_result"] = "ok"
+        self._state["update_available"] = True
+        self._state["available_version"] = manifest_version
+        self._state["available_type"] = "feature"
+        self._state["pending_manifest"] = manifest
+        self._state["source"] = f"github:{self.github_repo}"
+        self._save_state()
+        return {
+            "ok": True,
+            "update_available": True,
+            "version": manifest_version,
+            "update_type": "feature",
+            "source": self._state["source"],
+            "status": self.status(),
+        }
 
     @staticmethod
     def _download_json(url: str, headers: Dict[str, str], timeout: float) -> Dict[str, Any]:

@@ -40,7 +40,7 @@ import {
   MarketSkill as MarketSkillType, MarketListResult, RemoteImportResult,
   listMarketSources, browseMarketSource, MarketSource as MarketSourceType,
   listTools, setToolEnabled, ManagedTool, ToolsResult,
-  getUpdateStatus, checkForUpdate, installUpdate, rollbackUpdate, restartCore,
+  getUpdateStatus, checkForUpdate, checkForUpdateTauri, installUpdateTauri, installUpdate, rollbackUpdate, restartCore,
   UpdateStatus, UpdateResult,
   getWorkbenchStatus, workbenchClaude, workbenchCodex, workbenchRunTemplate,
   workbenchDiffReview, workbenchVscodeOpen,
@@ -1673,10 +1673,31 @@ export default function App() {
   }, [bridgeReady]);
 
   const handleCheckUpdate = useCallback(async () => {
-    if (!bridgeReady) { showNotification("演示模式", "连接核心后可检查更新", "warning"); return; }
     setUpdateChecking(true);
     setUpdateError(null);
     try {
+      // 优先：Tauri 原生 updater（release 模式，走 tauri.conf.json endpoints + pubkey 验签）
+      if (inTauri) {
+        const tauriRes = await checkForUpdateTauri();
+        if (tauriRes.ok) {
+          if (tauriRes.update_available) {
+            showNotification("发现新版本", `v${tauriRes.version} 可用`, "success");
+            setUpdateStatus(prev => prev ? {
+              ...prev,
+              update_available: true,
+              available_version: tauriRes.version,
+              last_check: Math.floor(Date.now() / 1000),
+              last_check_result: "ok",
+            } : prev);
+          } else {
+            showNotification("已是最新", "当前版本已是最新", "success");
+          }
+          return;
+        }
+        // Tauri updater 不可用（dev 模式插件未加载），降级到 Python 后端
+      }
+      // 降级：Python 后端 update.check
+      if (!bridgeReady) { showNotification("演示模式", "连接核心后可检查更新", "warning"); return; }
       const res = await checkForUpdate();
       if (res.ok) {
         if (res.update_available) {
@@ -2283,10 +2304,21 @@ export default function App() {
   };
 
   const handleInstallUpdate = useCallback(async () => {
-    if (!bridgeReady) { showNotification("演示模式", "连接核心后可安装更新", "warning"); return; }
     setUpdateInstalling(true);
     setUpdateError(null);
     try {
+      // 优先：Tauri 原生 updater 下载安装（release 模式，自动验签 + 安装）
+      if (inTauri) {
+        const tauriRes = await installUpdateTauri();
+        if (tauriRes.ok) {
+          showNotification("更新完成", `已安装 v${tauriRes.version}，应用将自动重启`, "success");
+          setUpdateStatus(prev => prev ? { ...prev, update_available: false, last_check_result: "installed" } : prev);
+          return;
+        }
+        // Tauri updater 不可用，降级到 Python 后端
+      }
+      // 降级：Python 后端 update.install
+      if (!bridgeReady) { showNotification("演示模式", "连接核心后可安装更新", "warning"); return; }
       const res = await installUpdate();
       if (res.ok) {
         showNotification("更新完成", `已安装 v${res.version}，点「🔄 重启生效」应用`, "success");

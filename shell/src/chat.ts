@@ -1259,6 +1259,35 @@ export async function checkForUpdate(): Promise<UpdateResult> {
   return bridgeCall<UpdateResult>("update.check", {});
 }
 
+/** Tauri 原生 updater 检查更新（release 模式，走 tauri.conf.json endpoints + pubkey 验签）。 */
+export async function checkForUpdateTauri(): Promise<UpdateResult> {
+  try {
+    const updater = await import("@tauri-apps/plugin-updater");
+    const update = await updater.check();
+    if (update) {
+      return { ok: true, update_available: true, version: update.version, update_type: "feature" };
+    }
+    return { ok: true, update_available: false };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Tauri 原生 updater 下载并安装更新（release 模式，自动验签 + 安装 + 提示重启）。 */
+export async function installUpdateTauri(): Promise<UpdateResult> {
+  try {
+    const updater = await import("@tauri-apps/plugin-updater");
+    const update = await updater.check();
+    if (!update) {
+      return { ok: false, error: "没有可用更新" };
+    }
+    await update.downloadAndInstall();
+    return { ok: true, version: update.version };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** 安装已验证的可用更新。 */
 export async function installUpdate(): Promise<UpdateResult> {
   return bridgeCall<UpdateResult>("update.install", {});
