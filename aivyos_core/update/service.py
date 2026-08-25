@@ -214,6 +214,15 @@ class UpdateService:
             self._save_state()
             return {"ok": False, "error": self._last_check_error, "status": self.status()}
 
+        # 找 assets（用 API url：browser_download_url 对私有库不带 token 上下文会 404）
+        assets = {a.get("name", ""): a.get("url", "") for a in release.get("assets", [])}
+
+        # 优先适配 Tauri updater 格式：latest.json
+        latest_json_url = assets.get("latest.json")
+        if latest_json_url:
+            return self._check_tauri_manifest(tag, latest_json_url, headers, timeout)
+
+        # 快速路径：tag 版本比较（如果没有 latest.json，则用 tag 直接比较）
         if not Version.is_higher(tag, self.current_version):
             # 已是最新（或降级标签）
             self._state["last_check"] = int(time.time())
@@ -228,14 +237,6 @@ class UpdateService:
                 "latest_version": tag,
                 "status": self.status(),
             }
-
-        # 找 assets（用 API url：browser_download_url 对私有库不带 token 上下文会 404）
-        assets = {a.get("name", ""): a.get("url", "") for a in release.get("assets", [])}
-
-        # 优先适配 Tauri updater 格式：latest.json
-        latest_json_url = assets.get("latest.json")
-        if latest_json_url:
-            return self._check_tauri_manifest(tag, latest_json_url, headers, timeout)
 
         # 回退：原有 manifest.signed.json 格式
         manifest_url = assets.get("manifest.signed.json")

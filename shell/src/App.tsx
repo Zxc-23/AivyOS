@@ -1675,34 +1675,38 @@ export default function App() {
   const handleCheckUpdate = useCallback(async () => {
     setUpdateChecking(true);
     setUpdateError(null);
+    let foundUpdate = false;
+    let foundVersion = "";
     try {
       // 优先：Tauri 原生 updater（release 模式，走 tauri.conf.json endpoints + pubkey 验签）
       if (inTauri) {
         const tauriRes = await checkForUpdateTauri();
         if (tauriRes.ok) {
           if (tauriRes.update_available) {
-            showNotification("发现新版本", `v${tauriRes.version} 可用`, "success");
+            foundUpdate = true;
+            foundVersion = tauriRes.version || "";
+            showNotification("发现新版本", `v${foundVersion} 可用`, "success");
             setUpdateStatus(prev => prev ? {
               ...prev,
               update_available: true,
-              available_version: tauriRes.version,
+              available_version: foundVersion,
               last_check: Math.floor(Date.now() / 1000),
               last_check_result: "ok",
             } : prev);
-          } else {
-            showNotification("已是最新", "当前版本已是最新", "success");
+            return;
           }
-          return;
+          // Tauri 检查过但没更新，不直接 return，继续降级到 Python 后端交叉验证
         }
-        // Tauri updater 不可用（dev 模式插件未加载），降级到 Python 后端
       }
       // 降级：Python 后端 update.check
       if (!bridgeReady) { showNotification("演示模式", "连接核心后可检查更新", "warning"); return; }
       const res = await checkForUpdate();
       if (res.ok) {
         if (res.update_available) {
-          showNotification("发现新版本", `v${res.version}（${res.update_type}）可用`, "success");
-        } else {
+          foundUpdate = true;
+          foundVersion = res.version || "";
+          showNotification("发现新版本", `v${foundVersion}（${res.update_type}）可用`, "success");
+        } else if (!foundUpdate) {
           showNotification("已是最新", `当前版本 v${updateStatus?.current_version ?? "?"}`, "success");
         }
       } else {

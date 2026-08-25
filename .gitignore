@@ -51,4 +51,4 @@ test_reports/
 .aivyos-updater.key
 .aivyos-updater-raw.key
 .aivyos-updater-pure.key
-.aivyos-updater.key.pub
+# 公钥 (.pub) 可入库，前端/客户端需要此公钥验签
