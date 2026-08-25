@@ -89,9 +89,18 @@ def _simple_decrypt(ciphertext: str, key: str) -> str:
         解密后的明文字符串。
     """
     key_bytes = key.encode("utf-8")
-    cipher_bytes = base64.b64decode(ciphertext)
+    # 补齐 base64 padding（长度必须是 4 的倍数），防止 Incorrect padding 错误
+    padded = ciphertext + "=" * (-len(ciphertext) % 4)
+    try:
+        cipher_bytes = base64.b64decode(padded)
+    except Exception:
+        # 密文格式完全不可用（可能跨方案/跨机器残留），返回空串避免阻塞启动
+        return ""
     decrypted = bytes([b ^ key_bytes[i % len(key_bytes)] for i, b in enumerate(cipher_bytes)])
-    return decrypted.decode("utf-8")
+    try:
+        return decrypted.decode("utf-8")
+    except (UnicodeDecodeError, ValueError):
+        return ""
 
 
 class ApiKeyStore:

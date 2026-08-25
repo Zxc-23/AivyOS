@@ -429,8 +429,8 @@ def build_server(engine: ChatEngine, cfg: dict, stop_event: "asyncio.Event | Non
     def get_scheduler():
         nonlocal _scheduler
         if _scheduler is None:
-            from aivyos_core.scheduler import Scheduler
-            _scheduler = Scheduler(tick_s=float(cfg.get("scheduler", {}).get("tick_s", 5)))
+            from aivyos_core.scheduler import ActiveScheduler
+            _scheduler = ActiveScheduler(tick_s=float(cfg.get("scheduler", {}).get("tick_s", 5)))
         return _scheduler
 
     # ---- 知识卡片系统（记忆管理升级）----
