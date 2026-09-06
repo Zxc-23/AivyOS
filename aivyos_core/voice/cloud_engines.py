@@ -177,32 +177,43 @@ class EdgeTTSBackend(CloudTTSBackend):
 
         edge-tts 输出为 MP3（非 WAV）—— 直接截断头当 PCM 会播放刺耳噪音。
         使用 soundfile（libsndfile）解码为 int16 PCM（@24kHz）。
+
+        注意：voice.test-tts 等服务端方法运行在已有的事件循环中，不能在该循环上
+        直接调用 loop.run_until_complete()。这里将异步 edge-tts 逻辑放到独立线程的
+        新事件循环中执行，避免冲突。
         """
         try:
             import edge_tts  # type: ignore
         except ImportError:
             raise RuntimeError("edge-tts 未安装: pip install edge-tts")
 
-        import asyncio
+        import concurrent.futures
         import io
 
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
+        def _run_async(text: str, voice: str, rate: str) -> bytes:
+            """在独立线程的事件循环中执行 edge-tts 流式采集。"""
+            import asyncio
+
+            communicate = edge_tts.Communicate(text, voice, rate=rate)
+            mp3_data = bytearray()
+
+            async def _collect():
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        mp3_data.extend(chunk["data"])
+
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(_collect())
+            finally:
+                loop.close()
+            return bytes(mp3_data)
 
-        communicate = edge_tts.Communicate(text, self._voice)
-
-        # 流式收集 MP3 音频块（edge-tts 7.x 默认输出 MP3）
-        mp3_data = bytearray()
-
-        async def _collect():
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    mp3_data.extend(chunk["data"])
-
-        loop.run_until_complete(_collect())
+        start = time.monotonic()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            mp3_data = executor.submit(_run_async, text, self._voice, self._rate).result()
+        latency = (time.monotonic() - start) * 1000
 
         if not mp3_data:
             raise RuntimeError("edge-tts 未返回音频数据")
@@ -211,7 +222,7 @@ class EdgeTTSBackend(CloudTTSBackend):
         try:
             import soundfile as sf  # type: ignore
 
-            pcm_data, sample_rate = sf.read(io.BytesIO(bytes(mp3_data)), dtype="int16")
+            pcm_data, sample_rate = sf.read(io.BytesIO(mp3_data), dtype="int16")
         except ImportError:
             raise RuntimeError("edge-tts 解码需要 soundfile: pip install soundfile")
         except Exception as e:
@@ -222,8 +233,8 @@ class EdgeTTSBackend(CloudTTSBackend):
             sample_rate=int(sample_rate),
             text=text,
             backend=self.name,
-            latency_ms=0.0,
-            meta={"voice": self._voice, "format": "mp3-decoded"},
+            latency_ms=latency,
+            meta={"voice": self._voice, "rate": self._rate, "format": "mp3-decoded"},
         )
 
 

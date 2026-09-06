@@ -16,8 +16,12 @@ langgraph>=0.2
 
 # ---- 语音（Week 2 启用）----
 sounddevice            # 麦克风采集 + 实时播放（缺失时自动降级合成音源/静默）
+edge-tts               # Edge-TTS 微软免费云端 TTS（缺失时降级 mock TTS）
+soundfile              # Edge-TTS 输出 MP3 解码为 PCM（缺失时无法使用 Edge-TTS）
 # silero-vad>=5.0      # VAD 语音活动检测（缺失时降级能量 VAD）
-# funasr               # SenseVoice/Paraformer 流式 ASR（缺失时降级 mock ASR）
+funasr                 # SenseVoice/Paraformer 流式 ASR（缺失时降级 mock ASR）
+torch                  # funasr 推理后端（缺失时 funasr 无法加载模型）
+torchaudio             # funasr 音频加载工具（缺失时 funasr 初始化失败）
 # cosyvoice            # CosyVoice 3 TTS（Apache-2.0，缺失时降级 mock TTS）
 
 # ---- 认证（Week 4 启用）----

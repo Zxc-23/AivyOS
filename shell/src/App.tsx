@@ -1346,10 +1346,10 @@ export default function App() {
         throw new Error(result.error || "合成失败，未返回音频数据");
       }
       // Mock 降级警告（云端调用失败导致 fallback 到 mock 提示音）
+      let fallbackWarning = "";
       if (result.warning) {
-        setVsetTestResult("⚠ " + result.warning);
+        fallbackWarning = result.warning;
         showNotification("试听警告", result.warning, "warning");
-        return;
       }
       // 使用 Web Audio API 播放（比 <audio> 更可靠）
       const binary = atob(result.wav_b64);
@@ -1363,8 +1363,13 @@ export default function App() {
       source.start(0);
       const duration = result.wav_len ? (result.wav_len / (result.sample_rate || 24000) / 2) : 0;
       const info = `${result.backend || "unknown"} · ${vsetTtsVoice} · ${vsetTtsSpeed.toFixed(1)}x · ${Math.round(duration * 1000)}ms`;
-      setVsetTestResult(`试听音频已播放（${info}）`);
-      showNotification("试听完成", `语音合成测试通过 · ${result.backend}`, "success");
+      if (fallbackWarning) {
+        setVsetTestResult(`⚠ 已播放 mock 提示音（${info}）：${fallbackWarning}`);
+        showNotification("试听完成（降级）", `语音合成测试通过 · ${result.backend}`, "warning");
+      } else {
+        setVsetTestResult(`试听音频已播放（${info}）`);
+        showNotification("试听完成", `语音合成测试通过 · ${result.backend}`, "success");
+      }
       source.onended = () => { try { audioCtx.close(); } catch {} };
     } catch (e) {
       setVsetTestResult("试听失败：" + (e instanceof Error ? e.message : String(e)));
@@ -5270,9 +5275,9 @@ export default function App() {
                     ) : (
                       <span className="pill warn"><span className="dot"></span>未启用（仍可用 AivyOS 手动模式）</span>
                     )}
-                    {"  "}Claude: <span className="pill on"><span className="dot"></span>{wbStatus.agents?.claude_code?.enabled ? "开" : "关"}</span>
-                    {"  "}Codex:  <span className="pill on"><span className="dot"></span>{wbStatus.agents?.codex?.enabled ? "开" : "关"}</span>
-                    {"  "}<span className="pill off">VS Code: {wbStatus.vscode_available ? "可用" : "不在 PATH"}</span>
+                    {"  "}Claude: <span className={`pill ${wbStatus.agents?.claude_code?.enabled ? "on" : "off"}`}><span className="dot"></span>{wbStatus.agents?.claude_code?.enabled ? "开" : "关"}</span>
+                    {"  "}Codex:  <span className={`pill ${wbStatus.agents?.codex?.enabled ? "on" : "off"}`}><span className="dot"></span>{wbStatus.agents?.codex?.enabled ? "开" : "关"}</span>
+                    {"  "}<span className={`pill ${wbStatus.vscode_available ? "on" : "off"}`}>VS Code: {wbStatus.vscode_available ? "可用" : "不在 PATH"}</span>
                     {"  "}
                     {ccSourceBadge.claude && <span className={`pill ${ccSourceBadge.claude === "aivyos-manual" ? "on" : ""}`} style={{marginRight:6}}>Claude={ccSourceBadge.claude}</span>}
                     {ccSourceBadge.codex  && <span className={`pill ${ccSourceBadge.codex  === "aivyos-manual" ? "on" : ""}`}>Codex={ccSourceBadge.codex}</span>}

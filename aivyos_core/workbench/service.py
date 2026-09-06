@@ -14,6 +14,8 @@ import os
 import shlex
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -414,39 +416,79 @@ class WorkbenchService:
 
     # ── 内部：探活（最小 HTTP 请求，不依赖 aiohttp）────────────
     def _probe_provider(self, creds) -> Tuple[bool, str]:
-        """对 /v1/models 或 /v1/chat/completions（1 token）发探活。"""
-        import json as _json
-        import urllib.request
-        import urllib.error
-        base = creds.base_url.rstrip("/")
-        if creds.app_type == "codex":
-            url = f"{base}/models"
-            req = urllib.request.Request(url, method="GET")
-            if creds.api_key:
-                req.add_header("Authorization", f"Bearer {creds.api_key}")
-            try:
-                with urllib.request.urlopen(req, timeout=5) as r:
-                    data = _json.loads(r.read().decode("utf-8") or "{}")
-                if isinstance(data.get("data"), list):
-                    return True, "ok"
-                return False, f"unexpected body: {str(data)[:200]}"
-            except urllib.error.HTTPError as e:
-                if e.code in (404, 405):
-                    return self._probe_provider_via_completion(creds)
-                return False, f"HTTP {e.code}"
-            except Exception as e:
-                return False, str(e)
-        # claude：/v1/messages 请求 1 token
-        return self._probe_provider_via_completion(creds)
+        """对 provider 发最小 HTTP 探活。
 
-    def _probe_provider_via_completion(self, creds) -> Tuple[bool, str]:
-        import json as _json
-        import urllib.request
-        import urllib.error
+        探测顺序：
+          1) GET /models（OpenAI 兼容，Ollama/vLLM 均支持）
+          2) POST /v1/chat/completions（OpenAI 兼容，1 token）
+          3) Claude 配置再兜底 POST /v1/messages（Anthropic 原生）
+
+        这样当用户把 Claude 配置指向 Ollama/OpenAI 兼容后端时，
+        不会再因 Anthropic 专有 /v1/messages 返回 HTTP 404。
+        """
         base = creds.base_url.rstrip("/")
+
+        # 1) /models
+        url = f"{base}/models"
+        req = urllib.request.Request(url, method="GET")
+        if creds.api_key:
+            req.add_header("Authorization", f"Bearer {creds.api_key}")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                data = json.loads(r.read().decode("utf-8") or "{}")
+            if isinstance(data.get("data"), list):
+                return True, "ok"
+            return False, f"unexpected body: {str(data)[:200]}"
+        except urllib.error.HTTPError as e:
+            if e.code not in (404, 405):
+                return False, f"HTTP {e.code}"
+            # 404/405 继续 fallback
+        except Exception as e:
+            # 连接失败也继续 fallback，让 completion 给出更具体的错误
+            pass
+
+        # 2) OpenAI 兼容 /v1/chat/completions
+        ok, msg = self._probe_provider_via_completion(creds, openai_compat=True)
+        if ok:
+            return True, msg
+        # 非 404 错误直接返回（如 401 认证失败），避免无意义继续兜底
+        if msg and not msg.startswith("HTTP 404"):
+            return ok, msg
+
+        # 3) Claude 配置：最后尝试 Anthropic 原生 /v1/messages
         if creds.app_type == "claude":
+            return self._probe_provider_via_completion(creds, openai_compat=False)
+        return ok, msg
+
+    def _probe_provider_via_completion(self, creds, openai_compat: bool = True) -> Tuple[bool, str]:
+        """发 1 token completion 探活。
+
+        参数类型：
+            - creds: Credentials — 含 base_url/model/api_key/app_type
+            - openai_compat: bool — True 走 /v1/chat/completions（OpenAI 兼容）；
+                                   False 走 /v1/messages（Anthropic 原生，仅 claude）
+
+        返回值类型：
+            - Tuple[bool, str] — (是否成功, 错误信息或 "ok")
+        """
+        base = creds.base_url.rstrip("/")
+        # 兼容 base_url 已带 /v1 的情况（项目约定 base_url 填到 /v1）
+        suffix = "/chat/completions" if openai_compat else "/messages"
+        if base.endswith("/v1"):
+            url = f"{base}{suffix}"
+        else:
+            url = f"{base}/v1{suffix}"
+        if openai_compat:
+            payload = json.dumps({
+                "model": creds.model, "max_tokens": 1,
+                "messages": [{"role": "user", "content": "hi"}],
+            }).encode("utf-8")
+            headers = {"Content-Type": "application/json"}
+            if creds.api_key:
+                headers["Authorization"] = f"Bearer {creds.api_key}"
+        else:
             url = f"{base}/v1/messages"
-            payload = _json.dumps({
+            payload = json.dumps({
                 "model": creds.model, "max_tokens": 1,
                 "messages": [{"role": "user", "content": "hi"}],
             }).encode("utf-8")
@@ -456,15 +498,6 @@ class WorkbenchService:
             }
             if creds.api_key:
                 headers["x-api-key"] = creds.api_key
-        else:  # codex (OpenAI compat)
-            url = f"{base}/v1/chat/completions"
-            payload = _json.dumps({
-                "model": creds.model, "max_tokens": 1,
-                "messages": [{"role": "user", "content": "hi"}],
-            }).encode("utf-8")
-            headers = {"Content-Type": "application/json"}
-            if creds.api_key:
-                headers["Authorization"] = f"Bearer {creds.api_key}"
         req = urllib.request.Request(url, data=payload, method="POST", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=8):

@@ -34,6 +34,71 @@ class CCSwitchReader:
     def __init__(self, db_path: Optional[Path] = None) -> None:
         self.db_path = Path(db_path) if db_path else default_db_path()
 
+    def list_all(self) -> list[Dict[str, Any]]:
+        """读取 cc-switch 数据库中所有 providers 行。
+
+        Returns:
+            字典列表，每个字典包含 id, app_type, name, is_current,
+            base_url, model, api_key 等字段。空库/缺表/异常一律返回空列表。
+        """
+        try:
+            if not self.db_path.exists():
+                return []
+            uri = f"file:{self.db_path.as_posix()}?mode=ro"
+            db = sqlite3.connect(uri, uri=True)
+            try:
+                # 先检查表是否存在
+                tables = db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='providers'"
+                ).fetchone()
+                if not tables:
+                    return []
+                rows = db.execute(
+                    "SELECT id, app_type, name, is_current, settings_config FROM providers"
+                ).fetchall()
+            finally:
+                db.close()
+            if not rows:
+                return []
+
+            result = []
+            for row in rows:
+                row_id, app_type, name, is_current, raw = row
+                item: Dict[str, Any] = {
+                    "id": str(row_id),
+                    "app_type": str(app_type or ""),
+                    "name": str(name or ""),
+                    "is_current": bool(is_current),
+                    "base_url": "",
+                    "model": "",
+                    "api_key": "",
+                }
+                try:
+                    cfg = json.loads(raw) if raw else {}
+                    env = self._extract_env(str(app_type or ""), cfg)
+                    item["api_key"] = env.get(
+                        "ANTHROPIC_AUTH_TOKEN",
+                        env.get("ANTHROPIC_API_KEY", env.get("OPENAI_API_KEY", "")),
+                    )
+                    # claude: base_url/model 取自 env
+                    if str(app_type or "") == "claude":
+                        item["base_url"] = env.get("ANTHROPIC_BASE_URL", "")
+                        item["model"] = env.get("ANTHROPIC_MODEL", "")
+                    # codex: base_url 取自 env
+                    elif str(app_type or "") == "codex":
+                        item["base_url"] = env.get("OPENAI_BASE_URL", "")
+                        # model 可能在 env 中，也可能在 settings_config 中
+                        item["model"] = env.get("OPENAI_MODEL", "") or str(
+                            (cfg.get("auth") or {}).get("model", "")
+                        )
+                except Exception:
+                    pass
+                result.append(item)
+            return result
+        except Exception:
+            log.debug("cc-switch list_all 异常", exc_info=True)
+            return []
+
     def read_provider(self, app_type: str) -> Optional[ProviderEnv]:
         """读取指定 app_type 的激活 provider；失败一律返回 None。"""
         try:

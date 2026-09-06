@@ -1,7 +1,7 @@
 {
   "name": "aivyos-shell",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "description": "AivyOS 桌面壳层（Tauri 2.0 + React）— Phase 1 Week 1 骨架",
   "scripts": {

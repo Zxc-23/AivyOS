@@ -144,12 +144,16 @@ class ProviderStore:
     # ── 合并 & 计算有效项 ─────────────────────────────────
     def reload(self) -> None:
         """重新扫 cc-switch + config（用户点 '从 cc-switch 重载' 时调用）。"""
-        if self._cc_reader is not None:
-            try:
-                self._cc_rows = list(self._cc_reader.list_all() or [])
-            except Exception:
-                # cc-switch 不可用不影响使用，用户仍可纯手动
-                self._cc_rows = []
+        from aivyos_core.workbench.cc_switch.reader import CCSwitchReader, default_db_path
+
+        if self._cc_reader is None:
+            # 没有传入 cc_reader 时，自动创建一个默认的
+            self._cc_reader = CCSwitchReader(default_db_path())
+        try:
+            self._cc_rows = list(self._cc_reader.list_all() or [])
+        except Exception:
+            # cc-switch 不可用不影响使用，用户仍可纯手动
+            self._cc_rows = []
 
     @staticmethod
     def _mask_key(k: Optional[str]) -> str:

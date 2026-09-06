@@ -92,7 +92,7 @@ class TestUpdateService(AivyTestCase):
         svc = UpdateService(load_config(), home)
         st = svc.status()
         self.assertTrue(st["ok"])
-        self.assertEqual(st["current_version"], "0.1.0")
+        self.assertEqual(st["current_version"], "0.1.2")
         self.assertEqual(st["installed_versions"], [])
         self.assertEqual(st["last_check_result"], "never")
         self.assertFalse(st["update_available"])

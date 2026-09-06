@@ -2060,12 +2060,15 @@ def build_server(engine: ChatEngine, cfg: dict, stop_event: "asyncio.Event | Non
                 elif provider == "elevenlabs":
                     env_hint = "，请先在上方填写 ElevenLabs API Key 并保存"
                 elif provider == "edge-tts":
-                    env_hint = "（Edge-TTS 需要联网及 pip install edge-tts）"
-                return {
-                    "ok": False,
-                    "error": f"无法初始化 {provider} TTS 引擎{env_hint}",
-                    "backend": "mock",
-                }
+                    # Edge-TTS 未安装或网络不可用时，优雅降级为 mock 提示音，
+                    # 继续执行合成并返回 warning，让前端播放提示音同时显示安装指引。
+                    env_hint = ""
+                if env_hint:
+                    return {
+                        "ok": False,
+                        "error": f"无法初始化 {provider} TTS 引擎{env_hint}",
+                        "backend": "mock",
+                    }
 
             # ── 执行合成 ──
             start = _time.perf_counter()
@@ -2075,7 +2078,9 @@ def build_server(engine: ChatEngine, cfg: dict, stop_event: "asyncio.Event | Non
             # ── 检测云端合成是否失败并降级到 mock ──
             warning = None
             if is_mock:
-                pass  # 用户明确要求 mock，正常返回
+                if provider == "edge-tts":
+                    warning = "Edge-TTS 未安装或初始化失败，已降级为 mock 提示音。如需使用真实语音，请执行 pip install edge-tts soundfile 并确保网络连通。"
+                # 其他情况：用户明确要求 mock 或 auto 模式主动降级，正常返回
             elif result.backend == "mock-tts" and provider != "mock":
                 warning = "云端 TTS 调用失败，已降级为 mock 提示音（无真实语音）。请检查 API Key 是否正确、网络是否连通。"
 

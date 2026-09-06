@@ -1,7 +1,9 @@
 """Codex 分发器测试：OPENAI_* 注入、非零退出码。"""
 
 import asyncio
+import shutil
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from tests import AivyTestCase
@@ -21,7 +23,13 @@ class TestCodexDispatcher(AivyTestCase):
             res = asyncio.run(CodexDispatcher().run(AgentTask(agent="codex", prompt="review"), penv))
         self.assertEqual(recorder["env"]["OPENAI_API_KEY"], "ok-secret")
         self.assertEqual(recorder["env"]["OPENAI_BASE_URL"], "https://x/v1")
-        self.assertTrue(recorder["cmd"].startswith("codex exec"))
+        # Windows 下 _resolve_command 会将 shim 解析为完整路径（如 codex.CMD）
+        first_arg = Path(recorder["cmd"].split()[0])
+        self.assertTrue(
+            first_arg.name.lower().startswith("codex"),
+            f"命令首参数应为 codex 可执行文件，实际为 {first_arg}",
+        )
+        self.assertIn(" exec ", recorder["cmd"])
         self.assertTrue(res.ok)
         self.assertEqual(proc.stdin_data, b"review")
 

@@ -3,6 +3,8 @@ import json
 import os
 import tempfile
 import unittest
+import urllib.error
+from unittest import mock
 
 from aivyos_core.workbench.provider_store import (
     ProviderStore, ProviderItem,
@@ -229,6 +231,168 @@ class TestWorkbenchServiceIntegration(AivyTestCase):
         self.assertEqual(creds.source, "aivyos-manual")
         self.assertEqual(creds.env["ANTHROPIC_MODEL"], "ma")
         self.assertEqual(creds.env["ANTHROPIC_AUTH_TOKEN"], "K")
+
+
+# ─────────────────────────────────────────────────────────────
+# 协同工作台健康检查探活修复（Claude 配置指向 Ollama 时 404 修复）
+# ─────────────────────────────────────────────────────────────
+
+
+class _UrlopenRecorder:
+    """模拟 urllib.request.urlopen，按 URL 返回不同响应。"""
+
+    def __init__(self, responses):
+        self.calls = []
+        # responses: {url_contains: (status, body_bytes)}
+        self.responses = responses
+
+    def __call__(self, req, **kwargs):
+        self.calls.append((req.full_url, kwargs.get("timeout")))
+        for key, (status, body) in self.responses.items():
+            if key in req.full_url:
+                if status == 200:
+                    return _MockResponse(body)
+                raise _MockHTTPError(req.full_url, status)
+        # 默认 404
+        raise _MockHTTPError(req.full_url, 404)
+
+
+class _MockResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+
+class _MockHTTPError(urllib.error.HTTPError):
+    def __init__(self, url, code):
+        super().__init__(url, code, "Mock", {}, None)
+
+
+class TestWorkbenchHealthCheck(AivyTestCase):
+    """workbench.health_check_provider 探活多后端兼容。"""
+
+    def _svc(self):
+        """构造最小 WorkbenchService，无 cc-switch，只测探活逻辑。"""
+        tmp = tempfile.mkdtemp(prefix="aivy_hc_")
+        cfg = {
+            "workbench": {
+                "auto_open_vscode": False,
+                "manual_override": {"claude_enabled": True, "codex_enabled": False},
+                "cc_switch": {"enabled": False, "db_path": ""},
+                "agents": {
+                    "claude_code": {"enabled": True, "manual": {"api_key": "", "base_url": "", "model": ""}},
+                    "codex":       {"enabled": True, "manual": {"api_key": "", "base_url": "", "model": ""}},
+                },
+                "collaboration": {"review_via_files": False, "auto_open_vscode": False},
+                "timeout_s": 300,
+            },
+        }
+        from aivyos_core.workbench.service import WorkbenchService
+        svc = WorkbenchService(cfg["workbench"], home=tmp)
+        return svc
+
+    def _patch_urlopen(self, responses):
+        """使用 unittest.mock.patch 临时替换 urllib.request.urlopen，测试结束后自动恢复。"""
+        import aivyos_core.workbench.service as _svc_mod
+        recorder = _UrlopenRecorder(responses)
+        return mock.patch.object(_svc_mod.urllib.request, "urlopen", recorder), recorder
+
+    def test_claude_health_ollama_models_endpoint(self):
+        """Claude 配置指向 Ollama，/models 返回列表 → 健康检查通过。"""
+        svc = self._svc()
+        svc.save_manual({
+            "app_type": "claude", "name": "Ollama", "api_key": "ollama",
+            "base_url": "http://127.0.0.1:11434/v1", "model": "qwen2.5:7b",
+            "set_override": True,
+        })
+        patcher, recorder = self._patch_urlopen({
+            "/models": (200, b'{"data":[{"id":"qwen2.5:7b"}]}'),
+        })
+        with patcher:
+            res = svc.health_check_provider({"app_type": "claude"})
+        self.assertTrue(res["ok"], f"应通过 /models 探活，实际 error={res.get('error')!r}")
+        self.assertIn("/models", recorder.calls[0][0])
+        self.assertIsNotNone(res["latency_ms"])
+
+    def test_claude_health_ollama_completion_fallback(self):
+        """Claude 配置指向 Ollama，/models 404，/v1/chat/completions 200 → 通过。"""
+        svc = self._svc()
+        svc.save_manual({
+            "app_type": "claude", "name": "Ollama", "api_key": "ollama",
+            "base_url": "http://127.0.0.1:11434/v1", "model": "qwen2.5:7b",
+            "set_override": True,
+        })
+        patcher, recorder = self._patch_urlopen({
+            "/models": (404, b""),
+            "/v1/chat/completions": (200, b'{"choices":[]}'),
+        })
+        with patcher:
+            res = svc.health_check_provider({"app_type": "claude"})
+        self.assertTrue(res["ok"], f"应 fallback 到 /v1/chat/completions，实际 error={res.get('error')!r}")
+        self.assertEqual(len(recorder.calls), 2)
+        self.assertIn("/v1/chat/completions", recorder.calls[1][0])
+
+    def test_claude_health_anthropic_messages_fallback(self):
+        """Claude 配置指向 Anthropic，/models 和 /v1/chat/completions 均 404，
+        /v1/messages 200 → 通过。"""
+        svc = self._svc()
+        svc.save_manual({
+            "app_type": "claude", "name": "Anthropic", "api_key": "sk-xxx",
+            "base_url": "https://api.anthropic.com", "model": "claude-3-5-sonnet",
+            "set_override": True,
+        })
+        patcher, recorder = self._patch_urlopen({
+            "/models": (404, b""),
+            "/v1/chat/completions": (404, b""),
+            "/v1/messages": (200, b'{"content":[]}'),
+        })
+        with patcher:
+            res = svc.health_check_provider({"app_type": "claude"})
+        self.assertTrue(res["ok"], f"应 fallback 到 /v1/messages，实际 error={res.get('error')!r}")
+        self.assertEqual(len(recorder.calls), 3)
+        self.assertIn("/v1/messages", recorder.calls[2][0])
+
+    def test_codex_health_ollama_models_preserved(self):
+        """Codex 配置仍可通过 /models 探活成功。"""
+        svc = self._svc()
+        svc.save_manual({
+            "app_type": "codex", "name": "Ollama", "api_key": "ollama",
+            "base_url": "http://127.0.0.1:11434/v1", "model": "qwen2.5:7b",
+            "set_override": True,
+        })
+        patcher, recorder = self._patch_urlopen({
+            "/models": (200, b'{"data":[{"id":"qwen2.5:7b"}]}'),
+        })
+        with patcher:
+            res = svc.health_check_provider({"app_type": "codex"})
+        self.assertTrue(res["ok"], f"Codex /models 探活应通过，实际 error={res.get('error')!r}")
+        self.assertIn("/models", recorder.calls[0][0])
+
+    def test_claude_health_openai_compat_401_not_fallback_to_messages(self):
+        """OpenAI 兼容 /v1/chat/completions 返回 401 时，不应继续兜底 /v1/messages。"""
+        svc = self._svc()
+        svc.save_manual({
+            "app_type": "claude", "name": "OpenAI-compat", "api_key": "bad-key",
+            "base_url": "https://api.openai.com", "model": "gpt-4o",
+            "set_override": True,
+        })
+        patcher, recorder = self._patch_urlopen({
+            "/models": (404, b""),
+            "/v1/chat/completions": (401, b""),
+        })
+        with patcher:
+            res = svc.health_check_provider({"app_type": "claude"})
+        self.assertFalse(res["ok"])
+        self.assertEqual(len(recorder.calls), 2)
+        self.assertIn("HTTP 401", res["error"] or "")
 
 
 # ─────────────────────────────────────────────────────────────

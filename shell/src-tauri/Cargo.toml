@@ -1,6 +1,6 @@
 [package]
 name = "aivyos-shell"
-version = "0.1.0"
+version = "0.1.2"
 description = "AivyOS 桌面壳层（Tauri 2.0）— §12-15 设计对齐"
 edition = "2021"
 

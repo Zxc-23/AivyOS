@@ -80,16 +80,12 @@ export async function setupCloseToTray(): Promise<() => void> {
   return unlisten;
 }
 
-/** 开机自启（§1.5）：已启用则保持，否则开启 */
+/** 开机自启（§1.5）：演示阶段默认关闭，不自动注册 */
 export async function setupAutostart(): Promise<void> {
-  if (!inTauri) return;
-  const { isEnabled, enable } = await import("@tauri-apps/plugin-autostart");
-  try {
-    const enabled = await isEnabled();
-    if (!enabled) await enable();
-  } catch {
-    // 平台不支持时静默降级
-  }
+  // 演示阶段不需要开机自启，禁止自动写入注册表。
+  // 历史问题：旧实现「未启用则 enable()」会在每次启动时把自启动项
+  // 重新写回 HKCU\...\Run\AivyOS，导致手动清理后一启动又出现。
+  return;
 }
 
 /** 全局热键（§1.3）：Alt+Space 唤醒 / Alt+V 语音 / Alt+S 截屏 / Alt+Q 退出 */

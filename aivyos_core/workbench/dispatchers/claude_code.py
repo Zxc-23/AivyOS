@@ -140,6 +140,7 @@ class ClaudeCodeDispatcher:
     1. --dangerously-skip-permissions：非交互模式下自动批准写入请求
     2. 文件快照：执行前后对比工作区，检测实际产出文件
     3. 噪音过滤：移除模型警告等干扰输出
+    4. 前置检查：执行前验证 API 端点可达性
     """
 
     def __init__(self, cli_path: str = "claude", max_output: int = 32768,
@@ -155,6 +156,35 @@ class ClaudeCodeDispatcher:
         self.max_output = max_output
         self.skip_permissions = skip_permissions
 
+    @staticmethod
+    async def _preflight_check(penv: ProviderEnv) -> Optional[str]:
+        """执行前置检查：验证配置有效性。
+
+        Args:
+            penv: 提供商环境变量
+
+        Returns:
+            如果检查通过返回 None，否则返回错误消息。
+        """
+        # 确定 API Base URL
+        base_url = penv.env.get("ANTHROPIC_BASE_URL", "")
+        if not base_url:
+            return None  # 使用默认端点，跳过检查
+
+        # 检查 API Key
+        api_key = penv.env.get("ANTHROPIC_AUTH_TOKEN", "")
+        if not api_key:
+            return "未配置 API Key：请在 cc-switch 或 AivyOS 手动配置中设置有效的 API Key"
+
+        # 检查是否使用占位符（如 "ollama"）
+        if api_key in ("ollama", "sk-ollama", "dummy", "test"):
+            return (
+                f"API Key 为占位符 '{api_key}'，Claude CLI 需要真实的 API Key。\n"
+                f"[建议] 请在 cc-switch 中配置有效的 API Key，或使用 AivyOS 内置的 Ollama 支持"
+            )
+
+        return None
+
     async def run(self, task: AgentTask, penv: ProviderEnv) -> AgentResult:
         """执行 Claude Code 任务。
 
@@ -165,6 +195,16 @@ class ClaudeCodeDispatcher:
         Returns:
             AgentResult: 包含输出、耗时、创建的文件列表
         """
+        # 0. 前置检查：验证 API 端点可达性
+        preflight_error = await self._preflight_check(penv)
+        if preflight_error:
+            return AgentResult(
+                agent="claude",
+                ok=False,
+                error=preflight_error,
+                elapsed_s=0,
+            )
+
         # 1. 执行前取文件快照
         before_snapshot = _take_snapshot(task.cwd)
 

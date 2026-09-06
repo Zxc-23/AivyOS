@@ -296,7 +296,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "github_repo": "Zxc-23/AivyOS",   # 如 "Zxc-23/AivyOS"（空 = 不使用 GitHub Releases）
         "github_token": "",             # GitHub Personal Access Token（私有库需要；公开库留空）
         "endpoint": "https://api.aivyos.local/update/{target}/{arch}/{current_version}",
-        "current_version": "0.1.0",
+        "current_version": "0.1.2",
         "min_required_version": "0.0.0",
         "keep_versions": 3,             # §2.3 保留 3 个版本
         "versions_dir": ".aivyos_versions",

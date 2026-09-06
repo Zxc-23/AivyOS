@@ -48,19 +48,42 @@ type ReqEnvelope = (u64, Vec<u8>, oneshot::Sender<Result<Value, String>>);
 
 // ---------- Python 路径发现 ----------
 
+/// 定位 AivyOS 项目根目录（包含 aivyos_core/ 的目录）。
+/// 优先根据当前可执行文件路径向上查找，这样从任意 cwd 启动（开机自启、快捷方式、双击 exe）都能找到模块；
+/// 找不到时回退到当前工作目录，保持 `cargo run` 等开发场景可用。
+fn locate_aivyos_root() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        let mut p = exe.parent().map(PathBuf::from).unwrap_or_default();
+        for _ in 0..6 {
+            if p.join("aivyos_core").is_dir() {
+                return p;
+            }
+            if !p.pop() {
+                break;
+            }
+        }
+    }
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let mut p = cwd.clone();
+    for _ in 0..5 {
+        if p.join("aivyos_core").is_dir() {
+            return p;
+        }
+        if !p.pop() {
+            break;
+        }
+    }
+    p
+}
+
 /// 发现 python 可执行路径：项目虚拟环境 → which python/python3 → Windows 常见位置
 fn find_python() -> Result<PathBuf, String> {
-    let cwd = std::env::current_dir().ok();
+    let root = locate_aivyos_root();
     // 1) 项目虚拟环境（aivyos/ 目录下的 .venv\Scripts\python.exe）
-    if let Some(cwd) = cwd.as_ref() {
-        // Tauri 的 cwd 通常为 shell/ 或 shell/src-tauri
+    {
         let roots = [
-            cwd.clone(),
-            cwd.parent().map(|p| p.to_path_buf()).unwrap_or_default(),
-            cwd.parent()
-                .and_then(|p| p.parent())
-                .map(|p| p.to_path_buf())
-                .unwrap_or_default(),
+            root.clone(),
+            root.parent().map(|p| p.to_path_buf()).unwrap_or_default(),
         ];
         for r in roots {
             for rel in [".venv\\Scripts\\python.exe", "venv\\Scripts\\python.exe"] {
@@ -415,18 +438,8 @@ async fn boot_core(handle: CoreHandle, app_handle: tauri::AppHandle) {
             println!("[AivyOS] 端口 {}:{} 已在监听，复用现有进程", IPC_HOST, IPC_PORT);
             None
         } else {
-            // 向上查找包含 aivyos_core/ 的目录作为 Python 根路径
-            // cargo run 时 cwd 为 shell/src-tauri，需往上 2 层到达 aivyos/
-            let cwd = std::env::current_dir().unwrap_or_default();
-            let mut aivyos_root = cwd.clone();
-            for _ in 0..5 {
-                if aivyos_root.join("aivyos_core").is_dir() {
-                    break;
-                }
-                if !aivyos_root.pop() {
-                    break;
-                }
-            }
+            // 按可执行文件位置定位 aivyos/ 根目录，避免依赖启动时的 cwd
+            let aivyos_root = locate_aivyos_root();
 
             // 设置 PYTHONPATH 环境变量，确保 Python 能找到 aivyos_core 模块
             let pythonpath = std::env::var("PYTHONPATH")

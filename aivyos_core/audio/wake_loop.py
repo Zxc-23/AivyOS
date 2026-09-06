@@ -17,7 +17,7 @@ import logging
 import time
 from typing import Callable, Optional
 
-from aivyos_core.audio.source import MicSource
+from aivyos_core.audio.source import AudioSource, SyntheticSource, create_source
 from aivyos_core.audio.vad import create_vad, VADEngine
 from aivyos_core.asr.manager import create_asr
 from aivyos_core.asr.base import ASRBackend
@@ -60,13 +60,14 @@ class WakeLoop:
         self._device = device
         self._gain = gain
         self._task: Optional[asyncio.Task] = None
-        self._source: Optional[MicSource] = None
+        self._source: Optional[AudioSource] = None
         self._vad: Optional[VADEngine] = None
         self._wake_detector = WakeWordDetector()
         self._running = False
         self._last_wake_time = 0.0
         self._wake_count = 0
         self._asr: Optional[ASRBackend] = None
+        self._source_kind: str = "mic"  # 当前实际使用的音源类型（mic / synthetic / wav）
 
     @property
     def running(self) -> bool:
@@ -80,6 +81,7 @@ class WakeLoop:
             "wake_count": self._wake_count,
             "last_wake_time": self._last_wake_time,
             "cooldown_remaining": max(0.0, WAKE_COOLDOWN_SECONDS - (time.monotonic() - self._last_wake_time)),
+            "source_kind": self._source_kind,
         }
 
     async def start(self) -> None:
@@ -89,17 +91,19 @@ class WakeLoop:
             return
 
         if self._source is None:
-            self._source = MicSource(
-                sample_rate=self._sample_rate,
-                frame_ms=self._frame_ms,
-                device=self._device,
-                gain=self._gain,
-            )
+            self._source = create_source({
+                "input_backend": "auto",
+                "sample_rate": self._sample_rate,
+                "frame_ms": self._frame_ms,
+                "device": self._device,
+                "gain": self._gain,
+            })
+            self._source_kind = "synthetic" if isinstance(self._source, SyntheticSource) else "mic"
         if self._vad is None:
             self._vad = create_vad({"sample_rate": self._sample_rate, "frame_ms": self._frame_ms})
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
-        log.info("WakeLoop 已启动 (vad=%s)", self._vad.__class__.__name__)
+        log.info("WakeLoop 已启动 (vad=%s, source=%s)", self._vad.__class__.__name__, self._source_kind)
 
     async def stop(self) -> None:
         """停止后台监听循环。"""
